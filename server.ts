@@ -317,6 +317,9 @@ app.post('/api/generate-story', async (req: Request, res: Response) => {
   }
 });
 
+let geminiImageQuotaChecked = false;
+let geminiImageQuotaAvailable = false;
+
 // Illustration endpoint with multi-tier generation pipeline
 app.post('/api/generate-image', async (req: Request, res: Response) => {
   try {
@@ -325,34 +328,34 @@ app.post('/api/generate-image', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Image prompt is required.' });
     }
 
-    // 1. Try Gemini image models (supports accounts with active image quota)
-    try {
-      const ai = getAiClient();
-      for (const model of ['gemini-3.1-flash-lite-image', 'gemini-3.1-flash-image', 'gemini-2.5-flash-image']) {
-        try {
-          const response = await ai.models.generateContent({
-            model,
-            contents: { parts: [{ text: prompt }] },
-            config: {
-              imageConfig: { aspectRatio: aspectRatio || '1:1' },
-            },
-          });
+    // 1. Try Gemini image model if quota is available (or not yet checked)
+    if (!geminiImageQuotaChecked || geminiImageQuotaAvailable) {
+      try {
+        const ai = getAiClient();
+        const response = await ai.models.generateContent({
+          model: 'gemini-3.1-flash-lite-image',
+          contents: { parts: [{ text: prompt }] },
+          config: {
+            imageConfig: { aspectRatio: aspectRatio || '1:1' },
+          },
+        });
 
-          const parts = response.candidates?.[0]?.content?.parts ?? [];
-          const imagePart = parts.find((p) => p.inlineData?.data);
+        const parts = response.candidates?.[0]?.content?.parts ?? [];
+        const imagePart = parts.find((p) => p.inlineData?.data);
 
-          if (imagePart?.inlineData?.data) {
-            return res.json({ base64: imagePart.inlineData.data });
-          }
-        } catch (mErr: any) {
-          console.warn(`Gemini image model ${model} unavailable:`, mErr.message);
+        if (imagePart?.inlineData?.data) {
+          geminiImageQuotaChecked = true;
+          geminiImageQuotaAvailable = true;
+          return res.json({ base64: imagePart.inlineData.data });
         }
+      } catch (mErr: any) {
+        geminiImageQuotaChecked = true;
+        geminiImageQuotaAvailable = false;
+        // Quota is 0 on free tier; silently route to AI synthesis pipeline
       }
-    } catch (aiErr: any) {
-      console.warn('Gemini client error in image generation:', aiErr.message);
     }
 
-    // 2. High-quality AI image generation fallback (generates real illustrated JPGs)
+    // 2. High-quality AI image generation pipeline (generates real illustrated JPGs)
     try {
       const { width, height } = getDimensionsForAspectRatio(aspectRatio || '1:1');
       const cleanPrompt = encodeURIComponent(`${prompt}, children book illustration, cute, soft lighting`);
@@ -374,15 +377,14 @@ app.post('/api/generate-image', async (req: Request, res: Response) => {
           return res.json({ base64 });
         }
       }
-    } catch (imgServiceErr: any) {
-      console.warn('AI image service unavailable or timed out, using stylized SVG scene fallback:', imgServiceErr.message);
+    } catch {
+      // Gracefully fall through to stylized SVG scene fallback
     }
 
     // 3. Guaranteed local SVG scene fallback
     const fallbackBase64 = generateFallbackIllustration(prompt);
     return res.json({ base64: fallbackBase64 });
   } catch (err: any) {
-    console.error('Error in generate-image endpoint:', err);
     return res.status(500).json({ error: err.message || 'Failed to generate image' });
   }
 });
