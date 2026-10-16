@@ -1,0 +1,19 @@
+{
+  "name": "استوديو ساجد لقصص الأطفال — Sajed Kids Story Studio",
+  "short_name": "استوديو ساجد",
+  "description": "AI illustrated stories for kids in Arabic and English, with narration, read-along and story videos.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#140f28",
+  "theme_color": "#1b1533",
+  "lang": "ar",
+  "dir": "auto",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

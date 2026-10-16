@@ -1,22 +1,12 @@
 import { PageImage, StoryData } from '../../types';
+import { toSrc } from '../../services/media';
+import { BRAND } from '../../config';
 
 interface Props {
   storyData: StoryData;
   images: PageImage[];
   containerId: string;
 }
-
-const formatImageSrc = (imgStr?: string): string | null => {
-  if (!imgStr) return null;
-  if (imgStr.startsWith('data:')) return imgStr;
-  if (imgStr.startsWith('PHN2') || imgStr.startsWith('PD94')) {
-    return `data:image/svg+xml;base64,${imgStr}`;
-  }
-  if (imgStr.startsWith('/9j/')) {
-    return `data:image/jpeg;base64,${imgStr}`;
-  }
-  return `data:image/png;base64,${imgStr}`;
-};
 
 export default function PrintableStory({ storyData, images, containerId }: Props) {
   const ar = storyData.story_info.language?.toLowerCase().includes('arabic');
@@ -29,15 +19,15 @@ export default function PrintableStory({ storyData, images, containerId }: Props
     : "'Fredoka', 'Nunito', sans-serif";
 
   const imageByPage = new Map(images.map((img) => [img.page, img.base64]));
-  const coverImage = formatImageSrc(imageByPage.get(1) || images[0]?.base64);
+  const coverImage = toSrc(storyData.coverImage || imageByPage.get(1) || images[0]?.base64);
 
   return (
     <div
       id={containerId}
       style={{
-        position: 'absolute',
+        position: 'fixed',
         top: 0,
-        left: 0,
+        left: -10000,
         zIndex: -9999,
         pointerEvents: 'none',
         opacity: 0.01,
@@ -69,7 +59,7 @@ export default function PrintableStory({ storyData, images, containerId }: Props
         {/* Top Header Branding */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
           <span style={{ fontSize: 13, fontWeight: 700, color: '#f0a202', textTransform: 'uppercase', letterSpacing: 1.2 }}>
-            {ar ? 'استوديو قصص صوان للأطفال' : 'Sawan Kids Story Studio'}
+            {ar ? BRAND.fullName.ar : BRAND.fullName.en}
           </span>
           <span style={{ fontSize: 13, color: '#8a8194', fontWeight: 600 }}>
             {storyData.story_info.art_style || 'Illustrated Edition'}
@@ -141,7 +131,7 @@ export default function PrintableStory({ storyData, images, containerId }: Props
 
       {/* Story Pages */}
       {storyData.pages.map((page) => {
-        const pageImg = formatImageSrc(imageByPage.get(page.page));
+        const pageImg = toSrc(imageByPage.get(page.page));
         return (
           <div
             key={page.page}
@@ -210,7 +200,7 @@ export default function PrintableStory({ storyData, images, containerId }: Props
             {/* Running Footer */}
             <div style={{ marginTop: 'auto', paddingTop: 20, borderTop: '1px solid #f1ecf7', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <span style={{ fontSize: 11, color: '#a098aa' }}>
-                {ar ? 'استوديو قصص صوان' : 'Sawan Kids Story Studio'}
+                {ar ? `${BRAND.fullName.ar} — تصميم وتطوير ${BRAND.author.ar}` : `${BRAND.fullName.en} — by ${BRAND.author.en}`}
               </span>
               <span style={{ fontSize: 12, fontWeight: 700, color: '#241b2f' }}>
                 {page.page} / {storyData.pages.length}

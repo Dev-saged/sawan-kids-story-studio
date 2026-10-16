@@ -13,7 +13,8 @@ import {
   STORY_TYPES,
   SURPRISE_PROMPTS,
 } from '../../constants';
-import { AgeGroup, ArabicDialect, ArtStyle, AspectRatio, Language, StoryLength, StoryParams, StoryType } from '../../types';
+import { AgeGroup, ArabicDialect, ArtStyle, AspectRatio, ChildProfile, Language, StoryLength, StoryParams, StoryType } from '../../types';
+import HeroPicker from './HeroPicker';
 
 interface Props {
   language: Language;
@@ -34,6 +35,7 @@ export default function StorySetupForm({ language, onSubmit, onLoadStory, canLoa
   const [length, setLength] = useState<StoryLength>('Short');
   const [artStyle, setArtStyle] = useState<ArtStyle>('Hand-drawn Cartoon');
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>('4:3');
+  const [hero, setHero] = useState<ChildProfile | null>(null);
 
   const selectedLength = STORY_LENGTHS.find((l) => l.value === length)!;
   const selectedAge = AGE_GROUPS.find((g) => g.value === ageGroup)!;
@@ -60,6 +62,8 @@ export default function StorySetupForm({ language, onSubmit, onLoadStory, canLoa
       length,
       artStyle,
       aspectRatio,
+      heroName: hero?.name,
+      heroPhotoId: hero?.photoId,
     };
     onSubmit(params, selectedLength.pages);
   };
@@ -109,6 +113,8 @@ export default function StorySetupForm({ language, onSubmit, onLoadStory, canLoa
           {SMART_TIPS[language][ageGroup]}
         </p>
       </div>
+
+      <HeroPicker ar={ar} selectedId={hero?.id ?? null} onSelect={setHero} />
 
       {ar && (
         <div>

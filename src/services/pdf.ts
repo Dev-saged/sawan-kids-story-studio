@@ -1,6 +1,8 @@
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 import { BookSize, StoryData } from '../types';
+import { toSrc } from './media';
+import { BRAND } from '../config';
 
 const SIZES: Record<BookSize, { width: number; height: number }> = {
   A4: { width: 794, height: 1123 },
@@ -63,7 +65,7 @@ export const generatePDFBlob = async (
     pdf.addImage(canvas.toDataURL('image/jpeg', 0.9), 'JPEG', 0, 0, width, height);
   };
 
-  const image = (b64: string, style: string) => `<img src="data:image/png;base64,${b64}" alt="" style="${style}" />`;
+  const image = (img: string, style: string) => `<img src="${esc(toSrc(img) ?? '')}" alt="" style="${style}" />`;
 
   try {
     onProgress?.(t('جارٍ تجهيز الغلاف...', 'Preparing cover...'));
@@ -71,7 +73,7 @@ export const generatePDFBlob = async (
       frame(
         `<div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:48px;">
           <h1 style="font-family:${headFont};font-size:56px;line-height:1.3;text-align:center;margin:0;max-width:90%;word-wrap:break-word;">${esc(story.story_info.title)}</h1>
-          ${pages[0]?.generatedImage ? image(pages[0].generatedImage, 'max-width:80%;max-height:50%;border-radius:20px;box-shadow:0 10px 30px rgba(36,27,47,0.18);') : ''}
+          ${(story.coverImage || pages[0]?.generatedImage) ? image((story.coverImage || pages[0].generatedImage)!, 'max-width:80%;max-height:50%;border-radius:20px;box-shadow:0 10px 30px rgba(36,27,47,0.18);') : ''}
         </div>`,
         '40px'
       )
@@ -102,7 +104,7 @@ export const generatePDFBlob = async (
       frame(
         `<h2 style="font-family:${headFont};font-size:40px;margin:0 0 50px;text-align:${align};border-bottom:2px solid ${COLORS.faint};padding-bottom:15px;">${t('المحتويات:', 'Contents:')}</h2>
         <ul style="list-style:none;padding:0;margin:0;color:${COLORS.soft};">${toc}</ul>
-        <div style="margin-top:auto;text-align:center;font-size:14px;color:${COLORS.faint};">${t('تم إنشاء القصة باستخدام Sawan Kids Story Studio', 'A story created with Sawan Kids Story Studio')}</div>`,
+        <div style="margin-top:auto;text-align:center;font-size:14px;color:${COLORS.faint};">${t(`تم إنشاء القصة باستخدام ${BRAND.fullName.ar} — تصميم وتطوير ${BRAND.author.ar} · ${BRAND.madeIn.ar}`, `Created with ${BRAND.fullName.en} — by ${BRAND.author.en} · ${BRAND.madeIn.en}`)}</div>`,
         '80px 100px'
       )
     );

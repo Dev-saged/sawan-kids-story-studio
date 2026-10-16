@@ -4,13 +4,14 @@ import { Language } from '../../types';
 interface Props {
   progress: number;
   message: string;
+  preview?: string;
   isPaused: boolean;
   onPause: () => void;
   onResume: () => void;
   language: Language;
 }
 
-export default function GenerationProgress({ progress, message, isPaused, onPause, onResume, language }: Props) {
+export default function GenerationProgress({ progress, message, preview, isPaused, onPause, onResume, language }: Props) {
   const ar = language === 'Arabic';
 
   return (
@@ -24,6 +25,12 @@ export default function GenerationProgress({ progress, message, isPaused, onPaus
         <div className="h-full rounded-full bg-lantern transition-all duration-500" style={{ width: `${progress}%` }} />
       </div>
       <p className="text-sm text-ink/60 dark:text-moonlight/60">{progress}%</p>
+
+      {preview && (
+        <p key={preview.slice(0, 24)} dir={ar ? 'rtl' : 'ltr'} className="mx-auto max-w-md animate-[fadeUp_500ms_ease-out] rounded-2xl bg-dream/10 px-4 py-3 text-start text-sm leading-relaxed text-ink/80 dark:text-moonlight/80">
+          {preview}
+        </p>
+      )}
 
       <button
         type="button"

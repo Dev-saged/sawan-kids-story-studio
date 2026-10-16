@@ -8,3 +8,10 @@ ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
     <App />
   </React.StrictMode>
 );
+
+// PWA: في الإنتاج فقط وخارج الإطارات (معاينة AI Studio)
+if (import.meta.env.PROD && 'serviceWorker' in navigator && window.top === window.self) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch(() => undefined);
+  });
+}

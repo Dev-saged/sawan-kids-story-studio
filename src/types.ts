@@ -58,6 +58,8 @@ export interface StoryParams {
   length: StoryLength;
   artStyle: ArtStyle;
   aspectRatio: AspectRatio;
+  heroName?: string;
+  heroPhotoId?: string;
 }
 
 export interface Character {
@@ -72,7 +74,10 @@ export interface StoryPage {
   page: number;
   text: string;
   image_prompt: string;
+  narration?: string;
+  // رابط عرض (blob:) وقت التشغيل، أو base64 قديم
   generatedImage?: string;
+  imageId?: string;
   isGeneratingImage?: boolean;
   imageError?: boolean;
 }
@@ -85,12 +90,40 @@ export interface StoryInfo {
   aspect_ratio: AspectRatio;
   dialect?: string;
   lessons: string[];
+  moral?: string;
+}
+
+export interface QuizItem {
+  question: string;
+  options: string[];
+  answer: number;
+  page: number;
 }
 
 export interface StoryData {
+  id?: string;
+  createdAt?: number;
+  updatedAt?: number;
   story_info: StoryInfo;
   characters: Character[];
   pages: StoryPage[];
+  cover_image_prompt?: string;
+  music_prompt?: string;
+  coverImage?: string;
+  coverImageId?: string;
+  characterSheetId?: string;
+  heroPhotoId?: string;
+  quiz?: QuizItem[];
+  quizScore?: number;
+}
+
+export type NarratorVoice = 'Sulafat' | 'Vindemiatrix' | 'Achernar' | 'Algieba' | 'Charon' | 'Puck';
+
+export interface ChildProfile {
+  id: string;
+  name: string;
+  photoId: string;
+  createdAt: number;
 }
 
 // Legacy v1.2 save format (images stored beside the story); kept only so old JSON files still import.

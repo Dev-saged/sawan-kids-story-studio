@@ -11,7 +11,7 @@ import {
   Wand2,
 } from 'lucide-react';
 import { Language, StoryData, StoryPage } from '../../types';
-import { generateIllustration, buildPageImagePrompt } from '../../services/gemini';
+import { srcToBlob, toSrc } from '../../services/media';
 import { saveAs } from 'file-saver';
 
 interface Props {
@@ -19,24 +19,12 @@ interface Props {
   language: Language;
   onSelectPage?: (pageIndex: number) => void;
   onPagesChange?: (updater: (pages: StoryPage[]) => StoryPage[]) => void;
+  onPaint: (pageNo: number, force?: boolean) => Promise<void>;
 }
 
-const formatImageSrc = (imgStr?: string): string | null => {
-  if (!imgStr) return null;
-  if (imgStr.startsWith('data:')) return imgStr;
-  if (imgStr.startsWith('PHN2') || imgStr.startsWith('PD94')) {
-    return `data:image/svg+xml;base64,${imgStr}`;
-  }
-  if (imgStr.startsWith('/9j/')) {
-    return `data:image/jpeg;base64,${imgStr}`;
-  }
-  return `data:image/png;base64,${imgStr}`;
-};
-
-export default function StoryGallery({ storyData, language, onSelectPage, onPagesChange }: Props) {
+export default function StoryGallery({ storyData, language, onSelectPage, onPaint }: Props) {
   const ar = language === 'Arabic';
   const [fullscreenIndex, setFullscreenIndex] = useState<number | null>(null);
-  const [paintingPageNumber, setPaintingPageNumber] = useState<number | null>(null);
 
   const pagesWithImages = storyData.pages.filter((p) => Boolean(p.generatedImage));
   const totalPages = storyData.pages.length;
@@ -71,46 +59,16 @@ export default function StoryGallery({ storyData, language, onSelectPage, onPage
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [fullscreenIndex, ar, storyData.pages.length]);
 
-  const handlePaintImage = async (page: StoryPage, e: React.MouseEvent) => {
+  const handlePaintImage = (page: StoryPage, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (paintingPageNumber !== null) return;
-    setPaintingPageNumber(page.page);
-
-    try {
-      const prompt = buildPageImagePrompt(storyData, page);
-      const base64 = await generateIllustration(prompt, storyData.story_info.aspect_ratio || '4:3');
-      if (onPagesChange) {
-        onPagesChange((prev) =>
-          prev.map((p) => (p.page === page.page ? { ...p, generatedImage: base64 } : p))
-        );
-      } else {
-        page.generatedImage = base64;
-      }
-    } catch (err) {
-      console.warn('Failed to paint gallery illustration:', err);
-    } finally {
-      setPaintingPageNumber(null);
-    }
+    if (!page.isGeneratingImage) onPaint(page.page, Boolean(page.generatedImage));
   };
 
-  const handleDownloadSingleImage = (page: StoryPage, e?: React.MouseEvent) => {
+  const handleDownloadSingleImage = async (page: StoryPage, e?: React.MouseEvent) => {
     e?.stopPropagation();
     if (!page.generatedImage) return;
-
-    const raw = page.generatedImage;
-    const isJpeg = raw.startsWith('/9j/');
-    const isSvg = raw.startsWith('PHN2') || raw.startsWith('PD94');
-    const ext = isJpeg ? 'jpg' : isSvg ? 'svg' : 'png';
-    const mime = isJpeg ? 'image/jpeg' : isSvg ? 'image/svg+xml' : 'image/png';
-
-    const byteCharacters = atob(raw.replace(/^data:image\/\w+;base64,/, ''));
-    const byteNumbers = new Array(byteCharacters.length);
-    for (let i = 0; i < byteCharacters.length; i++) {
-      byteNumbers[i] = byteCharacters.charCodeAt(i);
-    }
-    const byteArray = new Uint8Array(byteNumbers);
-    const blob = new Blob([byteArray], { type: mime });
-
+    const blob = await srcToBlob(page.generatedImage);
+    const ext = blob.type.includes('webp') ? 'webp' : blob.type.includes('jpeg') ? 'jpg' : 'png';
     const safeTitle = (storyData.story_info.title || 'story').replace(/[\\/:*?"<>|]+/g, '-');
     saveAs(blob, `${safeTitle}-page-${page.page}.${ext}`);
   };
@@ -118,7 +76,7 @@ export default function StoryGallery({ storyData, language, onSelectPage, onPage
   const activeFullscreenPage =
     fullscreenIndex !== null ? storyData.pages[fullscreenIndex] : null;
   const activeFullscreenImageSrc = activeFullscreenPage
-    ? formatImageSrc(activeFullscreenPage.generatedImage)
+    ? toSrc(activeFullscreenPage.generatedImage)
     : null;
 
   return (
@@ -143,8 +101,8 @@ export default function StoryGallery({ storyData, language, onSelectPage, onPage
       {/* Grid View */}
       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
         {storyData.pages.map((page, idx) => {
-          const imgUrl = formatImageSrc(page.generatedImage);
-          const isPaintingThis = paintingPageNumber === page.page;
+          const imgUrl = toSrc(page.generatedImage);
+          const isPaintingThis = Boolean(page.isGeneratingImage);
 
           return (
             <div
@@ -211,7 +169,7 @@ export default function StoryGallery({ storyData, language, onSelectPage, onPage
                 )}
 
                 {/* Page Badge */}
-                <div className="absolute top-2.5 inset-inline-start-2.5 rounded-full bg-black/50 px-2.5 py-0.5 text-xs font-bold text-white backdrop-blur-xs">
+                <div className="absolute top-2.5 start-2.5 rounded-full bg-black/50 px-2.5 py-0.5 text-xs font-bold text-white backdrop-blur-xs">
                   {ar ? `مشهد ${page.page}` : `Scene ${page.page}`}
                 </div>
               </div>

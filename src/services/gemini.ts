@@ -1,5 +1,7 @@
 import { AspectRatio, Language, NameAnalysis, StoryData, StoryParams, StoryPage } from '../types';
 import { ART_STYLE_OPTIONS, MAX_IDEA_LENGTH } from '../constants';
+import { ApiError, authHeaders, postJson, type ApiErrorCode } from './api';
+import { base64ToBlob, type ImageKind } from './media';
 
 export const API_KEY_MISSING = 'API_KEY_MISSING';
 
@@ -8,17 +10,61 @@ export const getArtStylePrompt = (style: string): string => {
   return option ? option.prompt : `${style} illustration style, high quality, children friendly`;
 };
 
-export const buildPageImagePrompt = (story: StoryData, page: StoryPage): string => {
-  const characterSheet = story.characters
-    .map((c) => `${c.name} (${c.gender || 'character'}, ${c.age}): ${c.description}. MUST remain visually identical (same face, species, colors).`)
+const characterSheetText = (story: StoryData): string =>
+  story.characters
+    .map((c) => `${c.name} (${c.gender || 'character'}, ${c.age}): ${c.description}`)
     .join(' | ');
 
-  return [
-    `Art style: ${getArtStylePrompt(story.story_info.art_style)}.`,
-    `CHARACTERS ENFORCED: ${characterSheet}.`,
+const styleLock = (story: StoryData): string =>
+  `Art style (identical on every image of this book): ${getArtStylePrompt(story.story_info.art_style)}.`;
+
+export const buildPageImagePrompt = (story: StoryData, page: StoryPage): string =>
+  [
+    styleLock(story),
+    `Fixed characters, keep them visually identical: ${characterSheetText(story)}.`,
     `Scene: ${page.image_prompt}`,
-    'No text, no captions, no watermarks in the image.',
   ].join(' ');
+
+export const buildCoverPrompt = (story: StoryData): string =>
+  [
+    styleLock(story),
+    `Book cover illustration for the children's story titled "${story.story_info.title}".`,
+    `Fixed characters: ${characterSheetText(story)}.`,
+    `Composition: ${story.cover_image_prompt || story.pages[0]?.image_prompt || ''}`,
+    'Iconic, inviting hero shot, strong focal point, depth and atmosphere, generous calm space in the upper third.',
+  ].join(' ');
+
+export const buildSheetPrompt = (story: StoryData, withPhoto: boolean): string =>
+  [
+    styleLock(story),
+    'Character reference sheet for a children picture book.',
+    withPhoto ? 'The main hero is the child in the attached photo, redrawn in this art style with a faithful likeness of the face and hair.' : '',
+    `Characters: ${characterSheetText(story)}.`,
+    'Each character shown full body, front view, friendly neutral pose, side by side, evenly lit, plain soft light background, clean readable design.',
+  ]
+    .filter(Boolean)
+    .join(' ');
+
+export interface ProgressInfo {
+  progress: number;
+  message: string;
+  preview?: string;
+}
+
+// استخراج آخر نص صفحة مكتمل من JSON جزئي أثناء البث
+const PAGE_TEXT_RE = /"text"\s*:\s*"((?:[^"\\]|\\.)*)"/g;
+const extractPreview = (raw: string): { count: number; last?: string } => {
+  let count = 0;
+  let last: string | undefined;
+  for (const m of raw.matchAll(PAGE_TEXT_RE)) {
+    count++;
+    try {
+      last = JSON.parse(`"${m[1]}"`);
+    } catch {
+      last = m[1];
+    }
+  }
+  return { count, last };
 };
 
 export class StoryGenerator {
@@ -44,47 +90,74 @@ export class StoryGenerator {
     });
   }
 
-  public async generate(
-    rawParams: StoryParams,
-    pageCount: number,
-    onProgress: (progress: number, message: string) => void
-  ): Promise<StoryData> {
+  public async generate(rawParams: StoryParams, pageCount: number, onProgress: (info: ProgressInfo) => void): Promise<StoryData> {
     const params: StoryParams = { ...rawParams, idea: rawParams.idea.trim().slice(0, MAX_IDEA_LENGTH) };
-    if (!params.idea) {
-      throw new Error('Story idea cannot be empty.');
-    }
+    if (!params.idea) throw new Error('Story idea cannot be empty.');
+    const ar = params.language === 'Arabic';
 
-    onProgress(15, 'Preparing story request...');
+    onProgress({ progress: 6, message: ar ? 'نجهّز فكرة القصة...' : 'Preparing your story...' });
     await this.waitIfPaused();
 
-    const res = await fetch('/api/generate-story', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ params, pageCount }),
-    });
-
-    if (!res.ok) {
-      let errorMessage = 'Failed to generate story';
+    if (navigator.onLine === false) throw new ApiError('OFFLINE');
+    let res: Response;
+    try {
+      res = await fetch('/api/generate-story', { method: 'POST', headers: authHeaders(), body: JSON.stringify({ params, pageCount }) });
+    } catch {
+      throw new ApiError('BUSY');
+    }
+    if (!res.ok || !res.body) {
+      let code: ApiErrorCode = res.status === 429 ? 'QUOTA' : res.status === 401 ? 'AUTH' : 'FAILED';
       try {
-        const errorData = await res.json();
-        errorMessage = errorData.error || errorMessage;
+        code = (await res.json()).code ?? code;
       } catch {
-        // continue
+        // ignore
       }
-      throw new Error(errorMessage);
+      throw new ApiError(code);
     }
 
-    onProgress(75, 'Validating story pages and characters...');
-    await this.waitIfPaused();
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let raw = '';
+    let story: StoryData | null = null;
 
-    const parsed: StoryData = await res.json();
-    if (!parsed?.pages?.length || !parsed?.characters?.length) {
-      throw new Error('The story generation returned incomplete data.');
+    const handle = (line: string) => {
+      if (!line.trim()) return;
+      const msg = JSON.parse(line);
+      if (msg.t === 'chunk') {
+        raw += msg.d;
+        const { count, last } = extractPreview(raw);
+        onProgress({
+          progress: Math.min(94, 12 + Math.round((count / pageCount) * 82)),
+          message: ar ? `نكتب الصفحة ${Math.min(count + 1, pageCount)} من ${pageCount}...` : `Writing page ${Math.min(count + 1, pageCount)} of ${pageCount}...`,
+          preview: last,
+        });
+      } else if (msg.t === 'reset') {
+        raw = '';
+      } else if (msg.t === 'done') {
+        story = msg.story;
+      } else if (msg.t === 'error') {
+        throw new ApiError(msg.code ?? 'FAILED', msg.error);
+      }
+    };
+
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() ?? '';
+      lines.forEach(handle);
+      await this.waitIfPaused();
     }
+    handle(buffer);
 
-    const storyData: StoryData = {
+    const parsed = story as StoryData | null;
+    if (!parsed?.pages?.length || !parsed?.characters?.length) throw new ApiError('FAILED');
+
+    onProgress({ progress: 100, message: ar ? 'القصة جاهزة!' : 'Story ready!' });
+
+    return {
       ...parsed,
       story_info: {
         ...parsed.story_info,
@@ -93,44 +166,41 @@ export class StoryGenerator {
         aspect_ratio: params.aspectRatio,
         dialect: params.dialect,
       },
+      heroPhotoId: params.heroPhotoId,
+      quiz: (parsed.quiz ?? []).filter((q) => q?.question && Array.isArray(q.options) && q.options.length >= 2),
       pages: parsed.pages.map((p, i) => ({
         page: i + 1,
         text: (p.text ?? '').trim(),
+        narration: (p.narration ?? '').trim() || (p.text ?? '').trim(),
         image_prompt: p.image_prompt,
       })),
     };
-
-    onProgress(100, 'Story text ready.');
-    return storyData;
   }
 }
 
-export const generateIllustration = async (prompt: string, aspectRatio: AspectRatio): Promise<string> => {
-  const res = await fetch('/api/generate-image', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ prompt, aspectRatio }),
-  });
+export interface ImageRequest {
+  prompt: string;
+  aspectRatio: AspectRatio;
+  references?: { data: string; mimeType: string }[];
+  kind?: ImageKind;
+}
 
-  if (!res.ok) {
-    let errorMessage = 'Failed to generate illustration';
-    try {
-      const errorData = await res.json();
-      errorMessage = errorData.error || errorMessage;
-    } catch {
-      // continue
-    }
-    throw new Error(errorMessage);
-  }
+export const generateIllustration = async ({ prompt, aspectRatio, references }: ImageRequest, signal?: AbortSignal): Promise<Blob> => {
+  const data = await postJson<{ base64: string; mimeType: string }>('/api/generate-image', { prompt, aspectRatio, references }, signal);
+  if (!data?.base64) throw new ApiError('FAILED');
+  return base64ToBlob(data.base64, data.mimeType);
+};
 
-  const data = await res.json();
-  if (!data?.base64) {
-    throw new Error('No image was returned for this page.');
-  }
+export const narrate = async (text: string, voice: string, language: string, dialect?: string, signal?: AbortSignal): Promise<Blob> => {
+  const data = await postJson<{ base64: string; mimeType: string }>('/api/narrate', { text, voice, language, dialect }, signal);
+  if (!data?.base64) throw new ApiError('FAILED');
+  return base64ToBlob(data.base64, data.mimeType || 'audio/wav');
+};
 
-  return data.base64;
+export const generateMusic = async (prompt: string, signal?: AbortSignal): Promise<Blob> => {
+  const data = await postJson<{ base64: string; mimeType: string }>('/api/music', { prompt }, signal, 2);
+  if (!data?.base64) throw new ApiError('FAILED');
+  return base64ToBlob(data.base64, data.mimeType || 'audio/mpeg');
 };
 
 export const regeneratePrompt = async (currentPrompt: string): Promise<string> => {
@@ -147,25 +217,5 @@ export const regeneratePrompt = async (currentPrompt: string): Promise<string> =
 export const analyzeNameMeaning = async (name: string, language: Language): Promise<NameAnalysis> => {
   const trimmed = name.trim().slice(0, 60);
   if (!trimmed) throw new Error('Please enter a name first.');
-
-  const res = await fetch('/api/analyze-name', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ name: trimmed, language }),
-  });
-
-  if (!res.ok) {
-    let errorMessage = 'Failed to analyze name';
-    try {
-      const errorData = await res.json();
-      errorMessage = errorData.error || errorMessage;
-    } catch {
-      // continue
-    }
-    throw new Error(errorMessage);
-  }
-
-  return (await res.json()) as NameAnalysis;
+  return postJson<NameAnalysis>('/api/analyze-name', { name: trimmed, language });
 };

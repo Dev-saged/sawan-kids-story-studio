@@ -21,7 +21,7 @@ export const IMAGE_MODEL = 'gemini-3.1-flash-image';
 export const MAX_IDEA_LENGTH = 500;
 export const IMAGE_BATCH_SIZE = 3;
 
-export const SYSTEM_INSTRUCTION = `You are building a PROFESSIONAL MVP SaaS called: "Sawan Kids Story Studio"
+export const SYSTEM_INSTRUCTION = `You are building a PROFESSIONAL MVP SaaS called: "Sajed Kids Story Studio"
 This is an AI-powered children story creation tool.
 
 ====================

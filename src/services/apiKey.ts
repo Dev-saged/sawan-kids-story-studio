@@ -10,6 +10,16 @@ export const getApiKey = (): string | null => {
   }
 };
 
+// المفتاح الحقيقي للزائر فقط (يُرسل للسيرفر ليُستخدم بدل مفتاح البيئة)
+export const getUserApiKey = (): string | null => {
+  try {
+    const key = sessionStorage.getItem(KEY_STORAGE);
+    return key && KEY_PATTERN.test(key) ? key : null;
+  } catch {
+    return null;
+  }
+};
+
 export const saveApiKey = (key: string): void => {
   sessionStorage.setItem(KEY_STORAGE, key.trim());
 };

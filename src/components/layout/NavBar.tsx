@@ -1,7 +1,8 @@
-import { BookOpen, Gamepad2, Library, Sparkles, Moon, Sun, Languages } from 'lucide-react';
+import { BookOpen, BookMarked, Gamepad2, Library, Sparkles, Moon, Sun, Languages } from 'lucide-react';
 import { Language } from '../../types';
+import { BRAND } from '../../config';
 
-export type Section = 'studio' | 'games' | 'learn' | 'names';
+export type Section = 'studio' | 'library' | 'games' | 'learn' | 'names';
 
 interface NavBarProps {
   active: Section;
@@ -14,6 +15,7 @@ interface NavBarProps {
 
 const ITEMS: { id: Section; icon: typeof BookOpen; label: { en: string; ar: string } }[] = [
   { id: 'studio', icon: Sparkles, label: { en: 'Studio', ar: 'الاستوديو' } },
+  { id: 'library', icon: BookMarked, label: { en: 'My Books', ar: 'مكتبتي' } },
   { id: 'games', icon: Gamepad2, label: { en: 'Games', ar: 'الألعاب' } },
   { id: 'learn', icon: BookOpen, label: { en: 'Read & Learn', ar: 'اقرأ وتعلم' } },
   { id: 'names', icon: Library, label: { en: 'Names', ar: 'الأسماء' } },
@@ -28,7 +30,7 @@ export default function NavBar({ active, onNavigate, language, onToggleLanguage,
       <header className="sticky top-0 z-40 flex items-center justify-between border-b border-dream/20 bg-moonlight/90 px-4 py-3 backdrop-blur dark:bg-dusk/90">
         <div className="font-display flex items-center gap-2 text-lg font-semibold text-ink dark:text-moonlight">
           <span aria-hidden>🏮</span>
-          <span>{isAr ? 'استوديو ثوان' : 'Sawan Studio'}</span>
+          <span>{isAr ? BRAND.name.ar : BRAND.name.en}</span>
         </div>
         <div className="flex items-center gap-2">
           <button

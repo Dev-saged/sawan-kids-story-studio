@@ -2,33 +2,27 @@ import express, { type Request, type Response } from 'express';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { GoogleGenAI, Type, type Schema } from '@google/genai';
+import { GoogleGenAI, Modality, Type, type Schema } from '@google/genai';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({ limit: '30mb' }));
 
-const TEXT_MODELS = ['gemini-2.5-flash', 'gemini-3.1-flash-lite', 'gemini-3.8-flash'];
-
-const getDimensionsForAspectRatio = (aspectRatio: string): { width: number; height: number } => {
-  switch (aspectRatio) {
-    case '16:9':
-      return { width: 800, height: 450 };
-    case '9:16':
-      return { width: 450, height: 800 };
-    case '4:3':
-      return { width: 800, height: 600 };
-    case '3:4':
-      return { width: 600, height: 800 };
-    case '1:1':
-    default:
-      return { width: 600, height: 600 };
-  }
+// سلاسل النماذج: الأقوى أولاً، وكل نموذج له كوتا مستقلة
+const MODELS = {
+  text: ['gemini-3.8-flash', 'gemini-2.5-flash', 'gemini-3.1-flash-lite'],
+  image: ['gemini-nano-banana-2.1', 'gemini-3-pro-image', 'gemini-3.1-flash-image', 'gemini-3.1-flash-lite-image'],
+  tts: ['gemini-3.8-flash-tts', 'gemini-3.8-flash-lite-tts', 'gemini-3.1-flash-tts-preview', 'gemini-2.5-pro-preview-tts'],
+  music: ['lyria-3-clip-preview', 'lyria-3.5'],
 };
+const LITE_IMAGE_MODELS = new Set(['gemini-3.1-flash-lite-image']);
+const VOICES = new Set(['Sulafat', 'Vindemiatrix', 'Achernar', 'Algieba', 'Charon', 'Puck', 'Kore', 'Leda']);
+const ASPECTS = new Set(['1:1', '16:9', '9:16', '4:3', '3:4']);
+const KEY_PATTERN = /^[A-Za-z0-9_-]{30,}$/;
 
-const getApiKey = (): string => {
+const getEnvApiKey = (): string => {
   let key = process.env.GEMINI_API_KEY;
   if (!key || key === 'MY_GEMINI_API_KEY' || key.trim() === '') {
     const candidatePaths = [
@@ -57,68 +51,98 @@ const getApiKey = (): string => {
   }
 
   if (!key || key === 'MY_GEMINI_API_KEY') {
-    throw new Error('GEMINI_API_KEY is not configured on the server. Please check your environment variables or Secrets panel.');
+    throw Object.assign(new Error('GEMINI_API_KEY is not configured on the server.'), { status: 401 });
   }
 
   return key.trim();
 };
 
-const getAiClient = (): GoogleGenAI => {
-  const apiKey = getApiKey();
-  return new GoogleGenAI({
-    apiKey,
-    httpOptions: {
-      headers: {
-        'User-Agent': 'aistudio-build',
-      },
-    },
-  });
+// مفتاح الزائر (إن أرسله) له الأولوية على مفتاح البيئة
+const getAiClient = (req: Request): GoogleGenAI => {
+  const header = req.get('x-goog-api-key')?.trim();
+  const apiKey = header && KEY_PATTERN.test(header) ? header : getEnvApiKey();
+  return new GoogleGenAI({ apiKey, httpOptions: { headers: { 'User-Agent': 'aistudio-build' } } });
 };
 
-const SYSTEM_INSTRUCTION = `You are building a PROFESSIONAL MVP SaaS called: "Sawan Kids Story Studio"
-This is an AI-powered children story creation tool.
+type ErrorKind = 'auth' | 'quota' | 'busy' | 'skip';
 
-====================
-CORE ROLE
-====================
-Act as a senior product AI that:
-- Designs logic
-- Generates structured outputs
-- Thinks like a real SaaS product (not a demo)
+const classify = (err: any): ErrorKind => {
+  const status = Number(err?.status ?? err?.code ?? 0);
+  const msg = String(err?.message ?? '');
+  if (/API_KEY_INVALID|API key not valid|PERMISSION_DENIED/i.test(msg) || status === 401 || status === 403) return 'auth';
+  if (status === 429 || /RESOURCE_EXHAUSTED|quota/i.test(msg)) return 'quota';
+  if (status >= 500 || /UNAVAILABLE|overloaded|ECONNRESET|ETIMEDOUT|fetch failed/i.test(msg)) return 'busy';
+  return 'skip';
+};
 
-====================
-LANGUAGE & UI LOGIC
-====================
-Default language: English (LTR)
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-If the requested language is Arabic:
-- Generate the story in Arabic suitable for kids
-- Use simple Arabic, or the requested dialect if one is specified
-- Avoid complex vocabulary
+// يجرب كل نموذج بالترتيب؛ إعادة محاولة بتأخير متصاعد عند الانشغال، وانتقال فوري عند الكوتا
+async function runChain<T>(label: string, models: string[], attempt: (model: string) => Promise<T | null>): Promise<{ value: T; model: string }> {
+  let lastError: any = null;
+  let sawQuota = false;
+  for (const model of models) {
+    for (let i = 0; i < 3; i++) {
+      try {
+        const value = await attempt(model);
+        if (value != null) return { value, model };
+        break;
+      } catch (err: any) {
+        lastError = err;
+        const kind = classify(err);
+        console.warn(`[${label}] ${model} #${i + 1}: ${kind} — ${String(err?.message).slice(0, 160)}`);
+        if (kind === 'auth') throw err;
+        if (kind === 'quota') sawQuota = true;
+        if (kind === 'busy' && i < 2) {
+          await sleep(700 * 2 ** i + Math.random() * 400);
+          continue;
+        }
+        break;
+      }
+    }
+  }
+  throw Object.assign(lastError ?? new Error(`${label}: no model returned output`), sawQuota ? { status: 429 } : {});
+}
 
-====================
-CHARACTER CREATION
-====================
-Generate 1-3 main characters. For EACH character output name, age, gender,
-a clear reusable appearance description, and a kid-friendly personality.
+const sendError = (res: Response, err: any, fallback: string) => {
+  const kind = classify(err);
+  const code = kind === 'auth' ? 'AUTH' : kind === 'quota' ? 'QUOTA' : kind === 'busy' ? 'BUSY' : 'FAILED';
+  const status = code === 'AUTH' ? 401 : code === 'QUOTA' ? 429 : code === 'BUSY' ? 503 : 500;
+  if (!res.headersSent) res.status(status).json({ error: err?.message || fallback, code });
+};
 
-STRICT CHARACTER CONSTANCY RULES:
-1. Use a FIXED set of characters across the entire story. Never introduce new
-   random characters later.
-2. Each character keeps exactly the same name, appearance, and species
-   (especially animals) on every page.
-3. Keep visual consistency: same distinguishing features, same colors, same style.
-4. Never change or replace a character under any condition.
+const SYSTEM_INSTRUCTION = `You are the story engine of "Sajed Kids Story Studio", a professional AI children's story product.
 
-====================
-STORY STRUCTURE
-====================
-Create the story as pages. Each page contains a page number, short child-friendly
-story text (2-6 sentences), and a very detailed image prompt that matches the
-established character appearance and the chosen art style.
+LANGUAGE
+- Write "text", "title", "lessons", "moral" and "quiz" in the requested language.
+- Arabic + Modern Standard: flawless, eloquent but simple Fusha suitable for kids. Correct grammar and i'rab. No colloquial words.
+- Arabic + a dialect: natural, authentic phrasing of that dialect, still clean and kid-friendly.
 
-Return ONLY the structured JSON matching the provided response schema. No prose,
-no markdown fences, no commentary outside the JSON.`;
+NARRATION (field "narration", one per page)
+- The exact same content as "text", prepared for a professional voice actor.
+- Arabic Modern Standard: add COMPLETE, grammatically correct tashkeel (all harakat including case endings and shadda) on every word.
+- Arabic dialect: same words as "text", add tashkeel only where pronunciation would be ambiguous.
+- English: identical to "text".
+
+CHARACTERS
+- 1-3 fixed main characters. Each keeps exactly the same name, species, face, hair, outfit and colors on every page.
+- "description" is an ENGLISH visual design sheet: species, age look, skin/fur tone, hair, eyes, outfit with colors, one distinctive accessory.
+- Never introduce random new characters later.
+
+PAGES
+- Each page: 2-6 short child-friendly sentences in "text".
+- "image_prompt" is ALWAYS ENGLISH, 70-120 words, written like a director's shot description:
+  main action and emotion, every character on the page BY NAME with 2-3 of their fixed visual traits repeated,
+  setting details, time of day, lighting, camera shot (wide / medium / close-up / low angle), mood and color palette.
+  Never put words, letters, captions or signs in the image.
+
+COVER, MUSIC, MORAL, QUIZ
+- "cover_image_prompt": ENGLISH, 70-120 words, a striking hero composition of the main characters in the story's key setting that captures the title, cinematic lighting, no text.
+- "music_prompt": ENGLISH, one sentence describing an instrumental soundtrack for this story (mood, tempo, instruments), gentle and child friendly, no vocals.
+- "moral": one short sentence, the lesson of the story.
+- "quiz": exactly 3 comprehension questions, each with 3 short options, "answer" = index (0-2) of the correct option, "page" = the page number the question is about.
+
+Return ONLY JSON matching the response schema.`;
 
 const STORY_RESPONSE_SCHEMA: Schema = {
   type: Type.OBJECT,
@@ -131,8 +155,9 @@ const STORY_RESPONSE_SCHEMA: Schema = {
         age_group: { type: Type.STRING },
         art_style: { type: Type.STRING },
         lessons: { type: Type.ARRAY, items: { type: Type.STRING } },
+        moral: { type: Type.STRING },
       },
-      required: ['title', 'language', 'age_group', 'art_style', 'lessons'],
+      required: ['title', 'language', 'age_group', 'art_style', 'lessons', 'moral'],
     },
     characters: {
       type: Type.ARRAY,
@@ -148,6 +173,8 @@ const STORY_RESPONSE_SCHEMA: Schema = {
         required: ['name', 'description', 'personality', 'age', 'gender'],
       },
     },
+    cover_image_prompt: { type: Type.STRING },
+    music_prompt: { type: Type.STRING },
     pages: {
       type: Type.ARRAY,
       items: {
@@ -155,13 +182,27 @@ const STORY_RESPONSE_SCHEMA: Schema = {
         properties: {
           page: { type: Type.NUMBER },
           text: { type: Type.STRING },
+          narration: { type: Type.STRING },
           image_prompt: { type: Type.STRING },
         },
-        required: ['page', 'text', 'image_prompt'],
+        required: ['page', 'text', 'narration', 'image_prompt'],
+      },
+    },
+    quiz: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          question: { type: Type.STRING },
+          options: { type: Type.ARRAY, items: { type: Type.STRING } },
+          answer: { type: Type.NUMBER },
+          page: { type: Type.NUMBER },
+        },
+        required: ['question', 'options', 'answer', 'page'],
       },
     },
   },
-  required: ['story_info', 'characters', 'pages'],
+  required: ['story_info', 'characters', 'cover_image_prompt', 'music_prompt', 'pages', 'quiz'],
 };
 
 const NAME_ANALYSIS_SCHEMA: Schema = {
@@ -174,253 +215,252 @@ const NAME_ANALYSIS_SCHEMA: Schema = {
   required: ['meaning', 'origin', 'traits'],
 };
 
-async function generateContentWithRetry(ai: GoogleGenAI, requestConfig: any): Promise<any> {
-  let lastError: any = null;
-  for (const model of TEXT_MODELS) {
-    for (let attempt = 0; attempt < 2; attempt++) {
-      try {
-        const response = await ai.models.generateContent({
-          ...requestConfig,
-          model,
-        });
-        if (response.text) {
-          return response;
-        }
-      } catch (err: any) {
-        lastError = err;
-        console.warn(`Model ${model} attempt ${attempt + 1} failed: ${err.message}`);
-        if (err.status === 503 || err.status === 429) {
-          await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
-        } else {
-          break;
-        }
-      }
-    }
+const clip = (v: unknown, max: number): string => String(v ?? '').trim().slice(0, max);
+
+const parseJson = (raw: string): any => {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return JSON.parse(raw.replace(/```json|```/g, '').trim());
   }
-  throw lastError || new Error('All candidate text models failed.');
-}
-
-// Generate an artistic SVG scene fallback if image model quota is exceeded
-const generateFallbackIllustration = (prompt: string): string => {
-  const hash = prompt.split('').reduce((acc, c) => (acc * 31 + c.charCodeAt(0)) % 360, 0);
-  const hue1 = hash;
-  const hue2 = (hash + 45) % 360;
-  const hue3 = (hash + 180) % 360;
-
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 600" width="800" height="600">
-    <defs>
-      <linearGradient id="skyGrad" x1="0%" y1="0%" x2="0%" y2="100%">
-        <stop offset="0%" stop-color="hsl(${hue1}, 70%, 82%)" />
-        <stop offset="50%" stop-color="hsl(${hue2}, 65%, 88%)" />
-        <stop offset="100%" stop-color="hsl(${hue3}, 60%, 93%)" />
-      </linearGradient>
-      <linearGradient id="groundGrad" x1="0%" y1="0%" x2="0%" y2="100%">
-        <stop offset="0%" stop-color="hsl(${(hue1 + 90) % 360}, 50%, 75%)" />
-        <stop offset="100%" stop-color="hsl(${(hue1 + 90) % 360}, 60%, 60%)" />
-      </linearGradient>
-      <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
-        <feGaussianBlur stdDeviation="8" result="blur" />
-        <feComposite in="SourceGraphic" in2="blur" operator="over" />
-      </filter>
-    </defs>
-
-    <!-- Background -->
-    <rect width="800" height="600" fill="url(#skyGrad)" />
-
-    <!-- Distant hills/atmosphere -->
-    <path d="M0,420 Q200,320 400,390 T800,360 L800,600 L0,600 Z" fill="hsl(${(hue1 + 120) % 360}, 40%, 82%)" opacity="0.6" />
-    <path d="M0,450 Q300,380 600,430 T800,440 L800,600 L0,600 Z" fill="url(#groundGrad)" opacity="0.9" />
-
-    <!-- Sun or Moon -->
-    <circle cx="680" cy="130" r="55" fill="#FFE9A8" filter="url(#glow)" opacity="0.9" />
-
-    <!-- Clouds / Stars -->
-    <ellipse cx="220" cy="140" rx="70" ry="25" fill="#FFFFFF" opacity="0.75" />
-    <ellipse cx="255" cy="125" rx="50" ry="30" fill="#FFFFFF" opacity="0.8" />
-    <ellipse cx="190" cy="145" rx="45" ry="22" fill="#FFFFFF" opacity="0.75" />
-
-    <ellipse cx="480" cy="190" rx="55" ry="20" fill="#FFFFFF" opacity="0.65" />
-    <ellipse cx="510" cy="175" rx="40" ry="25" fill="#FFFFFF" opacity="0.7" />
-
-    <!-- Stylized decorative elements -->
-    <circle cx="140" cy="420" r="45" fill="hsl(${(hue1 + 100) % 360}, 50%, 45%)" />
-    <rect x="133" y="440" width="14" height="60" rx="5" fill="#8B5A2B" />
-
-    <circle cx="210" cy="435" r="35" fill="hsl(${(hue1 + 80) % 360}, 55%, 52%)" />
-    <rect x="204" y="455" width="12" height="50" rx="4" fill="#8B5A2B" />
-
-    <circle cx="670" cy="445" r="40" fill="hsl(${(hue1 + 110) % 360}, 45%, 48%)" />
-    <rect x="664" y="470" width="12" height="55" rx="4" fill="#8B5A2B" />
-
-    <!-- Sparkles -->
-    <polygon points="350,160 354,172 366,176 354,180 350,192 346,180 334,176 346,172" fill="#FFE9A8" opacity="0.8" />
-    <polygon points="560,110 563,120 573,123 563,126 560,136 557,126 547,123 557,120" fill="#FFFFFF" opacity="0.85" />
-    <polygon points="420,250 422,258 430,260 422,262 420,270 418,262 410,260 418,258" fill="#FFE9A8" opacity="0.75" />
-
-    <!-- Story vignette frame -->
-    <rect x="20" y="20" width="760" height="560" rx="24" fill="none" stroke="rgba(255,255,255,0.4)" stroke-width="4" />
-  </svg>`;
-
-  return Buffer.from(svg).toString('base64');
 };
 
-// Story Generation endpoint
+// بث النص سطراً سطراً (NDJSON): chunk / reset / done / error
 app.post('/api/generate-story', async (req: Request, res: Response) => {
+  const { params, pageCount } = req.body ?? {};
+  const idea = clip(params?.idea, 500);
+  if (!idea) return res.status(400).json({ error: 'Story idea cannot be empty.', code: 'FAILED' });
+
+  let ai: GoogleGenAI;
   try {
-    const { params, pageCount } = req.body;
-    if (!params || !params.idea) {
-      return res.status(400).json({ error: 'Story idea cannot be empty.' });
-    }
-
-    const ai = getAiClient();
-    const langLine =
-      params.language === 'Arabic'
-        ? `Language: Arabic${params.dialect ? ` (${params.dialect} dialect)` : ''}`
-        : 'Language: English';
-
-    const prompt = [
-      `Story idea: ${params.idea.trim().slice(0, 500)}`,
-      langLine,
-      `Age group: ${params.ageGroup || '4-6'}`,
-      `Story type: ${params.storyType || 'Bedtime'}`,
-      `Target page count: ${pageCount || 6}`,
-      `Art style: ${params.artStyle || 'Classic Storybook'}`,
-      'Follow the response schema exactly and return valid JSON only.',
-    ].join('\n');
-
-    const response = await generateContentWithRetry(ai, {
-      contents: prompt,
-      config: {
-        systemInstruction: SYSTEM_INSTRUCTION,
-        responseMimeType: 'application/json',
-        responseSchema: STORY_RESPONSE_SCHEMA,
-      },
-    });
-
-    const raw = response.text ?? '';
-    let parsedData;
-    try {
-      parsedData = JSON.parse(raw);
-    } catch {
-      const cleaned = raw.replace(/```json|```/g, '').trim();
-      parsedData = JSON.parse(cleaned);
-    }
-
-    if (!parsedData?.pages?.length || !parsedData?.characters?.length) {
-      return res.status(502).json({ error: 'The model returned incomplete story data.' });
-    }
-
-    return res.json(parsedData);
-  } catch (err: any) {
-    console.error('Error generating story:', err);
-    return res.status(500).json({ error: err.message || 'Failed to generate story' });
+    ai = getAiClient(req);
+  } catch (err) {
+    return sendError(res, err, 'Missing API key');
   }
+
+  const isArabic = params.language === 'Arabic';
+  const heroName = clip(params.heroName, 40);
+  const prompt = [
+    `Story idea: ${idea}`,
+    isArabic ? `Language: Arabic (${clip(params.dialect, 30) || 'Modern Standard'})` : 'Language: English',
+    `Age group: ${clip(params.ageGroup, 10) || '4-6'}`,
+    `Story type: ${clip(params.storyType, 20) || 'Bedtime'}`,
+    `Exact page count: ${Math.min(Math.max(Number(pageCount) || 6, 3), 16)}`,
+    `Art style: ${clip(params.artStyle, 40) || 'Classic Storybook'}`,
+    heroName
+      ? `HERO: the main character is a real child named "${heroName}". A reference photo of this child will be used for the illustrations, so describe the hero as "${heroName}, the child from the reference photo" plus a fixed outfit with colors.`
+      : '',
+  ]
+    .filter(Boolean)
+    .join('\n');
+
+  res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('X-Accel-Buffering', 'no');
+  const send = (obj: object) => res.write(`${JSON.stringify(obj)}\n`);
+
+  try {
+    const { value } = await runChain('story', MODELS.text, async (model) => {
+      let raw = '';
+      let started = false;
+      try {
+        const stream = await ai.models.generateContentStream({
+          model,
+          contents: prompt,
+          config: { systemInstruction: SYSTEM_INSTRUCTION, responseMimeType: 'application/json', responseSchema: STORY_RESPONSE_SCHEMA },
+        });
+        for await (const chunk of stream) {
+          const t = chunk.text ?? '';
+          if (!t) continue;
+          started = true;
+          raw += t;
+          send({ t: 'chunk', d: t });
+        }
+      } catch (err) {
+        if (started) send({ t: 'reset' });
+        throw err;
+      }
+      const parsed = parseJson(raw);
+      if (!parsed?.pages?.length || !parsed?.characters?.length) {
+        send({ t: 'reset' });
+        return null;
+      }
+      return parsed;
+    });
+    send({ t: 'done', story: value });
+  } catch (err: any) {
+    const kind = classify(err);
+    send({ t: 'error', error: err?.message || 'Failed to generate story', code: kind === 'auth' ? 'AUTH' : kind === 'quota' ? 'QUOTA' : kind === 'busy' ? 'BUSY' : 'FAILED' });
+  }
+  res.end();
 });
 
-let geminiImageQuotaChecked = false;
-let geminiImageQuotaAvailable = false;
+interface InlineRef {
+  data: string;
+  mimeType: string;
+}
 
-// Illustration endpoint with multi-tier generation pipeline
+const sanitizeRefs = (refs: unknown): InlineRef[] =>
+  (Array.isArray(refs) ? refs : [])
+    .filter((r: any) => typeof r?.data === 'string' && /^image\/(png|jpeg|webp)$/.test(r?.mimeType))
+    .slice(0, 4)
+    .map((r: any) => ({ data: r.data, mimeType: r.mimeType }));
+
+// صور Nano Banana فقط — لا SVG ولا مصادر خارجية
 app.post('/api/generate-image', async (req: Request, res: Response) => {
   try {
-    const { prompt, aspectRatio } = req.body;
-    if (!prompt) {
-      return res.status(400).json({ error: 'Image prompt is required.' });
-    }
+    const prompt = clip(req.body?.prompt, 4000);
+    if (!prompt) return res.status(400).json({ error: 'Image prompt is required.', code: 'FAILED' });
+    const aspectRatio = ASPECTS.has(req.body?.aspectRatio) ? req.body.aspectRatio : '4:3';
+    const refs = sanitizeRefs(req.body?.references);
+    const ai = getAiClient(req);
 
-    // 1. Try Gemini image model if quota is available (or not yet checked)
-    if (!geminiImageQuotaChecked || geminiImageQuotaAvailable) {
-      try {
-        const ai = getAiClient();
-        const response = await ai.models.generateContent({
-          model: 'gemini-3.1-flash-lite-image',
-          contents: { parts: [{ text: prompt }] },
-          config: {
-            imageConfig: { aspectRatio: aspectRatio || '1:1' },
-          },
-        });
+    const lead = refs.length
+      ? 'Use the attached reference image(s) as the exact character design: keep the same face, hairstyle, skin tone, outfit, colors and proportions. Do not copy their background or pose. '
+      : '';
+    const text = `${lead}${prompt} Masterpiece children's book illustration, sharp focus, rich detail, professional composition, consistent character design. Absolutely no text, letters, captions, logos or watermark.`;
 
-        const parts = response.candidates?.[0]?.content?.parts ?? [];
-        const imagePart = parts.find((p) => p.inlineData?.data);
-
-        if (imagePart?.inlineData?.data) {
-          geminiImageQuotaChecked = true;
-          geminiImageQuotaAvailable = true;
-          return res.json({ base64: imagePart.inlineData.data });
-        }
-      } catch (mErr: any) {
-        geminiImageQuotaChecked = true;
-        geminiImageQuotaAvailable = false;
-        // Quota is 0 on free tier; silently route to AI synthesis pipeline
-      }
-    }
-
-    // 2. High-quality AI image generation pipeline (generates real illustrated JPGs)
-    try {
-      const { width, height } = getDimensionsForAspectRatio(aspectRatio || '1:1');
-      const cleanPrompt = encodeURIComponent(`${prompt}, children book illustration, cute, soft lighting`);
-      const seed = Math.floor(Math.random() * 1000000);
-      const url = `https://image.pollinations.ai/prompt/${cleanPrompt}?width=${width}&height=${height}&seed=${seed}&nologo=true`;
-      
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 12000);
-      const imgRes = await fetch(url, {
-        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; SawanKidsStoryStudio/1.1)' },
-        signal: controller.signal,
+    const { value, model } = await runChain('image', MODELS.image, async (m) => {
+      const response = await ai.models.generateContent({
+        model: m,
+        contents: [{ role: 'user', parts: [...refs.map((r) => ({ inlineData: r })), { text }] }],
+        config: {
+          responseModalities: [Modality.TEXT, Modality.IMAGE],
+          imageConfig: LITE_IMAGE_MODELS.has(m) ? { aspectRatio } : { aspectRatio, imageSize: '2K' },
+        },
       });
-      clearTimeout(timeout);
+      const part = (response.candidates?.[0]?.content?.parts ?? []).find((p) => p.inlineData?.data);
+      return part?.inlineData?.data ? { base64: part.inlineData.data, mimeType: part.inlineData.mimeType || 'image/png' } : null;
+    });
 
-      if (imgRes.ok) {
-        const arrayBuf = await imgRes.arrayBuffer();
-        if (arrayBuf.byteLength > 2000) {
-          const base64 = Buffer.from(arrayBuf).toString('base64');
-          return res.json({ base64 });
-        }
-      }
-    } catch {
-      // Gracefully fall through to stylized SVG scene fallback
-    }
-
-    // 3. Guaranteed local SVG scene fallback
-    const fallbackBase64 = generateFallbackIllustration(prompt);
-    return res.json({ base64: fallbackBase64 });
-  } catch (err: any) {
-    return res.status(500).json({ error: err.message || 'Failed to generate image' });
+    return res.json({ ...value, model });
+  } catch (err) {
+    return sendError(res, err, 'Failed to generate image');
   }
 });
 
-// Name analysis endpoint
+// تغليف PCM خام بترويسة WAV
+const pcmToWav = (pcm: Buffer, sampleRate = 24000, channels = 1, bits = 16): Buffer => {
+  const header = Buffer.alloc(44);
+  const byteRate = (sampleRate * channels * bits) / 8;
+  header.write('RIFF', 0);
+  header.writeUInt32LE(36 + pcm.length, 4);
+  header.write('WAVE', 8);
+  header.write('fmt ', 12);
+  header.writeUInt32LE(16, 16);
+  header.writeUInt16LE(1, 20);
+  header.writeUInt16LE(channels, 22);
+  header.writeUInt32LE(sampleRate, 24);
+  header.writeUInt32LE(byteRate, 28);
+  header.writeUInt16LE((channels * bits) / 8, 32);
+  header.writeUInt16LE(bits, 34);
+  header.write('data', 36);
+  header.writeUInt32LE(pcm.length, 40);
+  return Buffer.concat([header, pcm]);
+};
+
+const toWavPayload = (base64: string, mimeType = ''): { base64: string; mimeType: string } => {
+  if (/wav/i.test(mimeType)) return { base64, mimeType: 'audio/wav' };
+  if (/mpeg|mp3/i.test(mimeType)) return { base64, mimeType: 'audio/mpeg' };
+  const rate = Number(/rate=(\d+)/i.exec(mimeType)?.[1]) || 24000;
+  return { base64: pcmToWav(Buffer.from(base64, 'base64'), rate).toString('base64'), mimeType: 'audio/wav' };
+};
+
+const narrationDirective = (language: string, dialect: string): string => {
+  if (language !== 'Arabic') {
+    return 'Read aloud as a warm, expressive professional storyteller for young children, clear diction, calm pace, natural pauses between sentences:';
+  }
+  if (!dialect || dialect === 'Modern Standard') {
+    return 'Read the following Arabic text aloud as a warm, expressive professional storyteller for young children, in flawless Modern Standard Arabic (Fusha) with precise makharij and complete, correct i\'rab exactly as diacritized, calm pace, natural pauses between sentences:';
+  }
+  return `Read aloud as a warm, expressive professional storyteller for young children, in natural authentic ${dialect} Arabic, clear diction, calm pace, natural pauses:`;
+};
+
+app.post('/api/narrate', async (req: Request, res: Response) => {
+  try {
+    const text = clip(req.body?.text, 4000);
+    if (!text) return res.status(400).json({ error: 'Narration text is required.', code: 'FAILED' });
+    const voice = VOICES.has(req.body?.voice) ? req.body.voice : 'Sulafat';
+    const directive = narrationDirective(clip(req.body?.language, 20), clip(req.body?.dialect, 30));
+    const ai = getAiClient(req);
+
+    const { value, model } = await runChain('tts', MODELS.tts, async (m) => {
+      try {
+        const response = await ai.models.generateContent({
+          model: m,
+          contents: [{ role: 'user', parts: [{ text: `${directive}\n\n${text}` }] }],
+          config: {
+            responseModalities: [Modality.AUDIO],
+            speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voice } } },
+          },
+        });
+        const part = (response.candidates?.[0]?.content?.parts ?? []).find((p) => p.inlineData?.data);
+        return part?.inlineData?.data ? toWavPayload(part.inlineData.data, part.inlineData.mimeType) : null;
+      } catch (err) {
+        if (classify(err) !== 'skip') throw err;
+        // بعض نماذج TTS الجديدة متاحة عبر Interactions فقط
+        const r: any = await (ai as any).interactions.create({
+          model: m,
+          input: `${directive}\n\n${text}`,
+          response_format: { type: 'audio' },
+          generation_config: { speech_config: [{ voice }] },
+        });
+        const audio = r?.output_audio;
+        return audio?.data ? toWavPayload(audio.data, audio.mime_type) : null;
+      }
+    });
+
+    return res.json({ ...value, model });
+  } catch (err) {
+    return sendError(res, err, 'Failed to narrate');
+  }
+});
+
+// موسيقى خلفية مولّدة بـ Lyria (موسيقى بدون كلمات، بعلامة SynthID)
+app.post('/api/music', async (req: Request, res: Response) => {
+  try {
+    const mood = clip(req.body?.prompt, 600) || 'A gentle, magical lullaby for a children storybook';
+    const ai = getAiClient(req);
+    const { value, model } = await runChain('music', MODELS.music, async (m) => {
+      const r: any = await (ai as any).interactions.create({
+        model: m,
+        input: `${mood}. Instrumental only, no vocals, no lyrics. Soft, warm, child friendly, steady and loop-friendly, suitable as a quiet background under narration${m === 'lyria-3.5' ? ', about 60 seconds long' : ''}.`,
+      });
+      const audio = r?.output_audio;
+      return audio?.data ? { base64: audio.data as string, mimeType: (audio.mime_type as string) || 'audio/mpeg' } : null;
+    });
+    return res.json({ ...value, model });
+  } catch (err) {
+    return sendError(res, err, 'Failed to generate music');
+  }
+});
+
 app.post('/api/analyze-name', async (req: Request, res: Response) => {
   try {
-    const { name, language } = req.body;
-    const trimmed = (name || '').trim().slice(0, 60);
-    if (!trimmed) {
-      return res.status(400).json({ error: 'Please enter a name first.' });
-    }
+    const { language } = req.body ?? {};
+    const trimmed = clip(req.body?.name, 60);
+    if (!trimmed) return res.status(400).json({ error: 'Please enter a name first.', code: 'FAILED' });
 
-    const ai = getAiClient();
+    const ai = getAiClient(req);
     const prompt =
       language === 'Arabic'
         ? `حلّل اسم "${trimmed}" للأطفال: المعنى، الأصل، وثلاث صفات إيجابية مرتبطة به. أسلوب لطيف ومناسب للأطفال. أعد JSON فقط.`
         : `Analyze the name "${trimmed}" for kids: its meaning, origin, and three positive traits associated with it. Warm, kid-friendly tone. Return JSON only.`;
 
-    const response = await generateContentWithRetry(ai, {
-      contents: prompt,
-      config: {
-        responseMimeType: 'application/json',
-        responseSchema: NAME_ANALYSIS_SCHEMA,
-      },
+    const { value } = await runChain('name', MODELS.text, async (model) => {
+      const response = await ai.models.generateContent({
+        model,
+        contents: prompt,
+        config: { responseMimeType: 'application/json', responseSchema: NAME_ANALYSIS_SCHEMA },
+      });
+      return response.text ? parseJson(response.text) : null;
     });
-
-    const parsed = JSON.parse(response.text ?? '{}');
-    return res.json(parsed);
-  } catch (err: any) {
-    console.error('Error analyzing name:', err);
-    return res.status(500).json({ error: err.message || 'Failed to analyze name' });
+    return res.json(value);
+  } catch (err) {
+    return sendError(res, err, 'Failed to analyze name');
   }
 });
 
-// Vite middleware (dev) / static files (prod)
 const isProduction = process.env.NODE_ENV === 'production';
 
 if (!isProduction) {
@@ -432,13 +472,17 @@ if (!isProduction) {
   app.use(vite.middlewares);
 } else {
   const distPath = path.resolve(__dirname, 'dist');
-  app.use(express.static(distPath));
-  app.get('*', (_req, res) => {
+  app.use(express.static(distPath, { index: false, maxAge: '1y', immutable: true, setHeaders: (res, file) => {
+    if (/(index\.html|sw\.js|manifest\.webmanifest)$/.test(file)) res.setHeader('Cache-Control', 'no-cache');
+  } }));
+  // Express 5: '*' لم يعد مسار صالح
+  app.get(/^(?!\/api\/).*/, (_req, res) => {
+    res.setHeader('Cache-Control', 'no-cache');
     res.sendFile(path.resolve(distPath, 'index.html'));
   });
 }
 
-const PORT = 3000;
+const PORT = Number(process.env.PORT) || 3000;
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`Server listening on http://0.0.0.0:${PORT}`);
 });
