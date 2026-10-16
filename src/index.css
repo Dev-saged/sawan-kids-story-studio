@@ -114,3 +114,31 @@ body {
     transition-duration: 0.01ms !important;
   }
 }
+
+@media print {
+  body {
+    background: #ffffff !important;
+  }
+  nav,
+  main,
+  button,
+  details {
+    display: none !important;
+  }
+  #printable-story-root {
+    position: static !important;
+    display: block !important;
+    opacity: 1 !important;
+    visibility: visible !important;
+    width: 100% !important;
+    overflow: visible !important;
+    z-index: 1000 !important;
+  }
+  #printable-story-root [data-print-page] {
+    page-break-after: always !important;
+    break-after: page !important;
+    margin: 0 auto !important;
+    box-shadow: none !important;
+    border: none !important;
+  }
+}
