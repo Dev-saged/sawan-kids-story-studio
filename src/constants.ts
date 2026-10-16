@@ -13,8 +13,8 @@ import {
 // gemini-3-flash-preview / gemini-2.5-flash-image (the original spec's picks) are being
 // superseded by GA endpoints; using the current stable GA models avoids preview
 // rate limits and the Aug 17, 2026 preview-endpoint sunset window.
-export const TEXT_MODEL = 'gemini-3.6-flash';
-export const IMAGE_MODEL = 'gemini-3.1-flash-image';
+export const TEXT_MODEL = 'gemini-3.8-flash';
+export const IMAGE_MODEL = 'gemini-3.1-flash-lite-image';
 
 export const MAX_IDEA_LENGTH = 500;
 export const IMAGE_BATCH_SIZE = 3;

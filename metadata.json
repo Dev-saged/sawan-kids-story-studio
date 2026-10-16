@@ -1,0 +1,7 @@
+{
+  "name": "Sawan Kids Story Studio",
+  "description": "AI-powered illustrated story studio for kids with stories in Arabic and English, voice, learning articles, and science games.",
+  "capabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

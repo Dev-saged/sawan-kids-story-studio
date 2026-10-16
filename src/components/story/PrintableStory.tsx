@@ -29,7 +29,13 @@ export default function PrintableStory({ storyData, images, containerId }: Props
           {imageByPage.get(page.page) && (
             // eslint-disable-next-line @next/next/no-img-element
             <img
-              src={`data:image/png;base64,${imageByPage.get(page.page)}`}
+              src={
+                imageByPage.get(page.page)!.startsWith('data:')
+                  ? imageByPage.get(page.page)!
+                  : imageByPage.get(page.page)!.startsWith('PHN2') || imageByPage.get(page.page)!.startsWith('PD94')
+                  ? `data:image/svg+xml;base64,${imageByPage.get(page.page)}`
+                  : `data:image/png;base64,${imageByPage.get(page.page)}`
+              }
               alt=""
               style={{ width: '100%', height: 620, objectFit: 'cover' }}
             />

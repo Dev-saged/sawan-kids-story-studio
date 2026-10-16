@@ -33,11 +33,19 @@ export default function StoryReader({ storyData, images, language, printableCont
     }
   };
 
+  const imageSrc = currentImage
+    ? (currentImage.startsWith('data:')
+        ? currentImage
+        : currentImage.startsWith('PHN2') || currentImage.startsWith('PD94')
+        ? `data:image/svg+xml;base64,${currentImage}`
+        : `data:image/png;base64,${currentImage}`)
+    : null;
+
   return (
     <div className="space-y-6">
       <div className="page-corner overflow-hidden rounded-3xl border border-dream/20 bg-white/70 shadow-sm dark:bg-white/5">
-        {currentImage && (
-          <img src={`data:image/png;base64,${currentImage}`} alt="" className="aspect-[4/3] w-full object-cover" />
+        {imageSrc && (
+          <img src={imageSrc} alt="" className="aspect-[4/3] w-full object-cover" />
         )}
         <div className="p-5" dir={ar ? 'rtl' : 'ltr'}>
           <p className="text-base leading-relaxed text-ink dark:text-moonlight">{page.text}</p>

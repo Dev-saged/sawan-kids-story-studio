@@ -9,7 +9,8 @@ import tailwindcss from '@tailwindcss/vite';
 export default defineConfig({
   server: {
     port: 3000,
-    host: '0.0.0.0', // required so the app is reachable from the phone's browser under Termux
+    host: '0.0.0.0',
+    allowedHosts: true,
   },
   plugins: [react(), tailwindcss()],
   resolve: {
