@@ -9,6 +9,7 @@ export default defineConfig({
   server: {
     port: 3000,
     host: '0.0.0.0', // required so the app is reachable from the phone's browser under Termux
+    allowedHosts: true, // required when the dev server is proxied by AI Studio / a tunnel
   },
   plugins: [react(), tailwindcss()],
   resolve: {

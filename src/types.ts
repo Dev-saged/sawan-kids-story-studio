@@ -17,7 +17,9 @@ export type ArabicDialect =
   | 'Algerian'
   | 'Tunisian'
   | 'Sudanese'
-  | 'Yemeni';
+  | 'Yemeni'
+  | 'Libyan'
+  | 'Mauritanian';
 
 export type AgeGroup = '3-4' | '4-6' | '7-9' | '9-12';
 
@@ -39,7 +41,11 @@ export type ArtStyle =
   | 'Pastel Dream'
   | 'Pixel Art'
   | 'Chalk Drawing'
-  | 'Comic Book';
+  | 'Comic Book'
+  | 'Cute Cartoon'
+  | 'Educational Line Cartoon'
+  | 'Fantasy Fairy Tale'
+  | 'Bedtime Story';
 
 export type AspectRatio = '1:1' | '16:9' | '9:16' | '4:3' | '3:4';
 
@@ -66,6 +72,9 @@ export interface StoryPage {
   page: number;
   text: string;
   image_prompt: string;
+  generatedImage?: string;
+  isGeneratingImage?: boolean;
+  imageError?: boolean;
 }
 
 export interface StoryInfo {
@@ -73,6 +82,8 @@ export interface StoryInfo {
   language: string;
   age_group: string;
   art_style: string;
+  aspect_ratio: AspectRatio;
+  dialect?: string;
   lessons: string[];
 }
 
@@ -82,10 +93,13 @@ export interface StoryData {
   pages: StoryPage[];
 }
 
+// Legacy v1.2 save format (images stored beside the story); kept only so old JSON files still import.
 export interface PageImage {
   page: number;
   base64: string;
 }
+
+export type BookSize = 'A4' | 'Square';
 
 export interface NameAnalysis {
   meaning: string;

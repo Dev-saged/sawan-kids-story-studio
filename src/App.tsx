@@ -4,19 +4,17 @@ import NavBar, { Section } from './components/layout/NavBar';
 import StorySetupForm from './components/story/StorySetupForm';
 import GenerationProgress from './components/story/GenerationProgress';
 import StoryReader from './components/story/StoryReader';
-import PrintableStory from './components/story/PrintableStory';
 import GamesDashboard from './components/games/GamesDashboard';
 import ReadLearn from './components/readLearn/ReadLearn';
 import NameMeaning from './components/nameMeaning/NameMeaning';
 import ApiKeyGate from './components/apiKey/ApiKeyGate';
 import { useTheme } from './hooks/useTheme';
 import { StoryGenerator } from './services/gemini';
-import { loadStoryFromJSON } from './services/export';
+import { hasSavedStory, loadStoryFromJSON, loadStoryLocally } from './services/export';
 import { clearApiKey, getApiKey } from './services/apiKey';
-import { GenerationStage, Language, PageImage, StoryData, StoryParams } from './types';
+import { GenerationStage, Language, StoryData, StoryPage, StoryParams } from './types';
 
 const LANGUAGE_STORAGE_KEY = 'sawan-language';
-const PRINTABLE_CONTAINER_ID = 'printable-story-root';
 
 const getInitialLanguage = (): Language => {
   const stored = localStorage.getItem(LANGUAGE_STORAGE_KEY);
@@ -34,7 +32,7 @@ export default function App() {
   const [message, setMessage] = useState('');
   const [isPaused, setIsPaused] = useState(false);
   const [storyData, setStoryData] = useState<StoryData | null>(null);
-  const [images, setImages] = useState<PageImage[]>([]);
+  const [storyKey, setStoryKey] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
   const generatorRef = useRef<StoryGenerator | null>(null);
@@ -45,6 +43,14 @@ export default function App() {
     document.documentElement.lang = language === 'Arabic' ? 'ar' : 'en';
     localStorage.setItem(LANGUAGE_STORAGE_KEY, language);
   }, [language]);
+
+  // Text first; pictures are painted page by page inside the reader (per-visitor key, real AI images only).
+  const openStory = (data: StoryData) => {
+    setStoryData(data);
+    setStoryKey((k) => k + 1);
+    setStage('done');
+    setError(null);
+  };
 
   const runGeneration = async (params: StoryParams, pageCount: number) => {
     setError(null);
@@ -60,20 +66,15 @@ export default function App() {
         setProgress(p);
         setMessage(m);
       });
-      setStoryData(data);
-
-      setStage('illustrating');
-      const generatedImages = await generator.generateImagesForStory(data, params.aspectRatio, params.artStyle, (p, m) => {
-        setProgress(p);
-        setMessage(m);
-      });
-      setImages(generatedImages);
-      setStage('done');
+      openStory(data);
     } catch (err) {
       setError((err as Error).message);
       setStage('error');
     }
   };
+
+  const updatePages = (updater: (pages: StoryPage[]) => StoryPage[]) =>
+    setStoryData((prev) => (prev ? { ...prev, pages: updater(prev.pages) } : prev));
 
   const handlePause = () => {
     generatorRef.current?.pause();
@@ -88,7 +89,6 @@ export default function App() {
   const startOver = () => {
     setStage('idle');
     setStoryData(null);
-    setImages([]);
     setError(null);
     setProgress(0);
   };
@@ -100,16 +100,18 @@ export default function App() {
     setHasKey(false);
   };
 
+  const handleLoadSaved = () => {
+    const saved = loadStoryLocally();
+    if (saved) openStory(saved);
+    else setError(language === 'Arabic' ? 'تعذّر قراءة القصة المحفوظة.' : 'Could not read the saved story.');
+  };
+
   const handleImportFile = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file) return;
     try {
-      const { storyData: importedStory, images: importedImages } = await loadStoryFromJSON(file);
-      setStoryData(importedStory);
-      setImages(importedImages);
-      setStage('done');
-      setError(null);
+      openStory(await loadStoryFromJSON(file));
     } catch (err) {
       setError((err as Error).message);
     }
@@ -135,7 +137,18 @@ export default function App() {
           <>
             {stage === 'idle' && (
               <div className="space-y-5">
-                <StorySetupForm language={language} onSubmit={runGeneration} disabled={false} />
+                <StorySetupForm
+                  language={language}
+                  onSubmit={runGeneration}
+                  onLoadStory={handleLoadSaved}
+                  canLoadStory={hasSavedStory()}
+                  disabled={false}
+                />
+                {error && (
+                  <p role="alert" className="text-center text-sm text-coral">
+                    {error}
+                  </p>
+                )}
                 <div className="flex flex-col items-center gap-3">
                   <button
                     type="button"
@@ -184,16 +197,7 @@ export default function App() {
             )}
 
             {stage === 'done' && storyData && (
-              <>
-                <StoryReader
-                  storyData={storyData}
-                  images={images}
-                  language={language}
-                  printableContainerId={PRINTABLE_CONTAINER_ID}
-                  onStartOver={startOver}
-                />
-                <PrintableStory storyData={storyData} images={images} containerId={PRINTABLE_CONTAINER_ID} />
-              </>
+              <StoryReader key={storyKey} storyData={storyData} language={language} onPagesChange={updatePages} onStartOver={startOver} />
             )}
           </>
         )}

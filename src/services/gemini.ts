@@ -1,15 +1,6 @@
-import { GoogleGenAI, Type, type Schema } from '@google/genai';
-import {
-  AspectRatio,
-  Character,
-  Language,
-  NameAnalysis,
-  PageImage,
-  StoryData,
-  StoryParams,
-  StoryPage,
-} from '../types';
-import { IMAGE_MODEL, MAX_IDEA_LENGTH, IMAGE_BATCH_SIZE, SYSTEM_INSTRUCTION, TEXT_MODEL } from '../constants';
+import { GoogleGenAI, Type, type GenerateContentParameters, type GenerateContentResponse, type Schema } from '@google/genai';
+import { AspectRatio, Language, NameAnalysis, StoryData, StoryParams, StoryPage } from '../types';
+import { ART_STYLE_OPTIONS, IMAGE_MODEL, MAX_IDEA_LENGTH, SYSTEM_INSTRUCTION, TEXT_MODEL } from '../constants';
 import { getApiKey } from './apiKey';
 
 export const API_KEY_MISSING = 'API_KEY_MISSING';
@@ -20,6 +11,55 @@ const getClient = (): GoogleGenAI => {
     throw new Error(API_KEY_MISSING);
   }
   return new GoogleGenAI({ apiKey });
+};
+
+const withTimeout = <T>(promise: Promise<T>, ms: number): Promise<T> =>
+  new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`Request timed out after ${Math.round(ms / 1000)}s.`)), ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      }
+    );
+  });
+
+// Auth/validation failures never succeed on retry; everything else (timeouts, 5xx, 429) gets one more try.
+const isRetryable = (err: unknown): boolean => {
+  const status = (err as { status?: number }).status;
+  return !(status === 400 || status === 401 || status === 403);
+};
+
+const safeGenerateContent = async (
+  ai: GoogleGenAI,
+  request: GenerateContentParameters,
+  maxRetries = 1,
+  timeoutMs = 45000
+): Promise<GenerateContentResponse> => {
+  let lastError: unknown = null;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await withTimeout(ai.models.generateContent(request), timeoutMs);
+    } catch (err) {
+      lastError = err;
+      if (attempt < maxRetries && isRetryable(err)) {
+        await new Promise((r) => setTimeout(r, 2000));
+      } else {
+        break;
+      }
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error('Generation failed after retries.');
+};
+
+// Expands the art-style name into the full descriptive prompt the image model needs.
+export const getArtStylePrompt = (style: string): string => {
+  const option = ART_STYLE_OPTIONS.find((o) => o.value === style);
+  return option ? option.prompt : `${style} illustration style, high quality, children friendly`;
 };
 
 const STORY_RESPONSE_SCHEMA: Schema = {
@@ -90,22 +130,34 @@ const buildUserPrompt = (params: StoryParams, pageCount: number): string => {
     `Age group: ${params.ageGroup}`,
     `Story type: ${params.storyType}`,
     `Target page count: ${pageCount}`,
-    `Art style: ${params.artStyle}`,
+    `Art style: ${getArtStylePrompt(params.artStyle)}`,
     'Follow the response schema exactly and return valid JSON only.',
   ].join('\n');
 };
 
-const buildImagePrompt = (page: StoryPage, characters: Character[], artStyle: string): string => {
-  const characterSheet = characters
-    .map((c) => `${c.name} (${c.gender}, ${c.age}): ${c.description}`)
-    .join('; ');
+// Full prompt for one page: style + locked character sheet (for cross-page consistency) + the scene.
+export const buildPageImagePrompt = (story: StoryData, page: StoryPage): string => {
+  const characterSheet = story.characters
+    .map((c) => `${c.name} (${c.gender || 'character'}, ${c.age}): ${c.description}. MUST remain visually identical (same face, species, colors).`)
+    .join(' | ');
 
   return [
-    `Art style: ${artStyle}.`,
-    `Consistent character designs — do not alter appearance, species, or colors: ${characterSheet}.`,
+    `Art style: ${getArtStylePrompt(story.story_info.art_style)}.`,
+    `CHARACTERS ENFORCED: ${characterSheet}.`,
     `Scene: ${page.image_prompt}`,
     'No text, no captions, no watermarks in the image.',
   ].join(' ');
+};
+
+const FALLBACK_PAGE_TEXT = {
+  ar: 'في يوم جميل، بدأ بطلنا مغامرة رائعة مليئة بالمفاجآت، وكان متحمسًا لاكتشاف ما ينتظره.',
+  en: 'One beautiful day, our hero began an exciting adventure full of surprises.',
+};
+
+// The model sometimes returns an empty page or a "This is page N" placeholder instead of narrative.
+const isPlaceholderText = (text: string): boolean => {
+  const lower = text.toLowerCase();
+  return text.length < 10 || lower.startsWith('this is page') || text.startsWith('هذه هي الصفحة رقم');
 };
 
 export class StoryGenerator {
@@ -143,28 +195,53 @@ export class StoryGenerator {
     }
 
     onProgress(5, 'Preparing story request...');
+    await this.waitIfPaused();
 
     let raw = '';
     try {
-      const response = await this.ai.models.generateContent({
-        model: TEXT_MODEL,
-        contents: buildUserPrompt(params, pageCount),
-        config: {
-          systemInstruction: SYSTEM_INSTRUCTION,
-          responseMimeType: 'application/json',
-          responseSchema: STORY_RESPONSE_SCHEMA,
+      const response = await safeGenerateContent(
+        this.ai,
+        {
+          model: TEXT_MODEL,
+          contents: buildUserPrompt(params, pageCount),
+          config: {
+            systemInstruction: SYSTEM_INSTRUCTION,
+            responseMimeType: 'application/json',
+            responseSchema: STORY_RESPONSE_SCHEMA,
+          },
         },
-      });
+        1,
+        60000
+      );
       raw = response.text ?? '';
     } catch (err) {
       throw new Error(`Story generation request failed: ${(err as Error).message}`);
     }
 
     onProgress(60, 'Parsing story structure...');
-    const storyData = this.parseStoryResponse(raw);
+    const parsed = this.parseStoryResponse(raw);
+    this.validateStoryData(parsed);
 
     onProgress(80, 'Validating story pages...');
-    this.validateStoryData(storyData);
+    const isArabic = params.language === 'Arabic';
+    const storyData: StoryData = {
+      ...parsed,
+      story_info: {
+        ...parsed.story_info,
+        lessons: parsed.story_info.lessons ?? [],
+        art_style: params.artStyle,
+        aspect_ratio: params.aspectRatio,
+        dialect: params.dialect,
+      },
+      pages: parsed.pages.map((p, i) => {
+        const text = (p.text ?? '').trim();
+        return {
+          page: i + 1,
+          text: isPlaceholderText(text) ? (isArabic ? FALLBACK_PAGE_TEXT.ar : FALLBACK_PAGE_TEXT.en) : text,
+          image_prompt: p.image_prompt,
+        };
+      }),
+    };
 
     onProgress(100, 'Story text ready.');
     return storyData;
@@ -189,46 +266,20 @@ export class StoryGenerator {
     if (!data?.pages?.length) throw new Error('The model returned zero pages.');
     if (!data?.characters?.length) throw new Error('The model returned zero characters.');
   }
-
-  public async generateImagesForStory(
-    storyData: StoryData,
-    aspectRatio: AspectRatio,
-    artStyle: string,
-    onProgress: (progress: number, message: string) => void
-  ): Promise<PageImage[]> {
-    const results: PageImage[] = [];
-    const total = storyData.pages.length;
-
-    for (let i = 0; i < total; i += IMAGE_BATCH_SIZE) {
-      await this.waitIfPaused();
-
-      const batch = storyData.pages.slice(i, i + IMAGE_BATCH_SIZE);
-      const batchResults = await Promise.all(
-        batch.map(async (page) => {
-          const prompt = buildImagePrompt(page, storyData.characters, artStyle);
-          const base64 = await generateIllustration(prompt, aspectRatio);
-          return { page: page.page, base64 };
-        })
-      );
-
-      results.push(...batchResults);
-      onProgress(
-        Math.round(((i + batchResults.length) / total) * 100),
-        `Illustrated ${i + batchResults.length} of ${total} pages...`
-      );
-    }
-
-    return results.sort((a, b) => a.page - b.page);
-  }
 }
 
 export const generateIllustration = async (prompt: string, aspectRatio: AspectRatio): Promise<string> => {
   const ai = getClient();
-  const response = await ai.models.generateContent({
-    model: IMAGE_MODEL,
-    contents: { parts: [{ text: prompt }] },
-    config: { imageConfig: { aspectRatio } },
-  });
+  const response = await safeGenerateContent(
+    ai,
+    {
+      model: IMAGE_MODEL,
+      contents: { parts: [{ text: prompt }] },
+      config: { imageConfig: { aspectRatio } },
+    },
+    1,
+    90000
+  );
 
   const parts = response.candidates?.[0]?.content?.parts ?? [];
   const imagePart = parts.find((p) => p.inlineData?.data);
@@ -238,6 +289,21 @@ export const generateIllustration = async (prompt: string, aspectRatio: AspectRa
   }
 
   return imagePart.inlineData.data;
+};
+
+// Rewrites only the camera angle / composition; subject and style stay as they were.
+export const regeneratePrompt = async (currentPrompt: string): Promise<string> => {
+  const ai = getClient();
+  const response = await safeGenerateContent(
+    ai,
+    {
+      model: TEXT_MODEL,
+      contents: `Rewrite the following image prompt to change the camera angle or composition, while keeping the subject, characters and art style exactly the same. Original: "${currentPrompt}". Return ONLY the new prompt text.`,
+    },
+    1,
+    20000
+  );
+  return response.text?.trim() || currentPrompt;
 };
 
 export const analyzeNameMeaning = async (name: string, language: Language): Promise<NameAnalysis> => {
@@ -250,14 +316,19 @@ export const analyzeNameMeaning = async (name: string, language: Language): Prom
       ? `حلّل اسم "${trimmed}" للأطفال: المعنى، الأصل، وثلاث صفات إيجابية مرتبطة به. أسلوب لطيف ومناسب للأطفال. أعد JSON فقط.`
       : `Analyze the name "${trimmed}" for kids: its meaning, origin, and three positive traits associated with it. Warm, kid-friendly tone. Return JSON only.`;
 
-  const response = await ai.models.generateContent({
-    model: TEXT_MODEL,
-    contents: prompt,
-    config: {
-      responseMimeType: 'application/json',
-      responseSchema: NAME_ANALYSIS_SCHEMA,
+  const response = await safeGenerateContent(
+    ai,
+    {
+      model: TEXT_MODEL,
+      contents: prompt,
+      config: {
+        responseMimeType: 'application/json',
+        responseSchema: NAME_ANALYSIS_SCHEMA,
+      },
     },
-  });
+    1,
+    30000
+  );
 
   return JSON.parse(response.text ?? '{}') as NameAnalysis;
 };
