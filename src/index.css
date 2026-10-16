@@ -1,0 +1,115 @@
+@import "tailwindcss";
+
+/* Tailwind v4 uses prefers-color-scheme for `dark:` by default; we toggle a
+   class on <html> instead (persisted in localStorage), so re-bind the variant. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --color-dusk: #1b1533;
+  --color-ink: #241b2f;
+  --color-moonlight: #f6f1fa;
+  --color-lantern: #f0a202;
+  --color-coral: #ff6f59;
+  --color-dream: #a99be0;
+  --color-star: #ffe9a8;
+
+  --font-display-en: 'Fredoka', 'Baloo Bhaijaan 2', sans-serif;
+  --font-display-ar: 'Baloo Bhaijaan 2', 'Fredoka', sans-serif;
+  --font-body-en: 'Nunito', 'Cairo', sans-serif;
+  --font-body-ar: 'Cairo', 'Nunito', sans-serif;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background-color: var(--color-moonlight);
+  color: var(--color-ink);
+  font-family: var(--font-body-en);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.dark body {
+  background-color: var(--color-dusk);
+  color: var(--color-moonlight);
+}
+
+[dir='rtl'] body {
+  font-family: var(--font-body-ar);
+}
+
+.font-display {
+  font-family: var(--font-display-en);
+}
+
+[dir='rtl'] .font-display {
+  font-family: var(--font-display-ar);
+}
+
+/* Signature card cue: a small folded page-corner, evoking a real storybook page. */
+.page-corner {
+  position: relative;
+  overflow: hidden;
+}
+
+.page-corner::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  inset-inline-end: 0;
+  width: 0;
+  height: 0;
+  border-style: solid;
+  border-width: 0 18px 18px 0;
+  border-color: transparent color-mix(in srgb, var(--color-lantern) 70%, transparent) transparent transparent;
+}
+
+[dir='rtl'] .page-corner::after {
+  border-width: 0 0 18px 18px;
+  border-color: transparent transparent color-mix(in srgb, var(--color-lantern) 70%, transparent) transparent;
+}
+
+@keyframes lantern-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-lantern) 45%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 8px color-mix(in srgb, var(--color-lantern) 0%, transparent);
+  }
+}
+
+.animate-lantern {
+  animation: lantern-pulse 2.4s ease-in-out infinite;
+}
+
+@keyframes erupt-plume {
+  0% {
+    transform: translateY(0) scale(0.6);
+    opacity: 0;
+  }
+  30% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(-70px) scale(1.4);
+    opacity: 0;
+  }
+}
+
+.animate-erupt {
+  animation: erupt-plume 900ms ease-out forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-lantern,
+  .animate-erupt {
+    animation: none !important;
+  }
+  * {
+    transition-duration: 0.01ms !important;
+  }
+}
