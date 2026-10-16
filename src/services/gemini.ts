@@ -10,13 +10,14 @@ import {
   StoryPage,
 } from '../types';
 import { IMAGE_MODEL, MAX_IDEA_LENGTH, IMAGE_BATCH_SIZE, SYSTEM_INSTRUCTION, TEXT_MODEL } from '../constants';
+import { getApiKey } from './apiKey';
+
+export const API_KEY_MISSING = 'API_KEY_MISSING';
 
 const getClient = (): GoogleGenAI => {
-  const apiKey = import.meta.env.VITE_GEMINI_API_KEY as string | undefined;
+  const apiKey = getApiKey();
   if (!apiKey) {
-    throw new Error(
-      'VITE_GEMINI_API_KEY is missing. Copy .env.example to .env and set your Gemini API key.'
-    );
+    throw new Error(API_KEY_MISSING);
   }
   return new GoogleGenAI({ apiKey });
 };

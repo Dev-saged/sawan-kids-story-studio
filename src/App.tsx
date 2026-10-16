@@ -8,9 +8,11 @@ import PrintableStory from './components/story/PrintableStory';
 import GamesDashboard from './components/games/GamesDashboard';
 import ReadLearn from './components/readLearn/ReadLearn';
 import NameMeaning from './components/nameMeaning/NameMeaning';
+import ApiKeyGate from './components/apiKey/ApiKeyGate';
 import { useTheme } from './hooks/useTheme';
 import { StoryGenerator } from './services/gemini';
 import { loadStoryFromJSON } from './services/export';
+import { clearApiKey, getApiKey } from './services/apiKey';
 import { GenerationStage, Language, PageImage, StoryData, StoryParams } from './types';
 
 const LANGUAGE_STORAGE_KEY = 'sawan-language';
@@ -25,6 +27,7 @@ export default function App() {
   const [language, setLanguage] = useState<Language>(getInitialLanguage);
   const [theme, toggleTheme] = useTheme();
   const [section, setSection] = useState<Section>('studio');
+  const [hasKey, setHasKey] = useState<boolean>(() => Boolean(getApiKey()));
 
   const [stage, setStage] = useState<GenerationStage>('idle');
   const [progress, setProgress] = useState(0);
@@ -92,6 +95,11 @@ export default function App() {
 
   const handleImportClick = () => fileInputRef.current?.click();
 
+  const handleChangeKey = () => {
+    clearApiKey();
+    setHasKey(false);
+  };
+
   const handleImportFile = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = '';
@@ -121,12 +129,14 @@ export default function App() {
       />
 
       <main className="mx-auto w-full max-w-2xl flex-1 px-4 pb-28 pt-6">
-        {section === 'studio' && (
+        {section === 'studio' && !hasKey && <ApiKeyGate language={language} onSaved={() => setHasKey(true)} />}
+
+        {section === 'studio' && hasKey && (
           <>
             {stage === 'idle' && (
               <div className="space-y-5">
                 <StorySetupForm language={language} onSubmit={runGeneration} disabled={false} />
-                <div className="text-center">
+                <div className="flex flex-col items-center gap-3">
                   <button
                     type="button"
                     onClick={handleImportClick}
@@ -134,6 +144,13 @@ export default function App() {
                   >
                     <Upload size={14} aria-hidden />
                     {ar ? 'استيراد قصة محفوظة (JSON)' : 'Import a saved story (JSON)'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleChangeKey}
+                    className="text-sm font-medium text-ink/60 underline-offset-4 hover:underline dark:text-moonlight/60"
+                  >
+                    {ar ? 'تغيير مفتاح API' : 'Change API key'}
                   </button>
                   <input ref={fileInputRef} type="file" accept="application/json" className="hidden" onChange={handleImportFile} />
                 </div>
@@ -183,7 +200,8 @@ export default function App() {
 
         {section === 'games' && <GamesDashboard language={language} />}
         {section === 'learn' && <ReadLearn language={language} />}
-        {section === 'names' && <NameMeaning language={language} />}
+        {section === 'names' &&
+          (hasKey ? <NameMeaning language={language} /> : <ApiKeyGate language={language} onSaved={() => setHasKey(true)} />)}
       </main>
     </div>
   );
