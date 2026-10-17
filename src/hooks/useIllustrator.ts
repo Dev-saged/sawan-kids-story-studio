@@ -9,7 +9,11 @@ type Updater = (fn: (s: StoryData) => StoryData) => void;
 type Ref = { data: string; mimeType: string };
 
 const CONCURRENCY = 2;
-const FATAL = new Set(['QUOTA', 'AUTH', 'OFFLINE']);
+// أخطاء لا فائدة من تكرار الطلب معها
+const FATAL = new Set(['AUTH', 'BILLING', 'NOMODEL', 'OFFLINE']);
+// حصة مؤقتة: نتوقف ثم نكمل تلقائياً (النص والصوت يعملان بحصص نماذج أخرى)
+const RESUME_AFTER_MS = 45_000;
+const MAX_AUTO_RESUMES = 3;
 
 // خط إنتاج الصور: ورقة الشخصيات ← الغلاف ← الصفحات (الأقرب للقارئ أولاً، صورتان بالتوازي)
 export function useIllustrator(story: StoryData, update: Updater, focusIndex: number) {
@@ -21,6 +25,9 @@ export function useIllustrator(story: StoryData, update: Updater, focusIndex: nu
   const refsCache = useRef<Ref[] | null>(null);
   const ctrlRef = useRef<AbortController | null>(null);
   const runningRef = useRef(false);
+  const resumeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const resumes = useRef(0);
+  const retryAllRef = useRef<() => void>(() => undefined);
   const [error, setError] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
 
@@ -111,7 +118,17 @@ export function useIllustrator(story: StoryData, update: Updater, focusIndex: nu
     const ctrl = new AbortController();
     ctrlRef.current = ctrl;
     const fatal = (err: unknown) => {
-      if (err instanceof ApiError && FATAL.has(err.code)) {
+      if (err instanceof ApiError && err.code === 'QUOTA' && resumes.current < MAX_AUTO_RESUMES) {
+        const ar = document.documentElement.lang === 'ar';
+        setError(`${err.message} ${ar ? 'سنكمل الرسم تلقائياً بعد قليل.' : 'We will resume painting automatically shortly.'}`);
+        ctrl.abort();
+        resumeTimer.current = setTimeout(() => {
+          resumes.current += 1;
+          retryAllRef.current();
+        }, RESUME_AFTER_MS);
+        return true;
+      }
+      if (err instanceof ApiError && (FATAL.has(err.code) || err.code === 'QUOTA')) {
         setError(err.message);
         ctrl.abort();
         return true;
@@ -144,10 +161,12 @@ export function useIllustrator(story: StoryData, update: Updater, focusIndex: nu
 
   useEffect(() => {
     refsCache.current = null;
+    resumes.current = 0;
     run();
     return () => {
       ctrlRef.current?.abort();
       runningRef.current = false;
+      if (resumeTimer.current) clearTimeout(resumeTimer.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [story.id]);
@@ -165,9 +184,11 @@ export function useIllustrator(story: StoryData, update: Updater, focusIndex: nu
   );
 
   const retryAll = useCallback(() => {
+    if (resumeTimer.current) clearTimeout(resumeTimer.current);
     update((s) => ({ ...s, pages: s.pages.map((p) => ({ ...p, imageError: false })) }));
     setTimeout(run, 0);
   }, [run, update]);
+  retryAllRef.current = retryAll;
 
   const repaintCover = useCallback(async () => {
     setError(null);

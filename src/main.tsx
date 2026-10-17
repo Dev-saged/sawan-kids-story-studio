@@ -1,11 +1,19 @@
-import React from 'react';
+import React, { lazy, Suspense } from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
 import './index.css';
 
+const SelfTest = lazy(() => import('./components/SelfTest'));
+
 ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
   <React.StrictMode>
-    <App />
+    {window.location.hash === '#test' ? (
+      <Suspense fallback={null}>
+        <SelfTest />
+      </Suspense>
+    ) : (
+      <App />
+    )}
   </React.StrictMode>
 );
 

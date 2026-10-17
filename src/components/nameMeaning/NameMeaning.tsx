@@ -2,6 +2,7 @@ import { useState, type FormEvent } from 'react';
 import { Sparkles } from 'lucide-react';
 import { analyzeNameMeaning } from '../../services/gemini';
 import { Language, NameAnalysis } from '../../types';
+import ErrorDetails from '../common/ErrorDetails';
 
 interface Props {
   language: Language;
@@ -59,7 +60,12 @@ export default function NameMeaning({ language }: Props) {
       </form>
 
       {loading && <p className="text-sm text-ink/60 dark:text-moonlight/60">{ar ? 'جارٍ التحليل...' : 'Analyzing...'}</p>}
-      {error && <p className="text-sm text-coral">{error}</p>}
+      {error && (
+        <div className="text-sm text-coral">
+          <p>{error}</p>
+          <ErrorDetails ar={ar} />
+        </div>
+      )}
 
       {result && (
         <div className="page-corner space-y-3 rounded-3xl border border-dream/20 bg-white/70 p-5 dark:bg-white/5">

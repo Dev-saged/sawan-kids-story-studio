@@ -70,7 +70,7 @@ export default function Library({ language, onOpen }: Props) {
                 <p className="absolute inset-x-0 bottom-0 p-3 font-display text-sm font-bold leading-snug text-white line-clamp-2">{s.title}</p>
               </div>
               <p className="px-3 py-2 text-[11px] font-medium text-ink/55 dark:text-moonlight/55">
-                {ar ? `${s.pages} صفحات` : `${s.pages} pages`} · {new Date(s.updatedAt).toLocaleDateString(ar ? 'ar' : 'en')}
+                {s.partNumber ? (ar ? `الجزء ${s.partNumber} · ` : `Part ${s.partNumber} · `) : ''}{ar ? `${s.pages} صفحات` : `${s.pages} pages`} · {new Date(s.updatedAt).toLocaleDateString(ar ? 'ar' : 'en')}
               </p>
             </button>
             {confirmId === s.id ? (

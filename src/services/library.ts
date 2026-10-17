@@ -65,6 +65,7 @@ export interface StorySummary {
   updatedAt: number;
   coverUrl?: string;
   language: string;
+  partNumber?: number;
 }
 
 export const listStories = async (): Promise<StorySummary[]> => {
@@ -86,6 +87,7 @@ export const listStories = async (): Promise<StorySummary[]> => {
         updatedAt: s.updatedAt ?? 0,
         coverUrl: cover?.url,
         language: s.story_info.language,
+        partNumber: s.partNumber,
       };
     })
   );

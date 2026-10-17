@@ -22,9 +22,10 @@ import {
   Clapperboard,
   ListMusic,
   RefreshCw,
+  Layers,
 } from 'lucide-react';
 import { Language, NarratorVoice, PageImage, StoryData, StoryPage } from '../../types';
-import { exportImagesAsZip, exportStoryAsPDF, saveStoryAsJSON } from '../../services/export';
+import { exportImagesAsZip, exportPrintBook, exportStoryAsPDF, saveStoryAsJSON } from '../../services/export';
 import { toSrc } from '../../services/media';
 import { VOICE_OPTIONS } from '../../services/narration';
 import { useIllustrator } from '../../hooks/useIllustrator';
@@ -32,6 +33,9 @@ import { useNarration } from '../../hooks/useNarration';
 import PrintableStory from './PrintableStory';
 import StoryGallery from './StoryGallery';
 import QuizCard from './QuizCard';
+import ErrorDetails from '../common/ErrorDetails';
+import SleepMode from './SleepMode';
+import FamilyRecorder from './FamilyRecorder';
 
 const VideoExportSheet = lazy(() => import('./VideoExportSheet'));
 
@@ -41,9 +45,10 @@ interface Props {
   printableContainerId?: string;
   onStoryChange: (updater: (s: StoryData) => StoryData) => void;
   onStartOver: () => void;
+  onNextPart?: (story: StoryData) => void;
 }
 
-export default function StoryReader({ storyData, language, printableContainerId = 'printable-story-root', onStoryChange, onStartOver }: Props) {
+export default function StoryReader({ storyData, language, printableContainerId = 'printable-story-root', onStoryChange, onStartOver, onNextPart }: Props) {
   const ar = language === 'Arabic';
   const [viewMode, setViewMode] = useState<'reader' | 'gallery'>('reader');
   const [pageIndex, setPageIndex] = useState(0);
@@ -134,12 +139,15 @@ export default function StoryReader({ storyData, language, printableContainerId 
       </div>
 
       {illustrator.error && (
-        <div role="alert" className="flex items-center justify-between gap-3 rounded-2xl border border-coral/30 bg-coral/5 px-4 py-3 text-sm text-coral" dir={ar ? 'rtl' : 'ltr'}>
-          <span>{illustrator.error}</span>
-          <button type="button" onClick={illustrator.retryAll} className="inline-flex min-h-11 shrink-0 items-center gap-1.5 rounded-full bg-coral/10 px-4 font-semibold">
-            <RefreshCw size={14} aria-hidden />
-            {ar ? 'أعد المحاولة' : 'Retry'}
-          </button>
+        <div role="alert" className="space-y-1 rounded-2xl border border-coral/30 bg-coral/5 px-4 py-3 text-sm text-coral" dir={ar ? 'rtl' : 'ltr'}>
+          <div className="flex items-center justify-between gap-3">
+            <span>{illustrator.error}</span>
+            <button type="button" onClick={illustrator.retryAll} className="inline-flex min-h-11 shrink-0 items-center gap-1.5 rounded-full bg-coral/10 px-4 font-semibold">
+              <RefreshCw size={14} aria-hidden />
+              {ar ? 'أعد المحاولة' : 'Retry'}
+            </button>
+          </div>
+          <ErrorDetails ar={ar} />
         </div>
       )}
 
@@ -261,6 +269,17 @@ export default function StoryReader({ storyData, language, printableContainerId 
                     </span>
                   ) : narration.status === 'idle' ? (
                     <>
+{narration.voice !== 'Family' && (
+                      <button
+                        type="button"
+                        onClick={narration.regenerate}
+                        className="inline-flex h-11 w-11 items-center justify-center rounded-full border border-dream/40 text-ink transition hover:border-lantern active:scale-95 dark:text-moonlight"
+                        title={ar ? 'أعد توليد صوت هذه الصفحة' : 'Regenerate this page voice'}
+                        aria-label={ar ? 'أعد توليد صوت هذه الصفحة' : 'Regenerate this page voice'}
+                      >
+                        <RefreshCw size={14} />
+                      </button>
+)}
                       <button type="button" onClick={() => narration.play(false)} className="inline-flex min-h-11 items-center gap-1.5 rounded-full bg-lantern px-4 text-xs font-semibold text-ink shadow-xs transition hover:brightness-105 active:scale-95">
                         <Play size={13} fill="currentColor" />
                         <span>{ar ? 'استمع' : 'Listen'}</span>
@@ -294,7 +313,14 @@ export default function StoryReader({ storyData, language, printableContainerId 
                     </>
                   )}
                 </div>
-                {narration.error && <p className="w-full text-xs text-coral">{narration.error}</p>}
+                <SleepMode ar={ar} narration={narration} />
+                {narration.voice === 'Family' && <FamilyRecorder ar={ar} storyId={storyData.id} pageNo={page.page} onSaved={narration.stop} />}
+                {narration.error && (
+                  <div className="w-full">
+                    <p className="text-xs text-coral">{narration.error}</p>
+                    <ErrorDetails ar={ar} />
+                  </div>
+                )}
               </div>
 
               {/* نص الصفحة مع تظليل الكلمة المنطوقة */}
@@ -341,6 +367,22 @@ export default function StoryReader({ storyData, language, printableContainerId 
           </div>
 
           {isLast && <QuizCard key={storyData.id} storyData={storyData} ar={ar} onScore={(score) => onStoryChange((s) => ({ ...s, quizScore: score }))} />}
+
+          {isLast && onNextPart && (
+            <button
+              type="button"
+              onClick={() => onNextPart(storyData)}
+              className="flex w-full items-center gap-3 rounded-3xl border border-dream/30 bg-white/60 p-4 text-start transition active:scale-[0.99] dark:bg-white/5"
+            >
+              <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-dream/20 text-dream">
+                <Layers size={22} aria-hidden />
+              </span>
+              <span className="min-w-0 flex-1" dir={ar ? 'rtl' : 'ltr'}>
+                <span className="block font-display text-sm font-bold text-ink dark:text-moonlight">{ar ? 'ابدأ الجزء التالي' : 'Start the next part'}</span>
+                <span className="block text-xs text-ink/60 dark:text-moonlight/60">{ar ? 'نفس الشخصيات ونفس الوجوه بمغامرة جديدة تكمل ما سبق' : 'Same characters and faces in a new adventure'}</span>
+              </span>
+            </button>
+          )}
 
           {/* فيديو القصة */}
           <button
@@ -414,6 +456,23 @@ export default function StoryReader({ storyData, language, printableContainerId 
               </div>
             </div>
           </div>
+
+          <button
+            type="button"
+            disabled={busyAction !== null}
+            onClick={() => runAction('print', async () => {
+              setExportProgress(ar ? 'نجهّز ملف المطبعة...' : 'Preparing print file...');
+              try {
+                await exportPrintBook(storyData, setExportProgress);
+              } finally {
+                setExportProgress(null);
+              }
+            })}
+            className="flex min-h-12 w-full items-center justify-center gap-2 rounded-2xl border border-lantern/40 bg-lantern/10 px-4 text-sm font-semibold text-ink transition hover:brightness-105 active:scale-[0.99] disabled:opacity-50 dark:text-moonlight"
+          >
+            {busyAction === 'print' ? <Loader2 size={16} className="animate-spin" aria-hidden /> : <Printer size={16} aria-hidden />}
+            <span>{busyAction === 'print' ? exportProgress || (ar ? 'جارٍ التجهيز...' : 'Preparing...') : ar ? 'كتاب للمطبعة A5 (هوامش قص 3 مم)' : 'Print-ready book A5 (3 mm bleed)'}</span>
+          </button>
 
           <details className="rounded-2xl border border-dream/20 bg-white/50 p-4 dark:bg-white/5">
             <summary className="flex cursor-pointer items-center gap-2 font-display text-sm font-semibold text-ink dark:text-moonlight">

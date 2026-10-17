@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
-import { Clapperboard, Download, Loader2, Monitor, Music2, Share2, Smartphone, X } from 'lucide-react';
+import { Clapperboard, Download, Loader2, Music2, Share2, X } from 'lucide-react';
 import { saveAs } from 'file-saver';
 import { NarratorVoice, StoryData } from '../../types';
-import { exportStoryVideo, type VideoOrientation, type VideoResult } from '../../services/video';
+import { exportStoryVideo, type VideoResult } from '../../services/video';
+import { maxQuality, VIDEO_FORMATS, VIDEO_QUALITIES, type VideoFormatId, type VideoQualityId } from '../../services/videoFormats';
 import { safeFileName } from '../../services/export';
 import { BRAND } from '../../config';
+import ErrorDetails from '../common/ErrorDetails';
 
 interface Props {
   storyData: StoryData;
@@ -14,7 +16,9 @@ interface Props {
 }
 
 export default function VideoExportSheet({ storyData, ar, voice, onClose }: Props) {
-  const [orientation, setOrientation] = useState<VideoOrientation>('landscape');
+  const allowed = VIDEO_QUALITIES.findIndex((q) => q.id === maxQuality());
+  const [format, setFormat] = useState<VideoFormatId>('landscape');
+  const [quality, setQuality] = useState<VideoQualityId>(VIDEO_QUALITIES[Math.min(1, allowed)].id);
   const [withMusic, setWithMusic] = useState(true);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -25,7 +29,7 @@ export default function VideoExportSheet({ storyData, ar, voice, onClose }: Prop
   const ctrlRef = useRef<AbortController | null>(null);
 
   const missing = storyData.pages.filter((p) => !p.generatedImage).length;
-  const fileName = `${safeFileName(storyData.story_info.title, 'story')}.${result?.ext ?? 'mp4'}`;
+  const fileName = `${safeFileName(storyData.story_info.title, 'story')}-${format}-${result?.height ? Math.min(result.width, result.height) : 0}p.${result?.ext ?? 'mp4'}`;
 
   useEffect(
     () => () => {
@@ -44,7 +48,7 @@ export default function VideoExportSheet({ storyData, ar, voice, onClose }: Prop
     try {
       const res = await exportStoryVideo(
         storyData,
-        { orientation, withMusic, voice, brand: ar ? `${BRAND.name.ar} · ${BRAND.author.ar}` : `${BRAND.name.en} · ${BRAND.author.en}`, tagline: ar ? BRAND.madeIn.ar : BRAND.madeIn.en },
+        { format, quality, withMusic, voice, brand: ar ? `${BRAND.name.ar} · ${BRAND.author.ar}` : `${BRAND.name.en} · ${BRAND.author.en}`, tagline: ar ? BRAND.madeIn.ar : BRAND.madeIn.en },
         (p, m) => {
           setProgress(p);
           setMessage(m);
@@ -101,14 +105,28 @@ export default function VideoExportSheet({ storyData, ar, voice, onClose }: Prop
                 ? 'فيديو سينمائي: صور القصة بحركة كاميرا، صوت الراوي، النص مكتوب ومتزامن كلمة بكلمة، انتقالات وموشن وموسيقى مولّدة بالذكاء الاصطناعي.'
                 : 'Cinematic video: moving illustrations, narration, word-by-word synced captions, transitions, motion and AI-composed music.'}
             </p>
-            <div className="flex gap-2">
-              <button type="button" disabled={busy} className={option(orientation === 'landscape')} onClick={() => setOrientation('landscape')}>
-                <Monitor size={18} aria-hidden /> {ar ? 'يوتيوب 16:9' : 'YouTube 16:9'}
-              </button>
-              <button type="button" disabled={busy} className={option(orientation === 'portrait')} onClick={() => setOrientation('portrait')}>
-                <Smartphone size={18} aria-hidden /> {ar ? 'ستوري 9:16' : 'Story 9:16'}
-              </button>
+            <div role="radiogroup" aria-label={ar ? 'صيغة الفيديو' : 'Video format'} className="grid grid-cols-2 gap-2">
+              {VIDEO_FORMATS.map((f) => (
+                <button key={f.id} type="button" role="radio" aria-checked={format === f.id} disabled={busy} className={`${option(format === f.id)} flex-col !items-start gap-0.5 py-2 text-start`} onClick={() => setFormat(f.id)}>
+                  <span className="flex items-center gap-2">
+                    <span aria-hidden className="inline-block rounded-[3px] border-2 border-current" style={{ width: f.ratio >= 1 ? 22 : 22 * f.ratio, height: f.ratio >= 1 ? 22 / f.ratio : 22 }} />
+                    {ar ? f.label.ar : f.label.en}
+                  </span>
+                  <span className="text-[11px] font-medium opacity-70">{ar ? f.hint.ar : f.hint.en}</span>
+                </button>
+              ))}
             </div>
+            <div role="radiogroup" aria-label={ar ? 'جودة الفيديو' : 'Video quality'} className="flex gap-2">
+              {VIDEO_QUALITIES.map((q, i) => (
+                <button key={q.id} type="button" role="radio" aria-checked={quality === q.id} disabled={busy || i > allowed} className={`${option(quality === q.id)} flex-col gap-0.5 py-2 disabled:opacity-35`} onClick={() => setQuality(q.id)}>
+                  {ar ? q.label.ar : q.label.en}
+                  <span className="text-[11px] font-medium opacity-70">{ar ? q.hint.ar : q.hint.en}</span>
+                </button>
+              ))}
+            </div>
+            {allowed < VIDEO_QUALITIES.length - 1 && (
+              <p className="text-xs text-ink/60 dark:text-moonlight/60">{ar ? 'الجودات الأعلى معطّلة لحماية ذاكرة هذا الجهاز.' : 'Higher qualities are disabled to protect this device memory.'}</p>
+            )}
             <label className="flex min-h-12 cursor-pointer items-center justify-between rounded-2xl border border-dream/30 px-4 text-sm font-semibold text-ink dark:text-moonlight">
               <span className="flex items-center gap-2">
                 <Music2 size={18} className="text-dream" aria-hidden />
@@ -133,11 +151,16 @@ export default function VideoExportSheet({ storyData, ar, voice, onClose }: Prop
               <Loader2 size={14} className="animate-spin text-lantern" aria-hidden />
               {message}
             </p>
-            <p className="text-xs text-ink/50 dark:text-moonlight/50">{ar ? 'أبقِ الشاشة مفتوحة حتى ينتهي التصدير.' : 'Keep the screen on until export finishes.'}</p>
+            <p className="text-xs text-ink/50 dark:text-moonlight/50">{ar ? 'نُبقي الشاشة مضاءة تلقائياً أثناء التصدير؛ لا تغادر هذه الصفحة حتى ينتهي.' : 'The screen stays awake during export; stay on this page until it finishes.'}</p>
           </div>
         )}
 
-        {error && <p className="rounded-2xl bg-coral/10 px-4 py-2.5 text-sm text-coral">{error}</p>}
+        {error && (
+          <div className="rounded-2xl bg-coral/10 px-4 py-2.5 text-sm text-coral">
+            <p>{error}</p>
+            <ErrorDetails ar={ar} />
+          </div>
+        )}
 
         {result && previewUrl && (
           <div className="space-y-3">

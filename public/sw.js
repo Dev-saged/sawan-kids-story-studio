@@ -1,5 +1,5 @@
 // Service worker: الواجهة تعمل بدون نت؛ طلبات /api دائماً عبر الشبكة
-const CACHE = 'sawan-v2.0.0';
+const CACHE = 'sawan-v2.1.0';
 const SHELL = ['./', './index.html', './manifest.webmanifest', './icon.svg'];
 
 self.addEventListener('install', (e) => {

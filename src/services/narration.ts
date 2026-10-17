@@ -1,5 +1,5 @@
 import { NarratorVoice, StoryData, StoryPage } from '../types';
-import { dbGet, dbPut, hashText } from './db';
+import { dbDelete, dbGet, dbPut, hashText } from './db';
 import { generateMusic, narrate } from './gemini';
 
 interface AudioRecord {
@@ -15,6 +15,7 @@ export const VOICE_OPTIONS: { value: NarratorVoice; label: { ar: string; en: str
   { value: 'Algieba', label: { ar: 'راوٍ حكواتي', en: 'Smooth narrator (M)' } },
   { value: 'Charon', label: { ar: 'راوٍ رزين', en: 'Deep narrator (M)' } },
   { value: 'Puck', label: { ar: 'راوٍ مرح', en: 'Playful narrator (M)' } },
+  { value: 'Family', label: { ar: 'صوت العائلة (تسجيلك)', en: 'Family voice (your recording)' } },
 ];
 
 const VOICE_KEY = 'sawan-voice';
@@ -51,16 +52,49 @@ const cached = async (id: string, make: () => Promise<Blob>): Promise<Blob> => {
 };
 
 // كل صفحة تُولَّد مرة واحدة لكل صوت، ثم تُقرأ من القاعدة
-export const getPageAudio = (story: StoryData, page: StoryPage, voice: NarratorVoice, signal?: AbortSignal): Promise<Blob> => {
-  const text = page.narration || page.text;
-  const ar = isArabicStory(story);
-  return cached(`tts:${voice}:${hashText(text)}`, () => narrate(text, voice, ar ? 'Arabic' : 'English', ar ? story.story_info.dialect : undefined, signal));
+const audioId = (page: StoryPage, voice: NarratorVoice) => `tts:${voice}:${hashText(page.narration || page.text)}`;
+
+// ===== صوت العائلة: تسجيل الأب أو الأم لكل صفحة، محفوظ مع القصة =====
+const familyId = (storyId: string | undefined, pageNo: number) => `fam:${storyId ?? 'draft'}:${pageNo}`;
+
+export class FamilyVoiceMissing extends Error {
+  constructor(public pageNo: number) {
+    super(document.documentElement.lang === 'ar' ? `سجّل صوتك للصفحة ${pageNo} أولاً من زر الميكروفون.` : `Record your voice for page ${pageNo} first using the microphone button.`);
+  }
+}
+
+export const saveFamilyAudio = (storyId: string | undefined, pageNo: number, blob: Blob) => dbPut<AudioRecord>('audio', { id: familyId(storyId, pageNo), blob, createdAt: Date.now() });
+
+export const hasFamilyAudio = async (storyId: string | undefined, pageNo: number): Promise<boolean> => {
+  try {
+    return Boolean((await dbGet<AudioRecord>('audio', familyId(storyId, pageNo)))?.blob);
+  } catch {
+    return false;
+  }
 };
+
+export const getPageAudio = async (storyId: string | undefined, page: StoryPage, voice: NarratorVoice, signal?: AbortSignal): Promise<Blob> => {
+  if (voice === 'Family') {
+    const rec = await dbGet<AudioRecord>('audio', familyId(storyId, page.page)).catch(() => undefined);
+    if (!rec?.blob) throw new FamilyVoiceMissing(page.page);
+    return rec.blob;
+  }
+  return cached(audioId(page, voice), () => narrate(page.narration || page.text, voice, signal));
+};
+
+// حذف الصوت المحفوظ لصفحة (ليُولَّد من جديد عند الطلب)
+export const dropPageAudio = (page: StoryPage, voice: NarratorVoice): Promise<void> => dbDelete('audio', audioId(page, voice)).then(() => undefined, () => undefined);
 
 export const getStoryMusic = (story: StoryData, signal?: AbortSignal): Promise<Blob> => {
   const prompt = story.music_prompt || `A gentle instrumental soundtrack for a ${story.story_info.art_style} children story titled "${story.story_info.title}"`;
   return cached(`music:${hashText(prompt)}`, () => generateMusic(prompt, signal));
 };
+
+// موسيقى النوم: تهويدة بطيئة تُولَّد مرة واحدة وتُحفظ
+export const getSleepMusic = (signal?: AbortSignal): Promise<Blob> =>
+  cached('music:sleep-v1', () =>
+    generateMusic('A very slow, soft lullaby for sleeping children: music box and gentle harp over warm pads, dreamy, around 50 bpm, no sudden changes, instrumental only.', signal)
+  );
 
 export interface WordTiming {
   word: string;

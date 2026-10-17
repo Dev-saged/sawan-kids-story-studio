@@ -4,13 +4,16 @@ import NavBar, { Section } from './components/layout/NavBar';
 import StorySetupForm from './components/story/StorySetupForm';
 import GenerationProgress from './components/story/GenerationProgress';
 import ApiKeyGate from './components/apiKey/ApiKeyGate';
+import PreflightBanner from './components/apiKey/PreflightBanner';
+import ErrorDetails from './components/common/ErrorDetails';
 import Credits from './components/layout/Credits';
 import { useTheme } from './hooks/useTheme';
 import { StoryGenerator } from './services/gemini';
 import { loadStoryFromJSON } from './services/export';
 import { hasAnyStory, hydrateStory, latestStory, loadStory, saveStory } from './services/library';
 import { clearApiKey, getApiKey } from './services/apiKey';
-import { GenerationStage, Language, StoryData, StoryParams } from './types';
+import { GenerationStage, Language, SeriesContext, StoryData, StoryParams } from './types';
+import { newId } from './services/db';
 
 // الأقسام الثقيلة تُحمّل عند فتحها فقط
 const StoryReader = lazy(() => import('./components/story/StoryReader'));
@@ -38,6 +41,7 @@ export default function App() {
   const [theme, toggleTheme] = useTheme();
   const [section, setSection] = useState<Section>('studio');
   const [hasKey, setHasKey] = useState<boolean>(() => Boolean(getApiKey()));
+  const [keyEpoch, setKeyEpoch] = useState('0');
 
   const [stage, setStage] = useState<GenerationStage>('idle');
   const [progress, setProgress] = useState(0);
@@ -47,6 +51,7 @@ export default function App() {
   const [storyData, setStoryData] = useState<StoryData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [canLoad, setCanLoad] = useState(false);
+  const [series, setSeries] = useState<SeriesContext | null>(null);
 
   const generatorRef = useRef<StoryGenerator | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -92,6 +97,7 @@ export default function App() {
         if (info.preview) setPreview(info.preview);
       });
       await openStory(data);
+      setSeries(null);
     } catch (err) {
       setError((err as Error).message);
       setStage('error');
@@ -110,7 +116,40 @@ export default function App() {
     setIsPaused(false);
   };
 
+  // الجزء التالي: نفس الشخصيات وورقة المراجع والأسلوب + ملخص ما سبق
+  const handleNextPart = (story: StoryData) => {
+    const seriesId = story.seriesId ?? newId();
+    const seriesTitle = story.seriesTitle ?? story.story_info.title;
+    const partNumber = (story.partNumber ?? 1) + 1;
+    setStoryData((prev) => (prev ? { ...prev, seriesId, seriesTitle, partNumber: prev.partNumber ?? 1 } : prev));
+    setSeries({
+      seriesId,
+      seriesTitle,
+      partNumber,
+      previousTitle: story.story_info.title,
+      previousSummary: story.pages.map((p) => p.text).join(' ').slice(0, 1800),
+      characters: story.characters,
+      characterSheetId: story.characterSheetId,
+      heroPhotoId: story.heroPhotoId,
+      artStyle: story.story_info.art_style as SeriesContext['artStyle'],
+      dialect: story.story_info.dialect as SeriesContext['dialect'],
+      ageGroup: story.story_info.age_group as SeriesContext['ageGroup'],
+      aspectRatio: story.story_info.aspect_ratio,
+    });
+    setStage('idle');
+    setError(null);
+    setProgress(0);
+  };
+
+  // «حاول مرة أخرى» يحتفظ بسياق السلسلة إن وُجد
+  const retryAfterError = () => {
+    setStage('idle');
+    setError(null);
+    setProgress(0);
+  };
+
   const startOver = () => {
+    setSeries(null);
     setStage('idle');
     setStoryData(null);
     setError(null);
@@ -120,6 +159,12 @@ export default function App() {
   const handleChangeKey = () => {
     clearApiKey();
     setHasKey(false);
+    setKeyEpoch(String(Date.now()));
+  };
+
+  const handleKeySaved = () => {
+    setHasKey(true);
+    setKeyEpoch(String(Date.now()));
   };
 
   const ar = language === 'Arabic';
@@ -159,17 +204,19 @@ export default function App() {
 
       <main className="mx-auto w-full max-w-2xl flex-1 px-4 pb-28 pt-6">
         <Suspense fallback={<SectionFallback />}>
-          {section === 'studio' && !hasKey && <ApiKeyGate language={language} onSaved={() => setHasKey(true)} />}
+          {section === 'studio' && !hasKey && <ApiKeyGate language={language} onSaved={handleKeySaved} />}
 
           {section === 'studio' && hasKey && (
             <>
               {stage === 'idle' && (
                 <div className="space-y-5">
-                  <StorySetupForm language={language} onSubmit={runGeneration} onLoadStory={handleLoadSaved} canLoadStory={canLoad} disabled={false} />
+                  <PreflightBanner ar={ar} checkKey={keyEpoch} />
+                  <StorySetupForm key={series?.partNumber ?? 0} language={language} onSubmit={runGeneration} onLoadStory={handleLoadSaved} canLoadStory={canLoad} disabled={false} series={series} onCancelSeries={() => setSeries(null)} />
                   {error && (
-                    <p role="alert" className="text-center text-sm text-coral">
-                      {error}
-                    </p>
+                    <div role="alert" className="text-center text-sm text-coral">
+                      <p>{error}</p>
+                      <ErrorDetails ar={ar} />
+                    </div>
                   )}
                   <div className="flex flex-col items-center gap-3">
                     <button
@@ -196,9 +243,10 @@ export default function App() {
                 <div className="space-y-4 rounded-3xl border border-coral/30 bg-coral/5 p-6 text-center">
                   <AlertTriangle className="mx-auto text-coral" size={32} aria-hidden />
                   <p className="text-sm text-ink dark:text-moonlight">{error}</p>
+                  <ErrorDetails ar={ar} />
                   <button
                     type="button"
-                    onClick={startOver}
+                    onClick={retryAfterError}
                     className="mx-auto flex min-h-11 items-center gap-2 rounded-full border border-dream/30 px-5 text-sm font-medium text-ink dark:text-moonlight"
                   >
                     <RotateCcw size={16} aria-hidden />
@@ -208,7 +256,7 @@ export default function App() {
               )}
 
               {stage === 'done' && storyData && (
-                <StoryReader key={storyData.id} storyData={storyData} language={language} onStoryChange={updateStory} onStartOver={startOver} />
+                <StoryReader key={storyData.id} storyData={storyData} language={language} onStoryChange={updateStory} onStartOver={startOver} onNextPart={handleNextPart} />
               )}
             </>
           )}
@@ -216,7 +264,7 @@ export default function App() {
           {section === 'library' && <Library language={language} onOpen={handleOpenFromLibrary} />}
           {section === 'games' && <GamesDashboard language={language} />}
           {section === 'learn' && <ReadLearn language={language} />}
-          {section === 'names' && (hasKey ? <NameMeaning language={language} /> : <ApiKeyGate language={language} onSaved={() => setHasKey(true)} />)}
+          {section === 'names' && (hasKey ? <NameMeaning language={language} /> : <ApiKeyGate language={language} onSaved={handleKeySaved} />)}
         </Suspense>
         <Credits language={language} />
       </main>

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { NarratorVoice, StoryData } from '../types';
-import { activeWordIndex, getPageAudio, getVoice, setVoice as persistVoice, wordTimings, type WordTiming } from '../services/narration';
+import { activeWordIndex, dropPageAudio, getPageAudio, getVoice, setVoice as persistVoice, wordTimings, type WordTiming } from '../services/narration';
 
 export type NarrationStatus = 'idle' | 'loading' | 'playing' | 'paused';
 
@@ -22,6 +22,7 @@ export function useNarration(story: StoryData, pageIndex: number, onAdvance: (ne
   storyRef.current = story;
   const voiceRef = useRef(voice);
   voiceRef.current = voice;
+  const rateRef = useRef(1);
 
   const teardown = useCallback(() => {
     cancelAnimationFrame(rafRef.current);
@@ -54,11 +55,12 @@ export function useNarration(story: StoryData, pageIndex: number, onAdvance: (ne
       setError(null);
       setStatus('loading');
       try {
-        const blob = await getPageAudio(s, page, voiceRef.current, ctrl.signal);
+        const blob = await getPageAudio(s.id, page, voiceRef.current, ctrl.signal);
         if (ctrl.signal.aborted) return;
         const url = URL.createObjectURL(blob);
         urlRef.current = url;
         const audio = new Audio(url);
+        audio.playbackRate = rateRef.current;
         audioRef.current = audio;
         audio.onloadedmetadata = () => {
           timingsRef.current = wordTimings(page.text, audio.duration);
@@ -77,7 +79,7 @@ export function useNarration(story: StoryData, pageIndex: number, onAdvance: (ne
         setStatus('playing');
         rafRef.current = requestAnimationFrame(tick);
         const next = s.pages[index + 1];
-        if (next) getPageAudio(s, next, voiceRef.current).catch(() => undefined);
+        if (next && voiceRef.current !== 'Family') getPageAudio(s.id, next, voiceRef.current).catch(() => undefined);
       } catch (err) {
         if ((err as Error).name === 'AbortError') return;
         setError((err as Error).message);
@@ -118,6 +120,21 @@ export function useNarration(story: StoryData, pageIndex: number, onAdvance: (ne
     setStatus('idle');
   }, [teardown]);
 
+  // صوت خاطئ أو ناقص: نحذف المحفوظ لهذه الصفحة ونولّده من جديد
+  const regenerate = useCallback(async () => {
+    const page = storyRef.current.pages[pageIndex];
+    if (!page) return;
+    teardown();
+    await dropPageAudio(page, voiceRef.current);
+    start(pageIndex);
+  }, [pageIndex, start, teardown]);
+
+  // سرعة الراوي (وضع النوم يبطّئه)؛ تسري فوراً على الصفحة الجارية
+  const setRate = useCallback((r: number) => {
+    rateRef.current = r;
+    if (audioRef.current) audioRef.current.playbackRate = r;
+  }, []);
+
   const setVoice = useCallback(
     (v: NarratorVoice) => {
       persistVoice(v);
@@ -139,5 +156,5 @@ export function useNarration(story: StoryData, pageIndex: number, onAdvance: (ne
 
   useEffect(() => teardown, [teardown]);
 
-  return { status, wordIndex, voice, setVoice, play, pause, stop, error, continuous };
+  return { status, wordIndex, voice, setVoice, play, pause, stop, regenerate, setRate, error, continuous };
 }

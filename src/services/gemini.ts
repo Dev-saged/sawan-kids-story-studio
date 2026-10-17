@@ -1,6 +1,6 @@
 import { AspectRatio, Language, NameAnalysis, StoryData, StoryParams, StoryPage } from '../types';
 import { ART_STYLE_OPTIONS, MAX_IDEA_LENGTH } from '../constants';
-import { ApiError, authHeaders, postJson, type ApiErrorCode } from './api';
+import { ApiError, authHeaders, codeFromStatus, postJson, type ApiErrorCode, type TrailItem } from './api';
 import { base64ToBlob, type ImageKind } from './media';
 
 export const API_KEY_MISSING = 'API_KEY_MISSING';
@@ -103,16 +103,16 @@ export class StoryGenerator {
     try {
       res = await fetch('/api/generate-story', { method: 'POST', headers: authHeaders(), body: JSON.stringify({ params, pageCount }) });
     } catch {
-      throw new ApiError('BUSY');
+      throw new ApiError('BUSY', undefined, undefined, '/api/generate-story');
     }
     if (!res.ok || !res.body) {
-      let code: ApiErrorCode = res.status === 429 ? 'QUOTA' : res.status === 401 ? 'AUTH' : 'FAILED';
+      let data: { code?: ApiErrorCode; error?: string; trail?: TrailItem[] } = {};
       try {
-        code = (await res.json()).code ?? code;
+        data = await res.json();
       } catch {
         // ignore
       }
-      throw new ApiError(code);
+      throw new ApiError(data.code ?? codeFromStatus(res.status), data.error, data.trail, '/api/generate-story');
     }
 
     const reader = res.body.getReader();
@@ -137,7 +137,7 @@ export class StoryGenerator {
       } else if (msg.t === 'done') {
         story = msg.story;
       } else if (msg.t === 'error') {
-        throw new ApiError(msg.code ?? 'FAILED', msg.error);
+        throw new ApiError(msg.code ?? 'FAILED', msg.error, msg.trail, '/api/generate-story');
       }
     };
 
@@ -166,7 +166,17 @@ export class StoryGenerator {
         aspect_ratio: params.aspectRatio,
         dialect: params.dialect,
       },
-      heroPhotoId: params.heroPhotoId,
+      heroPhotoId: params.series?.heroPhotoId ?? params.heroPhotoId,
+      // الجزء التالي يحتفظ بنفس الشخصيات وورقة المراجع لتبقى الوجوه ثابتة
+      ...(params.series
+        ? {
+            characters: params.series.characters,
+            characterSheetId: params.series.characterSheetId,
+            seriesId: params.series.seriesId,
+            seriesTitle: params.series.seriesTitle,
+            partNumber: params.series.partNumber,
+          }
+        : {}),
       quiz: (parsed.quiz ?? []).filter((q) => q?.question && Array.isArray(q.options) && q.options.length >= 2),
       pages: parsed.pages.map((p, i) => ({
         page: i + 1,
@@ -191,8 +201,8 @@ export const generateIllustration = async ({ prompt, aspectRatio, references }: 
   return base64ToBlob(data.base64, data.mimeType);
 };
 
-export const narrate = async (text: string, voice: string, language: string, dialect?: string, signal?: AbortSignal): Promise<Blob> => {
-  const data = await postJson<{ base64: string; mimeType: string }>('/api/narrate', { text, voice, language, dialect }, signal);
+export const narrate = async (text: string, voice: string, signal?: AbortSignal): Promise<Blob> => {
+  const data = await postJson<{ base64: string; mimeType: string }>('/api/narrate', { text, voice }, signal);
   if (!data?.base64) throw new ApiError('FAILED');
   return base64ToBlob(data.base64, data.mimeType || 'audio/wav');
 };

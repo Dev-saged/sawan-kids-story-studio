@@ -64,6 +64,12 @@ export const exportStoryAsPDF = async (storyData: StoryData, containerIdOrSize?:
   saveAs(blob, `${safeFileName(storyData.story_info.title, 'story')}.pdf`);
 };
 
+// ملف مطبعة A5 بهوامش قص 3 مم وعدد صفحات من مضاعفات 4
+export const exportPrintBook = async (storyData: StoryData, onProgress?: (msg: string) => void): Promise<void> => {
+  const { generatePrintBook } = await import('./printBook');
+  saveAs(await generatePrintBook(storyData, onProgress), `${safeFileName(storyData.story_info.title, 'story')}-print-A5.pdf`);
+};
+
 export const exportImagesAsZip = async (storyData: StoryData): Promise<void> => {
   const entries = [
     ...(storyData.coverImage ? [{ name: 'cover', src: storyData.coverImage }] : []),

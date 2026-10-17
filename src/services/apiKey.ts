@@ -1,6 +1,9 @@
 // المفتاح يُحفظ في sessionStorage: يبقى لهذا التبويب فقط ويُمسح عند إغلاقه.
 const KEY_STORAGE = 'sawan-gemini-key';
-const KEY_PATTERN = /^[A-Za-z0-9_-]{30,}$/;
+// أي صيغة مفتاح (AIza… أو AQ.… أو غيرها): نمنع المسافات فقط وجوجل تحكم بالصلاحية
+const KEY_PATTERN = /^\S{16,300}$/;
+
+const normalize = (key: string): string => key.trim().replace(/^["'`]+|["'`]+$/g, '');
 
 export const getApiKey = (): string | null => {
   try {
@@ -21,11 +24,17 @@ export const getUserApiKey = (): string | null => {
 };
 
 export const saveApiKey = (key: string): void => {
-  sessionStorage.setItem(KEY_STORAGE, key.trim());
+  sessionStorage.setItem(KEY_STORAGE, normalize(key));
 };
 
 export const clearApiKey = (): void => {
   sessionStorage.removeItem(KEY_STORAGE);
 };
 
-export const isValidApiKeyFormat = (key: string): boolean => KEY_PATTERN.test(key.trim());
+export const isValidApiKeyFormat = (key: string): boolean => KEY_PATTERN.test(normalize(key));
+
+// شكل المفتاح بدون كشفه: للتشخيص فقط
+export const keyHint = (): string => {
+  const key = getUserApiKey();
+  return key ? `${key.slice(0, 3)}… (${key.length})` : 'studio';
+};

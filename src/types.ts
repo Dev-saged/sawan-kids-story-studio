@@ -49,6 +49,23 @@ export type ArtStyle =
 
 export type AspectRatio = '1:1' | '16:9' | '9:16' | '4:3' | '3:4';
 
+// سياق الجزء التالي من سلسلة: نفس الشخصيات ونفس الأسلوب وملخص ما سبق
+export interface SeriesContext {
+  seriesId: string;
+  seriesTitle: string;
+  partNumber: number;
+  previousTitle: string;
+  previousSummary: string;
+  characters: Character[];
+  characterSheetId?: string;
+  heroPhotoId?: string;
+  heroName?: string;
+  artStyle: ArtStyle;
+  dialect?: ArabicDialect;
+  ageGroup: AgeGroup;
+  aspectRatio: AspectRatio;
+}
+
 export interface StoryParams {
   idea: string;
   language: Language;
@@ -60,6 +77,7 @@ export interface StoryParams {
   aspectRatio: AspectRatio;
   heroName?: string;
   heroPhotoId?: string;
+  series?: SeriesContext;
 }
 
 export interface Character {
@@ -115,9 +133,12 @@ export interface StoryData {
   heroPhotoId?: string;
   quiz?: QuizItem[];
   quizScore?: number;
+  seriesId?: string;
+  seriesTitle?: string;
+  partNumber?: number;
 }
 
-export type NarratorVoice = 'Sulafat' | 'Vindemiatrix' | 'Achernar' | 'Algieba' | 'Charon' | 'Puck';
+export type NarratorVoice = 'Sulafat' | 'Vindemiatrix' | 'Achernar' | 'Algieba' | 'Charon' | 'Puck' | 'Family';
 
 export interface ChildProfile {
   id: string;

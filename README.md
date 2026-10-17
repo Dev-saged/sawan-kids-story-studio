@@ -18,6 +18,27 @@ with natural narration, read-along, story videos, science games and learning art
 - WebCodecs + `mp4-muxer` for MP4 video export (MediaRecorder fallback)
 - PWA: manifest + service worker (offline shell)
 
+## What's new in v2.1.0
+
+- **Any API key format** — `AIza…`, `AQ.…` and future formats are accepted; a rejected key is reported
+  clearly (no silent fallback to the platform key). The key is verified with Google when saved.
+- **Real model discovery** — the server lists the models available to the key (`models.list`) and
+  orders each chain by what actually exists; unknown/renamed IDs are skipped or discovered automatically.
+  `GET /api/preflight` reports the available models.
+- **Honest errors** — "zero quota / enable billing" (free tier has no image quota) is separated from
+  temporary quota; every error has a **Technical details** panel (model + raw Google message) to copy.
+- **Narration fix** — TTS now receives only the story text (the English style prompt was sometimes spoken).
+  Per-page **regenerate voice** and **regenerate picture** buttons.
+- **Quota-aware painting** — temporary quota pauses image painting and resumes automatically.
+- **Story video** — 4 formats (16:9, Reels 9:16, square 1:1, portrait 4:5) × 3 qualities (480/720/1080p),
+  memory-based quality cap, screen wake lock during export.
+- **Story identities** — presets in `src/config.ts` (`BRAND_PRESETS`) set art style, narrator and dialect.
+- **Sleep mode** — slower narration + lullaby + gradual dimming + auto stop.
+- **Story series** — "Start the next part" keeps the same characters/reference sheet and continues the plot.
+- **Print-ready book** — A5 PDF with 3 mm bleed, page count padded to a multiple of 4, back cover.
+- **Family voice** — record your own voice per page and narrate (and export video) with it.
+- **Self-test** — open the app with `#test` to run the built-in checks.
+
 ## Features (v2.0.0)
 
 - **Nano Banana illustrations, 2K** — English director-style prompts per page, locked art style,
@@ -70,6 +91,8 @@ src/services/media.ts      # image store, WebP re-encode, similarity reuse
 src/services/library.ts    # stories, children, hydrate/migrate, JSON serialize
 src/services/narration.ts  # TTS cache, voices, word timings
 src/services/video.ts      # canvas renderer + MP4/WebM encoder
+src/services/videoFormats.ts # formats, qualities, sizes, device cap
+src/services/printBook.ts  # print-ready A5 PDF with bleed
 src/services/api.ts        # fetch with retry + localized errors
 src/hooks/useIllustrator.ts# image pipeline (sheet → pages → cover, 2 in parallel)
 src/hooks/useNarration.ts  # read-along playback

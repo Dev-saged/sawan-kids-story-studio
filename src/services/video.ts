@@ -1,11 +1,11 @@
 import { NarratorVoice, StoryData } from '../types';
 import { srcToBlob } from './media';
 import { getPageAudio, getStoryMusic, isArabicStory } from './narration';
-
-export type VideoOrientation = 'landscape' | 'portrait';
+import { bitrateFor, getFormat, maxQuality, videoSize, VIDEO_QUALITIES, type VideoFormatId, type VideoQualityId } from './videoFormats';
 
 export interface VideoOptions {
-  orientation: VideoOrientation;
+  format: VideoFormatId;
+  quality: VideoQualityId;
   withMusic: boolean;
   voice: NarratorVoice;
   brand: string;
@@ -13,6 +13,9 @@ export interface VideoOptions {
 }
 
 export interface VideoResult {
+  quality: VideoQualityId;
+  width: number;
+  height: number;
   blob: Blob;
   ext: 'mp4' | 'webm';
   musicFailed: boolean;
@@ -45,10 +48,16 @@ const easeInOut = (x: number) => {
   return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
 };
 
-const loadBitmap = async (src?: string): Promise<ImageBitmap | null> => {
+// الصورة تُصغَّر لما يحتاجه الإطار (مع هامش حركة الكاميرا) حتى لا تستهلك ذاكرة الجوال
+const loadBitmap = async (src: string | undefined, W: number, H: number): Promise<ImageBitmap | null> => {
   if (!src) return null;
   try {
-    return await createImageBitmap(await srcToBlob(src));
+    const full = await createImageBitmap(await srcToBlob(src));
+    const need = Math.max(W / full.width, H / full.height) * 1.25;
+    if (need >= 0.9) return full;
+    const small = await createImageBitmap(full, { resizeWidth: Math.ceil(full.width * need), resizeHeight: Math.ceil(full.height * need), resizeQuality: 'medium' });
+    full.close();
+    return small;
   } catch {
     return null;
   }
@@ -83,6 +92,7 @@ class Renderer {
     private story: StoryData,
     private rtl: boolean,
     private brand: string,
+    private design: { w: number; h: number },
     private tagline = ''
   ) {
     this.ctx = canvas.getContext('2d', { alpha: false })!;
@@ -98,11 +108,15 @@ class Renderer {
     for (const seg of segments) if (seg.audio) this.timings.set(seg, timingsFor(seg.words, seg.audio.duration));
   }
 
+  // كل الرسم بإحداثيات مساحة التصميم ثم يُكبَّر لدقة الإخراج
   private get W() {
-    return this.canvas.width;
+    return this.design.w;
   }
   private get H() {
-    return this.canvas.height;
+    return this.design.h;
+  }
+  private get scale() {
+    return this.canvas.width / this.design.w;
   }
   private get portrait() {
     return this.H > this.W;
@@ -399,6 +413,7 @@ class Renderer {
     const main = this.ctx;
     const buf = this.buffers[n];
     this.ctx = buf;
+    buf.setTransform(this.scale, 0, 0, this.scale, 0, 0);
     buf.globalAlpha = 1;
     buf.fillStyle = DUSK;
     buf.fillRect(0, 0, this.W, this.H);
@@ -409,6 +424,7 @@ class Renderer {
 
   frame(t: number) {
     const { ctx, W, H } = this;
+    ctx.setTransform(this.scale, 0, 0, this.scale, 0, 0);
     ctx.globalAlpha = 1;
     let i = this.segments.findIndex((s) => t < s.start + s.dur);
     if (i < 0) i = this.segments.length - 1;
@@ -424,28 +440,28 @@ class Renderer {
       if (kind === 3) {
         // تكبير مع تلاشٍ
         const a = this.layer(0, prev, prevLocal, 'zoomOut');
-        ctx.drawImage(a, 0, 0);
+        ctx.drawImage(a, 0, 0, W, H);
         ctx.globalAlpha = p;
-        ctx.drawImage(b, 0, 0);
+        ctx.drawImage(b, 0, 0, W, H);
       } else if (kind === 1) {
         // انزلاق
         const a = this.layer(0, prev, prevLocal);
         const dx = (this.rtl ? -1 : 1) * W * (1 - p);
         ctx.fillStyle = DUSK;
         ctx.fillRect(0, 0, W, H);
-        ctx.drawImage(a, -dx * 0.35, 0);
+        ctx.drawImage(a, -dx * 0.35, 0, W, H);
         ctx.globalAlpha = 0.4 + 0.6 * p;
-        ctx.drawImage(b, dx, 0);
+        ctx.drawImage(b, dx, 0, W, H);
       } else if (kind === 2) {
         // كشف دائري بحافة مضيئة
         const a = this.layer(0, prev, prevLocal);
         const r = Math.hypot(W, H) * 0.5 * p;
-        ctx.drawImage(a, 0, 0);
+        ctx.drawImage(a, 0, 0, W, H);
         ctx.save();
         ctx.beginPath();
         ctx.arc(W / 2, H / 2, r, 0, Math.PI * 2);
         ctx.clip();
-        ctx.drawImage(b, 0, 0);
+        ctx.drawImage(b, 0, 0, W, H);
         ctx.restore();
         ctx.save();
         ctx.globalAlpha = (1 - p) * 0.8;
@@ -460,9 +476,9 @@ class Renderer {
       } else {
         // تلاشٍ متداخل
         const a = this.layer(0, prev, prevLocal);
-        ctx.drawImage(a, 0, 0);
+        ctx.drawImage(a, 0, 0, W, H);
         ctx.globalAlpha = p;
-        ctx.drawImage(b, 0, 0);
+        ctx.drawImage(b, 0, 0, W, H);
       }
       ctx.globalAlpha = 1;
     } else {
@@ -481,9 +497,9 @@ class Renderer {
   }
 }
 
-const buildSegments = async (story: StoryData, voice: NarratorVoice, actx: BaseAudioContext, onProgress: Progress, signal: AbortSignal): Promise<Segment[]> => {
+const buildSegments = async (story: StoryData, voice: NarratorVoice, actx: BaseAudioContext, size: { w: number; h: number }, onProgress: Progress, signal: AbortSignal): Promise<Segment[]> => {
   const segs: Segment[] = [];
-  const cover = await loadBitmap(story.coverImage || story.pages[0]?.generatedImage);
+  const cover = await loadBitmap(story.coverImage || story.pages[0]?.generatedImage, size.w, size.h);
   segs.push({ kind: 'cover', start: 0, dur: COVER_DUR, image: cover, words: [], voiceStart: 0, dir: 1 });
   let t = COVER_DUR;
   let lastImage = cover;
@@ -491,8 +507,8 @@ const buildSegments = async (story: StoryData, voice: NarratorVoice, actx: BaseA
     if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
     const page = story.pages[i];
     onProgress(0.05 + (i / story.pages.length) * 0.4, `🎙️ ${i + 1}/${story.pages.length}`);
-    const audio = await decode(actx, await getPageAudio(story, page, voice, signal));
-    const image = (await loadBitmap(page.generatedImage)) ?? lastImage;
+    const audio = await decode(actx, await getPageAudio(story.id, page, voice, signal));
+    const image = (await loadBitmap(page.generatedImage, size.w, size.h)) ?? lastImage;
     lastImage = image;
     const voiceStart = TRANSITION * 0.7;
     const dur = voiceStart + audio.duration + 0.9;
@@ -535,13 +551,13 @@ const mixAudio = async (segs: Segment[], music: AudioBuffer | null): Promise<Aud
   return off.startRendering();
 };
 
-const canEncodeMp4 = async (w: number, h: number): Promise<string | null> => {
+const canEncodeMp4 = async (w: number, h: number, bitrate: number): Promise<string | null> => {
   if (typeof VideoEncoder === 'undefined' || typeof AudioEncoder === 'undefined') return null;
   try {
     const a = await AudioEncoder.isConfigSupported({ codec: 'mp4a.40.2', numberOfChannels: 2, sampleRate: SR, bitrate: 128000 });
     if (!a.supported) return null;
     for (const codec of ['avc1.4d0028', 'avc1.42e028', 'avc1.42001f']) {
-      const v = await VideoEncoder.isConfigSupported({ codec, width: w, height: h, bitrate: 5_000_000, framerate: FPS });
+      const v = await VideoEncoder.isConfigSupported({ codec, width: w, height: h, bitrate, framerate: FPS });
       if (v.supported) return codec;
     }
   } catch {
@@ -550,7 +566,7 @@ const canEncodeMp4 = async (w: number, h: number): Promise<string | null> => {
   return null;
 };
 
-const encodeMp4 = async (renderer: Renderer, canvas: HTMLCanvasElement, audio: AudioBuffer, duration: number, codec: string, onProgress: Progress, signal: AbortSignal, ar: boolean): Promise<Blob> => {
+const encodeMp4 = async (renderer: Renderer, canvas: HTMLCanvasElement, audio: AudioBuffer, duration: number, codec: string, bitrate: number, onProgress: Progress, signal: AbortSignal, ar: boolean): Promise<Blob> => {
   const { Muxer, ArrayBufferTarget } = await import('mp4-muxer');
   const muxer = new Muxer({
     target: new ArrayBufferTarget(),
@@ -561,7 +577,7 @@ const encodeMp4 = async (renderer: Renderer, canvas: HTMLCanvasElement, audio: A
   });
   let failure: Error | null = null;
   const ve = new VideoEncoder({ output: (c, m) => muxer.addVideoChunk(c, m), error: (e) => (failure = e) });
-  ve.configure({ codec, width: canvas.width, height: canvas.height, bitrate: 5_000_000, framerate: FPS });
+  ve.configure({ codec, width: canvas.width, height: canvas.height, bitrate, framerate: FPS });
   const ae = new AudioEncoder({ output: (c, m) => muxer.addAudioChunk(c, m), error: (e) => (failure = e) });
   ae.configure({ codec: 'mp4a.40.2', numberOfChannels: 2, sampleRate: SR, bitrate: 128000 });
 
@@ -600,7 +616,7 @@ const encodeMp4 = async (renderer: Renderer, canvas: HTMLCanvasElement, audio: A
 };
 
 // تسجيل لحظي احتياطي للأجهزة بدون WebCodecs
-const recordRealtime = async (renderer: Renderer, canvas: HTMLCanvasElement, audio: AudioBuffer, duration: number, onProgress: Progress, signal: AbortSignal, ar: boolean): Promise<{ blob: Blob; ext: 'mp4' | 'webm' }> => {
+const recordRealtime = async (renderer: Renderer, canvas: HTMLCanvasElement, audio: AudioBuffer, duration: number, bitrate: number, onProgress: Progress, signal: AbortSignal, ar: boolean): Promise<{ blob: Blob; ext: 'mp4' | 'webm' }> => {
   const mime = ['video/mp4;codecs=avc1,mp4a.40.2', 'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'].find((m) => MediaRecorder.isTypeSupported(m));
   if (!mime) throw new Error(ar ? 'هذا الجهاز لا يدعم تصدير الفيديو.' : 'This device cannot export video.');
   const actx = new AudioContext({ sampleRate: SR });
@@ -609,7 +625,7 @@ const recordRealtime = async (renderer: Renderer, canvas: HTMLCanvasElement, aud
   src.buffer = audio;
   src.connect(dest);
   const stream = new MediaStream([...canvas.captureStream(FPS).getVideoTracks(), ...dest.stream.getAudioTracks()]);
-  const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 5_000_000 });
+  const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: bitrate });
   const chunks: Blob[] = [];
   rec.ondataavailable = (e) => e.data.size && chunks.push(e.data);
   const done = new Promise<void>((r) => (rec.onstop = () => r()));
@@ -635,9 +651,34 @@ const recordRealtime = async (renderer: Renderer, canvas: HTMLCanvasElement, aud
   return { blob: new Blob(chunks, { type: mime.split(';')[0] }), ext: mime.startsWith('video/mp4') ? 'mp4' : 'webm' };
 };
 
+// يبقي الشاشة مضاءة أثناء التصدير حتى لا يتوقف المتصفح
+const keepAwake = async (): Promise<{ release: () => void }> => {
+  try {
+    const lock = await (navigator as Navigator & { wakeLock?: { request: (t: 'screen') => Promise<{ release: () => Promise<void> }> } }).wakeLock?.request('screen');
+    return { release: () => void lock?.release().catch(() => undefined) };
+  } catch {
+    return { release: () => undefined };
+  }
+};
+
 export const exportStoryVideo = async (story: StoryData, opts: VideoOptions, onProgress: Progress, signal: AbortSignal): Promise<VideoResult> => {
+  const awake = await keepAwake();
+  try {
+    return await render(story, opts, onProgress, signal);
+  } finally {
+    awake.release();
+  }
+};
+
+const render = async (story: StoryData, opts: VideoOptions, onProgress: Progress, signal: AbortSignal): Promise<VideoResult> => {
   const ar = isArabicStory(story);
-  const [W, H] = opts.orientation === 'portrait' ? [720, 1280] : [1280, 720];
+  // سقف الجودة حسب ذاكرة الجهاز
+  const allowed = VIDEO_QUALITIES.findIndex((q) => q.id === maxQuality());
+  const wanted = VIDEO_QUALITIES.findIndex((q) => q.id === opts.quality);
+  const quality = VIDEO_QUALITIES[Math.min(allowed, wanted)].id;
+  const { width: W, height: H } = videoSize(opts.format, quality);
+  const design = getFormat(opts.format).design;
+  const bitrate = bitrateFor(W, H, FPS);
   onProgress(0.02, ar ? 'نجهّز الخطوط والصور...' : 'Preparing fonts and images...');
   try {
     await Promise.all(
@@ -648,7 +689,7 @@ export const exportStoryVideo = async (story: StoryData, opts: VideoOptions, onP
   }
 
   const decoder = new OfflineAudioContext(2, SR, SR);
-  const segs = await buildSegments(story, opts.voice, decoder, onProgress, signal);
+  const segs = await buildSegments(story, opts.voice, decoder, { w: W, h: H }, onProgress, signal);
 
   let music: AudioBuffer | null = null;
   let musicFailed = false;
@@ -670,22 +711,22 @@ export const exportStoryVideo = async (story: StoryData, opts: VideoOptions, onP
   const canvas = document.createElement('canvas');
   canvas.width = W;
   canvas.height = H;
-  const renderer = new Renderer(canvas, segs, story, ar, opts.brand, opts.tagline);
+  const renderer = new Renderer(canvas, segs, story, ar, opts.brand, design, opts.tagline);
 
-  const codec = await canEncodeMp4(W, H);
+  const codec = await canEncodeMp4(W, H, bitrate);
   let result: { blob: Blob; ext: 'mp4' | 'webm' };
   if (codec) {
     try {
-      result = { blob: await encodeMp4(renderer, canvas, mixed, duration, codec, onProgress, signal, ar), ext: 'mp4' };
+      result = { blob: await encodeMp4(renderer, canvas, mixed, duration, codec, bitrate, onProgress, signal, ar), ext: 'mp4' };
     } catch (err) {
       if ((err as Error).name === 'AbortError') throw err;
-      result = await recordRealtime(renderer, canvas, mixed, duration, onProgress, signal, ar);
+      result = await recordRealtime(renderer, canvas, mixed, duration, bitrate, onProgress, signal, ar);
     }
   } else {
-    result = await recordRealtime(renderer, canvas, mixed, duration, onProgress, signal, ar);
+    result = await recordRealtime(renderer, canvas, mixed, duration, bitrate, onProgress, signal, ar);
   }
 
   segs.forEach((s) => s.image?.close());
   onProgress(1, ar ? 'الفيديو جاهز!' : 'Video ready!');
-  return { ...result, musicFailed };
+  return { ...result, musicFailed, quality, width: W, height: H };
 };

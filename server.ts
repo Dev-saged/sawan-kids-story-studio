@@ -1,5 +1,6 @@
 import express, { type Request, type Response } from 'express';
 import fs from 'fs';
+import crypto from 'crypto';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { GoogleGenAI, Modality, Type, type Schema } from '@google/genai';
@@ -20,7 +21,8 @@ const MODELS = {
 const LITE_IMAGE_MODELS = new Set(['gemini-3.1-flash-lite-image']);
 const VOICES = new Set(['Sulafat', 'Vindemiatrix', 'Achernar', 'Algieba', 'Charon', 'Puck', 'Kore', 'Leda']);
 const ASPECTS = new Set(['1:1', '16:9', '9:16', '4:3', '3:4']);
-const KEY_PATTERN = /^[A-Za-z0-9_-]{30,}$/;
+// أي صيغة مفتاح (AIza… / AQ.… / مستقبلية): نمنع المسافات فقط، وجوجل تحكم بالصلاحية
+const KEY_PATTERN = /^\S{16,300}$/;
 
 const getEnvApiKey = (): string => {
   let key = process.env.GEMINI_API_KEY;
@@ -57,59 +59,187 @@ const getEnvApiKey = (): string => {
   return key.trim();
 };
 
-// مفتاح الزائر (إن أرسله) له الأولوية على مفتاح البيئة
-const getAiClient = (req: Request): GoogleGenAI => {
+interface Session {
+  ai: GoogleGenAI;
+  fp: string;
+  source: 'user' | 'env';
+}
+
+const sessions = new Map<string, Session>();
+
+// مفتاح الزائر له الأولوية؛ إن أرسل مفتاحاً بصيغة خاطئة نرفضه صراحةً بدل الرجوع الصامت لمفتاح البيئة
+const getSession = (req: Request): Session => {
   const header = req.get('x-goog-api-key')?.trim();
-  const apiKey = header && KEY_PATTERN.test(header) ? header : getEnvApiKey();
-  return new GoogleGenAI({ apiKey, httpOptions: { headers: { 'User-Agent': 'aistudio-build' } } });
+  if (header && !KEY_PATTERN.test(header)) throw Object.assign(new Error('API key format is invalid.'), { status: 401 });
+  const apiKey = header || getEnvApiKey();
+  const fp = crypto.createHash('sha1').update(apiKey).digest('hex').slice(0, 12);
+  let session = sessions.get(fp);
+  if (!session) {
+    if (sessions.size > 50) sessions.clear();
+    session = { ai: new GoogleGenAI({ apiKey, httpOptions: { headers: { 'User-Agent': 'aistudio-build' } } }), fp, source: header ? 'user' : 'env' };
+    sessions.set(fp, session);
+  }
+  return session;
 };
 
-type ErrorKind = 'auth' | 'quota' | 'busy' | 'skip';
+const getAiClient = (req: Request): GoogleGenAI => getSession(req).ai;
+
+type ErrorKind = 'auth' | 'quota' | 'busy' | 'missing' | 'skip';
+type ErrorCode = 'AUTH' | 'QUOTA' | 'BILLING' | 'NOMODEL' | 'BUSY' | 'FAILED';
+
+interface TrailItem {
+  model: string;
+  kind: ErrorKind;
+  status: number;
+  message: string;
+}
 
 const classify = (err: any): ErrorKind => {
   const status = Number(err?.status ?? err?.code ?? 0);
   const msg = String(err?.message ?? '');
-  if (/API_KEY_INVALID|API key not valid|PERMISSION_DENIED/i.test(msg) || status === 401 || status === 403) return 'auth';
+  if (/API_KEY_INVALID|API key not valid|API key format|PERMISSION_DENIED/i.test(msg) || status === 401 || status === 403) return 'auth';
   if (status === 429 || /RESOURCE_EXHAUSTED|quota/i.test(msg)) return 'quota';
+  if (status === 404 || /NOT_FOUND|is not found|not supported for/i.test(msg)) return 'missing';
   if (status >= 500 || /UNAVAILABLE|overloaded|ECONNRESET|ETIMEDOUT|fetch failed/i.test(msg)) return 'busy';
   return 'skip';
 };
 
+// حصة صفرية = النموذج غير مشمول بالخطة المجانية (يحتاج فوترة)، وليست حصة مؤقتة
+const isZeroQuota = (msg: string) => /limit:\s*0\b|free_?tier/i.test(msg);
+
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-// يجرب كل نموذج بالترتيب؛ إعادة محاولة بتأخير متصاعد عند الانشغال، وانتقال فوري عند الكوتا
+const trailItem = (model: string, err: any): TrailItem => ({
+  model,
+  kind: classify(err),
+  status: Number(err?.status ?? err?.code ?? 0) || 0,
+  message: String(err?.message ?? err).replace(/\s+/g, ' ').slice(0, 320),
+});
+
+// يحدد الرمز الأدق للمستخدم من سجل محاولات كل النماذج
+const failure = (label: string, trail: TrailItem[], last: any): Error => {
+  const quota = trail.filter((t) => t.kind === 'quota');
+  let code: ErrorCode = 'FAILED';
+  if (quota.length) code = quota.every((t) => isZeroQuota(t.message)) ? 'BILLING' : 'QUOTA';
+  else if (trail.length && trail.every((t) => t.kind === 'missing')) code = 'NOMODEL';
+  else if (trail.some((t) => t.kind === 'busy')) code = 'BUSY';
+  return Object.assign(last instanceof Error ? last : new Error(`${label}: no model returned output`), { code, trail });
+};
+
+// يجرب كل نموذج بالترتيب؛ إعادة محاولة بتأخير متصاعد عند الانشغال، وانتقال فوري عند الكوتا أو غياب النموذج
 async function runChain<T>(label: string, models: string[], attempt: (model: string) => Promise<T | null>): Promise<{ value: T; model: string }> {
   let lastError: any = null;
-  let sawQuota = false;
+  const trail: TrailItem[] = [];
   for (const model of models) {
     for (let i = 0; i < 3; i++) {
       try {
         const value = await attempt(model);
         if (value != null) return { value, model };
+        trail.push({ model, kind: 'skip', status: 0, message: 'Model returned no output.' });
         break;
       } catch (err: any) {
         lastError = err;
-        const kind = classify(err);
-        console.warn(`[${label}] ${model} #${i + 1}: ${kind} — ${String(err?.message).slice(0, 160)}`);
-        if (kind === 'auth') throw err;
-        if (kind === 'quota') sawQuota = true;
-        if (kind === 'busy' && i < 2) {
+        const item = trailItem(model, err);
+        console.warn(`[${label}] ${model} #${i + 1}: ${item.kind} ${item.status} — ${item.message.slice(0, 160)}`);
+        if (item.kind === 'auth') throw Object.assign(err instanceof Error ? err : new Error(item.message), { code: 'AUTH', trail: [...trail, item] });
+        if (item.kind === 'busy' && i < 2) {
           await sleep(700 * 2 ** i + Math.random() * 400);
           continue;
         }
+        trail.push(item);
         break;
       }
     }
   }
-  throw Object.assign(lastError ?? new Error(`${label}: no model returned output`), sawQuota ? { status: 429 } : {});
+  throw failure(label, trail, lastError);
 }
 
-const sendError = (res: Response, err: any, fallback: string) => {
+const errorInfo = (err: any, fallback: string): { status: number; body: { error: string; code: ErrorCode; trail?: TrailItem[] } } => {
   const kind = classify(err);
-  const code = kind === 'auth' ? 'AUTH' : kind === 'quota' ? 'QUOTA' : kind === 'busy' ? 'BUSY' : 'FAILED';
-  const status = code === 'AUTH' ? 401 : code === 'QUOTA' ? 429 : code === 'BUSY' ? 503 : 500;
-  if (!res.headersSent) res.status(status).json({ error: err?.message || fallback, code });
+  const code: ErrorCode = err?.code && typeof err.code === 'string' ? err.code : kind === 'auth' ? 'AUTH' : kind === 'quota' ? 'QUOTA' : kind === 'busy' ? 'BUSY' : 'FAILED';
+  const status = code === 'AUTH' ? 401 : code === 'QUOTA' || code === 'BILLING' ? 429 : code === 'BUSY' ? 503 : code === 'NOMODEL' ? 404 : 500;
+  return { status, body: { error: err?.message || fallback, code, trail: Array.isArray(err?.trail) ? err.trail : undefined } };
 };
+
+const sendError = (res: Response, err: any, fallback: string) => {
+  const { status, body } = errorInfo(err, fallback);
+  if (!res.headersSent) res.status(status).json(body);
+};
+
+// ===== اكتشاف النماذج المتاحة فعلاً لهذا المفتاح (يتجاوز أي اسم غير صحيح في القوائم) =====
+type ChainKind = keyof typeof MODELS;
+
+interface Catalog {
+  names: Set<string>;
+  at: number;
+}
+
+const catalogs = new Map<string, Catalog>();
+const CATALOG_TTL = 10 * 60 * 1000;
+
+const withTimeout = <T,>(p: Promise<T>, ms: number): Promise<T> =>
+  Promise.race([p, new Promise<T>((_, rej) => setTimeout(() => rej(new Error('timeout')), ms))]);
+
+const getCatalog = async (session: Session): Promise<Catalog> => {
+  const hit = catalogs.get(session.fp);
+  if (hit && Date.now() - hit.at < CATALOG_TTL) return hit;
+  const names = new Set<string>();
+  try {
+    await withTimeout(
+      (async () => {
+        const pager = await session.ai.models.list({ config: { pageSize: 200 } });
+        for await (const m of pager) if (m.name) names.add(m.name.replace(/^models\//, ''));
+      })(),
+      9000
+    );
+  } catch (err: any) {
+    // مفتاح مرفوض صراحةً = خطأ حقيقي؛ غير ذلك (انقطاع، قيود) نتجاهله ونكمل بالقوائم الثابتة
+    if (/API_KEY_INVALID|API key not valid/i.test(String(err?.message))) throw Object.assign(err, { code: 'AUTH' });
+  }
+  const catalog = { names, at: Date.now() };
+  catalogs.set(session.fp, catalog);
+  return catalog;
+};
+
+const DISCOVER: Record<ChainKind, RegExp> = {
+  text: /^gemini-\d+(\.\d+)?-(flash|flash-lite|pro)$/,
+  image: /^(gemini|nano)[\w.-]*image[\w.-]*$/,
+  tts: /^gemini[\w.-]*tts[\w.-]*$/,
+  music: /^lyria[\w.-]*$/,
+};
+
+const versionOf = (name: string) => Number(/(\d+(?:\.\d+)?)/.exec(name)?.[1]) || 0;
+
+// المتاح أولاً بترتيب القوة، ثم نماذج مكتشفة غير موجودة في القائمة، ثم غير المدرج (احتياط)
+const chainFor = async (req: Request, kind: ChainKind): Promise<string[]> => {
+  const base = MODELS[kind];
+  const catalog = await getCatalog(getSession(req));
+  if (!catalog.names.size) return base;
+  const listed = base.filter((m) => catalog.names.has(m));
+  const found = [...catalog.names].filter((n) => DISCOVER[kind].test(n) && !base.includes(n)).sort((a, b) => versionOf(b) - versionOf(a));
+  const unlisted = base.filter((m) => !catalog.names.has(m));
+  return [...listed, ...found, ...unlisted];
+};
+
+app.get('/api/preflight', async (req: Request, res: Response) => {
+  try {
+    const session = getSession(req);
+    const catalog = await getCatalog(session);
+    const available = (kind: ChainKind) => {
+      const base = MODELS[kind].filter((m) => catalog.names.has(m));
+      const found = [...catalog.names].filter((n) => DISCOVER[kind].test(n) && !base.includes(n));
+      return [...base, ...found];
+    };
+    return res.json({
+      ok: true,
+      keySource: session.source,
+      listed: catalog.names.size > 0,
+      models: { text: available('text'), image: available('image'), tts: available('tts'), music: available('music') },
+    });
+  } catch (err) {
+    return sendError(res, err, 'Preflight failed');
+  }
+});
 
 const SYSTEM_INSTRUCTION = `You are the story engine of "Sajed Kids Story Studio", a professional AI children's story product.
 
@@ -240,6 +370,16 @@ app.post('/api/generate-story', async (req: Request, res: Response) => {
 
   const isArabic = params.language === 'Arabic';
   const heroName = clip(params.heroName, 40);
+  const series = params.series;
+  const seriesLines = series
+    ? [
+        `SERIES: this is part ${Math.min(Math.max(Number(series.partNumber) || 2, 2), 99)} of the series "${clip(series.seriesTitle, 80)}".`,
+        `Previous part "${clip(series.previousTitle, 80)}" summary: ${clip(series.previousSummary, 1800)}`,
+        `Write a NEW adventure that continues naturally. Keep EXACTLY these main characters, with identical names and visual design (copy their "description" unchanged in your "characters" output): ${(Array.isArray(series.characters) ? series.characters.slice(0, 4) : [])
+          .map((c: any) => `${clip(c?.name, 40)}: ${clip(c?.description, 400)}`)
+          .join(' | ')}. At most one new minor character may appear.`,
+      ]
+    : [];
   const prompt = [
     `Story idea: ${idea}`,
     isArabic ? `Language: Arabic (${clip(params.dialect, 30) || 'Modern Standard'})` : 'Language: English',
@@ -247,6 +387,7 @@ app.post('/api/generate-story', async (req: Request, res: Response) => {
     `Story type: ${clip(params.storyType, 20) || 'Bedtime'}`,
     `Exact page count: ${Math.min(Math.max(Number(pageCount) || 6, 3), 16)}`,
     `Art style: ${clip(params.artStyle, 40) || 'Classic Storybook'}`,
+    ...seriesLines,
     heroName
       ? `HERO: the main character is a real child named "${heroName}". A reference photo of this child will be used for the illustrations, so describe the hero as "${heroName}, the child from the reference photo" plus a fixed outfit with colors.`
       : '',
@@ -260,7 +401,7 @@ app.post('/api/generate-story', async (req: Request, res: Response) => {
   const send = (obj: object) => res.write(`${JSON.stringify(obj)}\n`);
 
   try {
-    const { value } = await runChain('story', MODELS.text, async (model) => {
+    const { value } = await runChain('story', await chainFor(req, 'text'), async (model) => {
       let raw = '';
       let started = false;
       try {
@@ -289,8 +430,7 @@ app.post('/api/generate-story', async (req: Request, res: Response) => {
     });
     send({ t: 'done', story: value });
   } catch (err: any) {
-    const kind = classify(err);
-    send({ t: 'error', error: err?.message || 'Failed to generate story', code: kind === 'auth' ? 'AUTH' : kind === 'quota' ? 'QUOTA' : kind === 'busy' ? 'BUSY' : 'FAILED' });
+    send({ t: 'error', ...errorInfo(err, 'Failed to generate story').body });
   }
   res.end();
 });
@@ -320,7 +460,7 @@ app.post('/api/generate-image', async (req: Request, res: Response) => {
       : '';
     const text = `${lead}${prompt} Masterpiece children's book illustration, sharp focus, rich detail, professional composition, consistent character design. Absolutely no text, letters, captions, logos or watermark.`;
 
-    const { value, model } = await runChain('image', MODELS.image, async (m) => {
+    const { value, model } = await runChain('image', await chainFor(req, 'image'), async (m) => {
       const response = await ai.models.generateContent({
         model: m,
         contents: [{ role: 'user', parts: [...refs.map((r) => ({ inlineData: r })), { text }] }],
@@ -366,29 +506,19 @@ const toWavPayload = (base64: string, mimeType = ''): { base64: string; mimeType
   return { base64: pcmToWav(Buffer.from(base64, 'base64'), rate).toString('base64'), mimeType: 'audio/wav' };
 };
 
-const narrationDirective = (language: string, dialect: string): string => {
-  if (language !== 'Arabic') {
-    return 'Read aloud as a warm, expressive professional storyteller for young children, clear diction, calm pace, natural pauses between sentences:';
-  }
-  if (!dialect || dialect === 'Modern Standard') {
-    return 'Read the following Arabic text aloud as a warm, expressive professional storyteller for young children, in flawless Modern Standard Arabic (Fusha) with precise makharij and complete, correct i\'rab exactly as diacritized, calm pace, natural pauses between sentences:';
-  }
-  return `Read aloud as a warm, expressive professional storyteller for young children, in natural authentic ${dialect} Arabic, clear diction, calm pace, natural pauses:`;
-};
-
+// النص فقط بلا أي تعليمات: أي جملة إضافية قد ينطقها النموذج بصوت عالٍ (كانت تظهر بالإنجليزية)
 app.post('/api/narrate', async (req: Request, res: Response) => {
   try {
     const text = clip(req.body?.text, 4000);
     if (!text) return res.status(400).json({ error: 'Narration text is required.', code: 'FAILED' });
     const voice = VOICES.has(req.body?.voice) ? req.body.voice : 'Sulafat';
-    const directive = narrationDirective(clip(req.body?.language, 20), clip(req.body?.dialect, 30));
     const ai = getAiClient(req);
 
-    const { value, model } = await runChain('tts', MODELS.tts, async (m) => {
+    const { value, model } = await runChain('tts', await chainFor(req, 'tts'), async (m) => {
       try {
         const response = await ai.models.generateContent({
           model: m,
-          contents: [{ role: 'user', parts: [{ text: `${directive}\n\n${text}` }] }],
+          contents: [{ role: 'user', parts: [{ text }] }],
           config: {
             responseModalities: [Modality.AUDIO],
             speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voice } } },
@@ -397,11 +527,11 @@ app.post('/api/narrate', async (req: Request, res: Response) => {
         const part = (response.candidates?.[0]?.content?.parts ?? []).find((p) => p.inlineData?.data);
         return part?.inlineData?.data ? toWavPayload(part.inlineData.data, part.inlineData.mimeType) : null;
       } catch (err) {
-        if (classify(err) !== 'skip') throw err;
+        if (!['skip', 'missing'].includes(classify(err))) throw err;
         // بعض نماذج TTS الجديدة متاحة عبر Interactions فقط
         const r: any = await (ai as any).interactions.create({
           model: m,
-          input: `${directive}\n\n${text}`,
+          input: text,
           response_format: { type: 'audio' },
           generation_config: { speech_config: [{ voice }] },
         });
@@ -421,7 +551,7 @@ app.post('/api/music', async (req: Request, res: Response) => {
   try {
     const mood = clip(req.body?.prompt, 600) || 'A gentle, magical lullaby for a children storybook';
     const ai = getAiClient(req);
-    const { value, model } = await runChain('music', MODELS.music, async (m) => {
+    const { value, model } = await runChain('music', await chainFor(req, 'music'), async (m) => {
       const r: any = await (ai as any).interactions.create({
         model: m,
         input: `${mood}. Instrumental only, no vocals, no lyrics. Soft, warm, child friendly, steady and loop-friendly, suitable as a quiet background under narration${m === 'lyria-3.5' ? ', about 60 seconds long' : ''}.`,
@@ -447,7 +577,7 @@ app.post('/api/analyze-name', async (req: Request, res: Response) => {
         ? `حلّل اسم "${trimmed}" للأطفال: المعنى، الأصل، وثلاث صفات إيجابية مرتبطة به. أسلوب لطيف ومناسب للأطفال. أعد JSON فقط.`
         : `Analyze the name "${trimmed}" for kids: its meaning, origin, and three positive traits associated with it. Warm, kid-friendly tone. Return JSON only.`;
 
-    const { value } = await runChain('name', MODELS.text, async (model) => {
+    const { value } = await runChain('name', await chainFor(req, 'text'), async (model) => {
       const response = await ai.models.generateContent({
         model,
         contents: prompt,
