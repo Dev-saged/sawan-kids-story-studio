@@ -10,7 +10,7 @@ type Ref = { data: string; mimeType: string };
 
 const CONCURRENCY = 2;
 // أخطاء لا فائدة من تكرار الطلب معها
-const FATAL = new Set(['AUTH', 'BILLING', 'NOMODEL', 'OFFLINE', 'FREE_AUTH', 'FREE_QUOTA']);
+const FATAL = new Set(['AUTH', 'NOKEY', 'BILLING', 'NOMODEL', 'OFFLINE', 'FREE_AUTH', 'FREE_QUOTA']);
 // حصة مؤقتة: نتوقف ثم نكمل تلقائياً (النص والصوت يعملان بحصص نماذج أخرى)
 const RESUME_AFTER_MS = 45_000;
 const MAX_AUTO_RESUMES = 3;

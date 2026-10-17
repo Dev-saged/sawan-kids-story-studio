@@ -1,8 +1,8 @@
 import { useState, useSyncExternalStore } from 'react';
 import { Check, ClipboardCopy, ImageIcon, Stethoscope } from 'lucide-react';
 import { getErrorLog, subscribeErrorLog } from '../../services/api';
-import { getFreeCreds, keyHint } from '../../services/apiKey';
-import { diagnoseImagePaths, directAvailable, type PathTest } from '../../services/imageEngine';
+import { getFreeCreds, isKeyRemembered, keyHint } from '../../services/apiKey';
+import { diagnoseImagePaths, getLastEngine, type KeyReport, type PathTest } from '../../services/imageEngine';
 import { APP_VERSION } from '../../config';
 
 // زر «تفاصيل تقنية»: يعرض النموذج ورسالة Google الفعلية ويسمح بنسخها للمطوّر
@@ -10,15 +10,15 @@ export default function ErrorDetails({ ar }: { ar: boolean }) {
   const log = useSyncExternalStore(subscribeErrorLog, getErrorLog);
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
-  const [tests, setTests] = useState<PathTest[] | null>(null);
+  const [diag, setDiag] = useState<{ tests: PathTest[]; keys: KeyReport } | null>(null);
   const [testing, setTesting] = useState(false);
-  if (!log.length && !tests) return null;
+  if (!log.length && !diag) return null;
 
-  const report = JSON.stringify({ app: APP_VERSION, key: keyHint(), freeEngine: Boolean(getFreeCreds()), directPath: directAvailable(), imagePaths: tests ?? undefined, errors: log }, null, 2);
+  const report = JSON.stringify({ app: APP_VERSION, key: keyHint(), remembered: isKeyRemembered(), freeEngine: Boolean(getFreeCreds()), lastImageEngine: getLastEngine() ?? undefined, keys: diag?.keys, imagePaths: diag?.tests, errors: log }, null, 2);
 
   const runTests = async () => {
     setTesting(true);
-    setTests(await diagnoseImagePaths());
+    setDiag(await diagnoseImagePaths());
     setTesting(false);
   };
 

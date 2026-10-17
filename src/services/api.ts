@@ -1,6 +1,6 @@
 import { getFreeCreds, getUserApiKey } from './apiKey';
 
-export type ApiErrorCode = 'AUTH' | 'QUOTA' | 'BILLING' | 'NOMODEL' | 'BUSY' | 'OFFLINE' | 'FAILED' | 'FREE_AUTH' | 'FREE_QUOTA';
+export type ApiErrorCode = 'AUTH' | 'NOKEY' | 'QUOTA' | 'BILLING' | 'NOMODEL' | 'BUSY' | 'OFFLINE' | 'FAILED' | 'FREE_AUTH' | 'FREE_QUOTA';
 
 export interface TrailItem {
   model: string;
@@ -11,6 +11,10 @@ export interface TrailItem {
 
 const MESSAGES: Record<ApiErrorCode, { ar: string; en: string }> = {
   AUTH: { ar: 'مفتاح Gemini مرفوض من Google أو لا يملك صلاحية. تأكد من المفتاح.', en: 'Google rejected your Gemini key or it lacks permission.' },
+  NOKEY: {
+    ar: 'لا يوجد مفتاح Gemini على الخادم. أدخل مفتاحك الخاص في الشاشة الرئيسية، أو أضف GEMINI_API_KEY في AI Studio من Settings ثم Secrets.',
+    en: 'The server has no Gemini key. Enter your own key on the home screen, or add GEMINI_API_KEY in AI Studio under Settings, then Secrets.',
+  },
   QUOTA: { ar: 'انتهت الحصة المؤقتة لهذا النموذج. انتظر قليلاً ثم أعد المحاولة.', en: 'The temporary quota is used up. Wait a bit and retry.' },
   BILLING: {
     ar: 'حصة الصور صفر على مفتاحك (الخطة المجانية لا تشمل Nano Banana). فعّل الصور المجانية عبر Cloudflare من البطاقة أدناه، أو فعّل الفوترة على مشروع المفتاح.',

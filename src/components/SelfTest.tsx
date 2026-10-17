@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { isValidApiKeyFormat, isValidFreeCreds } from '../services/apiKey';
+import { isValidApiKeyFormat, isValidFreeCreds, keyShape } from '../services/apiKey';
+import { classifyFailure, codeFromTrail, rankError, webFreeUrl } from '../services/imageEngine';
 import { codeFromStatus } from '../services/api';
 import { activeWordIndex, wordTimings } from '../services/narration';
 import { dbDelete, dbGet, dbPut, hashText } from '../services/db';
@@ -43,6 +44,43 @@ const TESTS: { name: string; run: () => void | Promise<void> }[] = [
   { name: 'مفتاح فيه مسافة أو قصير مرفوض', run: () => eq([isValidApiKeyFormat('AQ.abc def 1234567890123456'), isValidApiKeyFormat('abc')], [false, false]) },
   { name: 'رموز الحالة → رموز الأخطاء', run: () => eq([429, 401, 404, 503, 400].map(codeFromStatus), ['QUOTA', 'AUTH', 'NOMODEL', 'BUSY', 'FAILED']) },
   { name: 'بيانات Cloudflare: الصيغة', run: () => eq([isValidFreeCreds('a1'.repeat(16), 'x'.repeat(40)), isValidFreeCreds('xyz', 'x'.repeat(40)), isValidFreeCreds('a1'.repeat(16), 'short')], [true, false, false]) },
+  {
+    name: 'تصنيف فشل Gemini: حصة صفرية ≠ حصة مؤقتة ≠ مفتاح مرفوض',
+    run: () =>
+      eq(
+        [
+          classifyFailure(429, 'RESOURCE_EXHAUSTED ... limit: 0, model: gemini-2.5-flash-image'),
+          classifyFailure(429, 'RESOURCE_EXHAUSTED retry in 20s'),
+          classifyFailure(400, 'API key not valid. Please pass a valid API key.'),
+          classifyFailure(404, 'models/x is not found'),
+          classifyFailure(503, 'UNAVAILABLE'),
+        ],
+        ['billing', 'quota', 'auth', 'missing', 'busy']
+      ),
+  },
+  {
+    name: 'أنفع رمز خطأ للمستخدم عند فشل كل المحركات',
+    run: () =>
+      eq(
+        [
+          codeFromTrail([{ model: 'm', kind: 'billing', status: 429, message: '' }]),
+          codeFromTrail([{ model: 'm', kind: 'billing', status: 429, message: '' }, { model: 'n', kind: 'quota', status: 429, message: '' }]),
+          codeFromTrail([{ model: 'm', kind: 'auth', status: 400, message: '' }]),
+          codeFromTrail([]),
+          rankError('BILLING') < rankError('NOKEY') && rankError('NOKEY') < rankError('AUTH'),
+        ],
+        ['BILLING', 'QUOTA', 'AUTH', 'FAILED', true]
+      ),
+  },
+  {
+    name: 'رابط المحرك المجاني: أبعاد النسبة + الخصوصية + قص الوصف',
+    run: () => {
+      const u = new URL(webFreeUrl(`${'x '.repeat(900)}`, '16:9', 7));
+      eq([u.searchParams.get('width'), u.searchParams.get('height'), u.searchParams.get('nofeed'), u.searchParams.get('safe')], ['1024', '576', 'true', 'true']);
+      if (decodeURIComponent(u.pathname).length > 800) throw new Error('prompt not clipped');
+    },
+  },
+  { name: 'شكل المفتاح لا يكشفه', run: () => eq([keyShape(''), keyShape('MY_GEMINI_API_KEY'), keyShape(FAKE_AQ).includes('Zz9')], ['none', 'placeholder', false]) },
   {
     name: 'قص مربع إلى 16:9',
     run: async () => {

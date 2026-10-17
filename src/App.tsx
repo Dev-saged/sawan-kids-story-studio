@@ -43,6 +43,7 @@ export default function App() {
   const [section, setSection] = useState<Section>('studio');
   const [hasKey, setHasKey] = useState<boolean>(() => Boolean(getApiKey()));
   const [keyEpoch, setKeyEpoch] = useState('0');
+  const [noKey, setNoKey] = useState(false);
 
   const [stage, setStage] = useState<GenerationStage>('idle');
   const [progress, setProgress] = useState(0);
@@ -177,6 +178,7 @@ export default function App() {
 
   const handleKeySaved = () => {
     setHasKey(true);
+    setNoKey(false);
     setKeyEpoch(String(Date.now()));
   };
 
@@ -217,13 +219,20 @@ export default function App() {
 
       <main className="mx-auto w-full max-w-2xl flex-1 px-4 pb-28 pt-6">
         <Suspense fallback={<SectionFallback />}>
-          {section === 'studio' && !hasKey && <ApiKeyGate language={language} onSaved={handleKeySaved} />}
+          {section === 'studio' && !hasKey && <ApiKeyGate language={language} onSaved={handleKeySaved} noKey={noKey} />}
 
           {section === 'studio' && hasKey && (
             <>
               {stage === 'idle' && (
                 <div className="space-y-5">
-                  <PreflightBanner ar={ar} checkKey={keyEpoch} />
+                  <PreflightBanner
+                    ar={ar}
+                    checkKey={keyEpoch}
+                    onNeedKey={() => {
+                      setNoKey(true);
+                      setHasKey(false);
+                    }}
+                  />
                   <StorySetupForm key={`${series?.partNumber ?? 0}-${prefill?.n ?? 0}`} initialIdea={prefill?.idea} language={language} onSubmit={runGeneration} onLoadStory={handleLoadSaved} canLoadStory={canLoad} disabled={false} series={series} onCancelSeries={() => setSeries(null)} />
                   {error && (
                     <div role="alert" className="text-center text-sm text-coral">

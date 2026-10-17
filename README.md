@@ -18,6 +18,19 @@ with natural narration, read-along, story videos, science games and learning art
 - WebCodecs + `mp4-muxer` for MP4 video export (MediaRecorder fallback)
 - PWA: manifest + service worker (offline shell)
 
+## What's new in v2.2.1 — image engine rebuilt around the browser
+
+- **Browser-first image ladder** (`src/services/imageEngine.ts`): `direct-user` (visitor key straight to Google) →
+  `direct-env` (key injected by Vite, even if it is the AI Studio placeholder, exactly like the reference app) →
+  `server` (Nano Banana chain + Cloudflare FLUX) → `web-free` (Pollinations, no key, watermark, no reference photos).
+  Hard failures (zero quota, rejected key, no key) disable an engine for 30 min; temporary quota for 60 s.
+- Model `gemini-2.5-flash-image` is first in both the browser path and the server chain (it takes no `imageSize`).
+- New error code `NOKEY` ("server has no Gemini key") instead of the misleading "Google rejected the key".
+- Visitor key can be **remembered encrypted** (AES-GCM, non-extractable key in its own IndexedDB `sawan-vault`).
+- "Technical details" now reports the origin of every key (injected / user / server) and tests each engine.
+- Character sheet is skipped (not fatal) when only reference-less engines are left.
+- Production builds never embed a real key; only the public `MY_GEMINI_API_KEY` placeholder can pass.
+
 ## What's new in v2.2.0
 
 - **Images that actually draw** — one image layer for the whole app with three paths:
@@ -98,8 +111,10 @@ Production: `npm run build` then `NODE_ENV=production npm start`.
 ## API key handling
 
 - On Google AI Studio the platform supplies `GEMINI_API_KEY` per visitor.
-- Elsewhere a visitor can enter their own key; it lives in `sessionStorage` (this tab only) and is
-  forwarded as `x-goog-api-key` to the proxy, which prefers it over the environment key.
+- Elsewhere a visitor can enter their own key. Images are drawn from the browser straight to Google; text goes through
+  the proxy via `x-goog-api-key`, which prefers it over the environment key.
+- The key lives in memory + `sessionStorage`; with "remember" it is also stored AES-GCM encrypted in IndexedDB.
+- AI Studio keeps `GEMINI_API_KEY` as a server-side secret (Settings, then Secrets). If it is missing the app shows `NOKEY`.
 
 ## Branding
 

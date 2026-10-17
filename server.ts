@@ -14,11 +14,12 @@ app.use(express.json({ limit: '30mb' }));
 // سلاسل النماذج: الأقوى أولاً، وكل نموذج له كوتا مستقلة
 const MODELS = {
   text: ['gemini-3.8-flash', 'gemini-2.5-flash', 'gemini-3.1-flash-lite'],
-  image: ['gemini-nano-banana-2.1', 'gemini-3-pro-image', 'gemini-3.1-flash-image', 'gemini-3.1-flash-lite-image'],
+  image: ['gemini-2.5-flash-image', 'gemini-nano-banana-2.1', 'gemini-3-pro-image', 'gemini-3.1-flash-image', 'gemini-3.1-flash-lite-image'],
   tts: ['gemini-3.8-flash-tts', 'gemini-3.8-flash-lite-tts', 'gemini-3.1-flash-tts-preview', 'gemini-2.5-pro-preview-tts'],
   music: ['lyria-3-clip-preview', 'lyria-3.5'],
 };
-const LITE_IMAGE_MODELS = new Set(['gemini-3.1-flash-lite-image']);
+// نماذج لا تقبل imageSize (ترفضه بخطأ 400): تأخذ نسبة الأبعاد فقط
+const NO_SIZE_IMAGE_MODELS = new Set(['gemini-2.5-flash-image', 'gemini-3.1-flash-lite-image']);
 const VOICES = new Set(['Sulafat', 'Vindemiatrix', 'Achernar', 'Algieba', 'Charon', 'Puck', 'Kore', 'Leda']);
 const ASPECTS = new Set(['1:1', '16:9', '9:16', '4:3', '3:4']);
 // أي صيغة مفتاح (AIza… / AQ.… / مستقبلية): نمنع المسافات فقط، وجوجل تحكم بالصلاحية
@@ -53,7 +54,7 @@ const getEnvApiKey = (): string => {
   }
 
   if (!key || key === 'MY_GEMINI_API_KEY') {
-    throw Object.assign(new Error('GEMINI_API_KEY is not configured on the server.'), { status: 401 });
+    throw Object.assign(new Error('GEMINI_API_KEY is not configured on the server.'), { status: 401, code: 'NOKEY' });
   }
 
   return key.trim();
@@ -85,7 +86,7 @@ const getSession = (req: Request): Session => {
 const getAiClient = (req: Request): GoogleGenAI => getSession(req).ai;
 
 type ErrorKind = 'auth' | 'quota' | 'busy' | 'missing' | 'skip';
-type ErrorCode = 'AUTH' | 'QUOTA' | 'BILLING' | 'NOMODEL' | 'BUSY' | 'FAILED' | 'FREE_AUTH' | 'FREE_QUOTA';
+type ErrorCode = 'AUTH' | 'NOKEY' | 'QUOTA' | 'BILLING' | 'NOMODEL' | 'BUSY' | 'FAILED' | 'FREE_AUTH' | 'FREE_QUOTA';
 
 interface TrailItem {
   model: string;
@@ -157,7 +158,7 @@ async function runChain<T>(label: string, models: string[], attempt: (model: str
 const errorInfo = (err: any, fallback: string): { status: number; body: { error: string; code: ErrorCode; trail?: TrailItem[] } } => {
   const kind = classify(err);
   const code: ErrorCode = err?.code && typeof err.code === 'string' ? err.code : kind === 'auth' ? 'AUTH' : kind === 'quota' ? 'QUOTA' : kind === 'busy' ? 'BUSY' : 'FAILED';
-  const status = code === 'AUTH' || code === 'FREE_AUTH' ? 401 : code === 'QUOTA' || code === 'BILLING' || code === 'FREE_QUOTA' ? 429 : code === 'BUSY' ? 503 : code === 'NOMODEL' ? 404 : 500;
+  const status = code === 'AUTH' || code === 'NOKEY' || code === 'FREE_AUTH' ? 401 : code === 'QUOTA' || code === 'BILLING' || code === 'FREE_QUOTA' ? 429 : code === 'BUSY' ? 503 : code === 'NOMODEL' ? 404 : 500;
   return { status, body: { error: err?.message || fallback, code, trail: Array.isArray(err?.trail) ? err.trail : undefined } };
 };
 
@@ -565,25 +566,33 @@ app.post('/api/generate-image', async (req: Request, res: Response) => {
     if (!prompt) return res.status(400).json({ error: 'Image prompt is required.', code: 'FAILED' });
     const aspectRatio = ASPECTS.has(req.body?.aspectRatio) ? req.body.aspectRatio : '4:3';
     const refs = sanitizeRefs(req.body?.references);
-    const session = getSession(req);
     const free = getFreeCreds(req);
-    const blockedAt = imageBlocked.get(session.fp);
-    const skipGemini = Boolean(free && blockedAt && Date.now() - blockedAt < BLOCK_TTL);
     let geminiErr: any = null;
+    let session: Session | null = null;
+    try {
+      session = getSession(req);
+    } catch (err: any) {
+      // لا مفتاح على الخادم: نكمل بالمحرك المجاني إن وُجد، وإلا نعيد NOKEY بوضوح
+      if (err?.code !== 'NOKEY' || !free) throw err;
+      geminiErr = err;
+    }
+    const blockedAt = session ? imageBlocked.get(session.fp) : undefined;
+    const skipGemini = !session || Boolean(free && blockedAt && Date.now() - blockedAt < BLOCK_TTL);
 
-    if (!skipGemini) {
+    if (!skipGemini && session) {
+      const active = session;
       try {
         const lead = refs.length
           ? 'Use the attached reference image(s) as the exact character design: keep the same face, hairstyle, skin tone, outfit, colors and proportions. Do not copy their background or pose. '
           : '';
         const text = `${lead}${prompt} Masterpiece children's book illustration, sharp focus, rich detail, professional composition, consistent character design. Absolutely no text, letters, captions, logos or watermark.`;
         const { value, model } = await runChain('image', await chainFor(req, 'image'), async (m) => {
-          const response = await session.ai.models.generateContent({
+          const response = await active.ai.models.generateContent({
             model: m,
             contents: [{ role: 'user', parts: [...refs.map((r) => ({ inlineData: r })), { text }] }],
             config: {
               responseModalities: [Modality.TEXT, Modality.IMAGE],
-              imageConfig: LITE_IMAGE_MODELS.has(m) ? { aspectRatio } : { aspectRatio, imageSize: '2K' },
+              imageConfig: NO_SIZE_IMAGE_MODELS.has(m) ? { aspectRatio } : { aspectRatio, imageSize: '2K' },
             },
           });
           const part = (response.candidates?.[0]?.content?.parts ?? []).find((p) => p.inlineData?.data);
@@ -591,7 +600,7 @@ app.post('/api/generate-image', async (req: Request, res: Response) => {
         });
         return res.json({ ...value, model, engine: 'gemini' });
       } catch (err: any) {
-        if ((err?.trail as TrailItem[] | undefined)?.some((t) => t.zero)) imageBlocked.set(session.fp, Date.now());
+        if ((err?.trail as TrailItem[] | undefined)?.some((t) => t.zero)) imageBlocked.set(session!.fp, Date.now());
         if (!free || errorInfo(err, '').body.code === 'AUTH') throw err;
         geminiErr = err;
       }

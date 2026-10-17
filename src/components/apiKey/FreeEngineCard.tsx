@@ -1,7 +1,7 @@
 import { useState, useSyncExternalStore, type FormEvent } from 'react';
 import { ImagePlus, ShieldCheck } from 'lucide-react';
 import { checkFree, getErrorLog, subscribeErrorLog } from '../../services/api';
-import { clearFreeCreds, getFreeCreds, isValidFreeCreds, saveFreeCreds } from '../../services/apiKey';
+import { clearFreeCreds, getFreeCreds, isValidFreeCreds, isWebFreeEnabled, saveFreeCreds, setWebFreeEnabled } from '../../services/apiKey';
 
 interface Props {
   ar: boolean;
@@ -23,6 +23,30 @@ const STEPS = {
   ],
 };
 
+// مفتاح المحرك الاحتياطي المجاني بلا مفتاح (Pollinations): يرسل وصف المشهد فقط ولا يرسل أي صورة
+export function WebFreeToggle({ ar }: { ar: boolean }) {
+  const [on, setOn] = useState(isWebFreeEnabled);
+  return (
+    <label className="flex min-h-11 items-start gap-2 rounded-2xl border border-dream/20 bg-white/50 p-3 text-sm text-ink/80 dark:bg-white/5 dark:text-moonlight/80" dir={ar ? 'rtl' : 'ltr'}>
+      <input
+        type="checkbox"
+        checked={on}
+        onChange={(e) => {
+          setOn(e.target.checked);
+          setWebFreeEnabled(e.target.checked);
+        }}
+        className="mt-1 size-4 shrink-0"
+      />
+      <span>
+        <strong className="block font-semibold">{ar ? 'محرك احتياطي مجاني بلا مفتاح (Pollinations)' : 'Free no-key backup engine (Pollinations)'}</strong>
+        {ar
+          ? 'يرسم عندما تفشل بقية المحركات. يرسل وصف المشهد فقط (بلا صور شخصية)، وتظهر على صوره علامة الخدمة المائية، ولا يدعم صورة الطفل المرجعية.'
+          : 'Paints when the other engines fail. Sends only the scene description (no personal photos), its images carry the service watermark, and it takes no child-photo reference.'}
+      </span>
+    </label>
+  );
+}
+
 // بطاقة تفعيل الصور المجانية: حساب Cloudflare يكفي لأكثر من 100 صورة يومياً
 export default function FreeEngineCard({ ar, mode, onSaved }: Props) {
   const log = useSyncExternalStore(subscribeErrorLog, getErrorLog);
@@ -33,7 +57,7 @@ export default function FreeEngineCard({ ar, mode, onSaved }: Props) {
   const [message, setMessage] = useState<string | null>(null);
   const [done, setDone] = useState(() => Boolean(getFreeCreds()));
 
-  const needsHelp = log.some((e) => e.where.includes('generate-image') && (e.code === 'BILLING' || e.code === 'FREE_AUTH'));
+  const needsHelp = log.some((e) => (e.where.includes('generate-image') || e.where === 'image-engine') && (e.code === 'BILLING' || e.code === 'FREE_AUTH'));
   if (mode === 'error' && !needsHelp) return null;
 
   const submit = async (e: FormEvent) => {
@@ -106,6 +130,9 @@ export default function FreeEngineCard({ ar, mode, onSaved }: Props) {
           {busy ? (ar ? 'نختبر برسم صورة صغيرة...' : 'Testing with a tiny image...') : ar ? 'احفظ واختبر' : 'Save and test'}
         </button>
       </form>
+      <div className="mt-3">
+        <WebFreeToggle ar={ar} />
+      </div>
     </details>
   );
 }
