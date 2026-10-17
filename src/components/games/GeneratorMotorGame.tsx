@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Check } from 'lucide-react';
 import { feedback } from '../../services/feedback';
 import { GameShell, ResultBanner, primaryBtn, type GameProps } from './gameKit';
+import { recordGame } from '../../services/progress';
 
 interface Part {
   id: string;
@@ -81,6 +82,7 @@ export default function GeneratorMotorGame({ language, onBack }: GameProps) {
   const check = () => {
     const v = { generator: isExact(generator, GENERATOR_CORRECT), motor: isExact(motor, MOTOR_CORRECT) };
     setVerdict(v);
+    recordGame('generator-motor', v.generator && v.motor ? 1 : 0, 1);
     feedback(v.generator && v.motor ? 'good' : 'bad');
   };
 

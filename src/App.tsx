@@ -14,6 +14,7 @@ import { hasAnyStory, hydrateStory, latestStory, loadStory, saveStory } from './
 import { clearApiKey, getApiKey } from './services/apiKey';
 import { GenerationStage, Language, SeriesContext, StoryData, StoryParams } from './types';
 import { newId } from './services/db';
+import { countStory } from './services/progress';
 
 // الأقسام الثقيلة تُحمّل عند فتحها فقط
 const StoryReader = lazy(() => import('./components/story/StoryReader'));
@@ -52,6 +53,8 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [canLoad, setCanLoad] = useState(false);
   const [series, setSeries] = useState<SeriesContext | null>(null);
+  // فكرة قادمة من بطاقة تعليمية أو لعبة؛ تملأ نموذج القصة الجديدة
+  const [prefill, setPrefill] = useState<{ idea: string; n: number } | null>(null);
 
   const generatorRef = useRef<StoryGenerator | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -97,7 +100,9 @@ export default function App() {
         if (info.preview) setPreview(info.preview);
       });
       await openStory(data);
+      countStory();
       setSeries(null);
+      setPrefill(null);
     } catch (err) {
       setError((err as Error).message);
       setStage('error');
@@ -156,6 +161,14 @@ export default function App() {
     setProgress(0);
   };
 
+  // من «اقرأ وتعلّم» أو الألعاب إلى استوديو القصص بفكرة جاهزة؛ لا نقطع قصة قيد الكتابة
+  const handleMakeStory = (idea: string) => {
+    setSection('studio');
+    if (stage === 'writing' || stage === 'illustrating') return;
+    if (stage !== 'idle') startOver();
+    setPrefill((p) => ({ idea, n: (p?.n ?? 0) + 1 }));
+  };
+
   const handleChangeKey = () => {
     clearApiKey();
     setHasKey(false);
@@ -211,7 +224,7 @@ export default function App() {
               {stage === 'idle' && (
                 <div className="space-y-5">
                   <PreflightBanner ar={ar} checkKey={keyEpoch} />
-                  <StorySetupForm key={series?.partNumber ?? 0} language={language} onSubmit={runGeneration} onLoadStory={handleLoadSaved} canLoadStory={canLoad} disabled={false} series={series} onCancelSeries={() => setSeries(null)} />
+                  <StorySetupForm key={`${series?.partNumber ?? 0}-${prefill?.n ?? 0}`} initialIdea={prefill?.idea} language={language} onSubmit={runGeneration} onLoadStory={handleLoadSaved} canLoadStory={canLoad} disabled={false} series={series} onCancelSeries={() => setSeries(null)} />
                   {error && (
                     <div role="alert" className="text-center text-sm text-coral">
                       <p>{error}</p>
@@ -256,14 +269,14 @@ export default function App() {
               )}
 
               {stage === 'done' && storyData && (
-                <StoryReader key={storyData.id} storyData={storyData} language={language} onStoryChange={updateStory} onStartOver={startOver} onNextPart={handleNextPart} />
+                <StoryReader key={storyData.id} storyData={storyData} language={language} onStoryChange={updateStory} onStartOver={startOver} onNextPart={handleNextPart} onNavigate={setSection} />
               )}
             </>
           )}
 
           {section === 'library' && <Library language={language} onOpen={handleOpenFromLibrary} />}
-          {section === 'games' && <GamesDashboard language={language} />}
-          {section === 'learn' && <ReadLearn language={language} />}
+          {section === 'games' && <GamesDashboard language={language} onMakeStory={handleMakeStory} onNavigate={setSection} />}
+          {section === 'learn' && <ReadLearn language={language} onMakeStory={handleMakeStory} />}
           {section === 'names' && (hasKey ? <NameMeaning language={language} /> : <ApiKeyGate language={language} onSaved={handleKeySaved} />)}
         </Suspense>
         <Credits language={language} />

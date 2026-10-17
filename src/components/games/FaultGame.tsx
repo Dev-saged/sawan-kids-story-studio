@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Check } from 'lucide-react';
 import { feedback } from '../../services/feedback';
 import { GameShell, ResultBanner, type GameProps } from './gameKit';
+import { recordGame } from '../../services/progress';
 
 const FAULTS = [
   { id: 'normal', en: 'Normal fault', ar: 'الصدع العادي' },
@@ -27,6 +28,7 @@ export default function FaultGame({ language, onBack }: GameProps) {
     if (!selected) return;
     const ok = CORRECT[selected] === forceId;
     setResult(ok);
+    recordGame('fault-types', ok ? 1 : 0, 1);
     feedback(ok ? 'good' : 'bad');
     if (ok) {
       setMatched((m) => [...m, selected]);

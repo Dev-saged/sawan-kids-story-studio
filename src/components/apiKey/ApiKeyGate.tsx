@@ -3,6 +3,7 @@ import { KeyRound } from 'lucide-react';
 import { clearApiKey, isValidApiKeyFormat, saveApiKey } from '../../services/apiKey';
 import { preflight } from '../../services/api';
 import { Language } from '../../types';
+import FreeEngineCard from './FreeEngineCard';
 
 interface Props {
   language: Language;
@@ -86,6 +87,8 @@ export default function ApiKeyGate({ language, onSaved }: Props) {
       >
         {ar ? 'احصل على مفتاح من Google AI Studio' : 'Get a key from Google AI Studio'}
       </a>
+
+      <FreeEngineCard ar={ar} mode="always" onSaved={onSaved} />
     </div>
   );
 }

@@ -2,6 +2,7 @@ import { useRef, useState } from 'react';
 import { ArrowRight, CheckCircle2, Shield, Trophy, XCircle } from 'lucide-react';
 import { feedback } from '../../services/feedback';
 import { GameShell, choiceBtn, pickRandom, primaryBtn, shuffle, type GameProps } from './gameKit';
+import { recordGame } from '../../services/progress';
 
 interface Answer {
   ar: string;
@@ -83,6 +84,7 @@ export default function CandyGame({ language, onBack }: GameProps) {
     setMessage(pickRandom(MESSAGES[ok ? 'win' : 'lose'][ar ? 'ar' : 'en']));
 
     if (!ok) {
+      recordGame('candy-ladder', level, 25);
       setLevel(safeLevel);
       setPhase('feedback');
       return;
@@ -90,6 +92,7 @@ export default function CandyGame({ language, onBack }: GameProps) {
     const next = level + 1;
     setLevel(next);
     if (SAFE_LEVELS.includes(next)) setSafeLevel(next);
+    if (next >= MAX_LEVEL) recordGame('candy-ladder', next, 25);
     setPhase(next >= MAX_LEVEL ? 'won' : 'feedback');
   };
 

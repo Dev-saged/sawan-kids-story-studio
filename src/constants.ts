@@ -150,7 +150,15 @@ export const STORY_TYPES: { value: StoryType; label: { en: string; ar: string } 
 export const STORY_LENGTHS: { value: StoryLength; pages: number; label: { en: string; ar: string } }[] = [
   { value: 'Short', pages: 6, label: { en: 'Short (6 pages)', ar: 'قصيرة (6 صفحات)' } },
   { value: 'Medium', pages: 12, label: { en: 'Medium (12 pages)', ar: 'متوسطة (12 صفحة)' } },
+  { value: 'Long', pages: 24, label: { en: 'Long (24 pages)', ar: 'طويلة (24 صفحة)' } },
+  { value: 'Epic', pages: 36, label: { en: 'Epic (36 pages)', ar: 'ملحمية (36 صفحة)' } },
 ];
+
+// الحد الأعلى لعدد الصفحات؛ ما فوق دفعة واحدة يُكتب على دفعات بفصول
+export const MAX_STORY_PAGES = 40;
+export const MIN_STORY_PAGES = 3;
+export const FIRST_BATCH_PAGES = 10;
+export const NEXT_BATCH_PAGES = 6;
 
 // `prompt` is the expanded style description sent to the image model (see getArtStylePrompt).
 export const ART_STYLE_OPTIONS: { value: ArtStyle; labelAr: string; prompt: string }[] = [
@@ -337,6 +345,13 @@ export const GAMES_ROSTER: GameDefinition[] = [
     emoji: '📐',
     title: { en: 'Fault Types', ar: 'أنواع الصدوع' },
     description: { en: 'Match each fault with the force behind it.', ar: 'اربط كل صدع بالقوة المسببة له.' },
+    available: true,
+  },
+  {
+    id: 'quiz-master',
+    emoji: '',
+    title: { en: 'Quiz Master', ar: 'معلّم الأسئلة' },
+    description: { en: 'Any topic, adaptive difficulty, questions read aloud.', ar: 'أي موضوع، صعوبة تتكيّف معك، وأسئلة مسموعة.' },
     available: true,
   },
   { id: 'speed-challenge', emoji: '🏎️', title: { en: 'Speed Challenge', ar: 'تحدي السرعة' }, description: { en: 'Coming soon.', ar: 'قريبًا.' }, available: false },

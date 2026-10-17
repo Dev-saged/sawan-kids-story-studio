@@ -23,19 +23,28 @@ import {
   ListMusic,
   RefreshCw,
   Layers,
+  Package,
+  Film,
+  BookPlus,
 } from 'lucide-react';
 import { Language, NarratorVoice, PageImage, StoryData, StoryPage } from '../../types';
 import { exportImagesAsZip, exportPrintBook, exportStoryAsPDF, saveStoryAsJSON } from '../../services/export';
+import { exportBundle } from '../../services/storyBundle';
+import { recordGame } from '../../services/progress';
 import { toSrc } from '../../services/media';
 import { VOICE_OPTIONS } from '../../services/narration';
 import { useIllustrator } from '../../hooks/useIllustrator';
 import { useNarration } from '../../hooks/useNarration';
+import { useContinueStory } from '../../hooks/useContinueStory';
 import PrintableStory from './PrintableStory';
 import StoryGallery from './StoryGallery';
 import QuizCard from './QuizCard';
 import ErrorDetails from '../common/ErrorDetails';
+import FreeEngineCard from '../apiKey/FreeEngineCard';
 import SleepMode from './SleepMode';
 import FamilyRecorder from './FamilyRecorder';
+import ShareMenu from './ShareMenu';
+import PageTools from './PageTools';
 
 const VideoExportSheet = lazy(() => import('./VideoExportSheet'));
 
@@ -46,9 +55,11 @@ interface Props {
   onStoryChange: (updater: (s: StoryData) => StoryData) => void;
   onStartOver: () => void;
   onNextPart?: (story: StoryData) => void;
+  // تنقّل لباقي الأقسام بعد القصة: اقرأ وتعلّم والألعاب
+  onNavigate?: (section: 'learn' | 'games') => void;
 }
 
-export default function StoryReader({ storyData, language, printableContainerId = 'printable-story-root', onStoryChange, onStartOver, onNextPart }: Props) {
+export default function StoryReader({ storyData, language, printableContainerId = 'printable-story-root', onStoryChange, onStartOver, onNextPart, onNavigate }: Props) {
   const ar = language === 'Arabic';
   const [viewMode, setViewMode] = useState<'reader' | 'gallery'>('reader');
   const [pageIndex, setPageIndex] = useState(0);
@@ -61,6 +72,7 @@ export default function StoryReader({ storyData, language, printableContainerId 
   const illustrator = useIllustrator(storyData, onStoryChange, pageIndex);
   const goTo = useCallback((i: number) => setPageIndex(i), []);
   const narration = useNarration(storyData, pageIndex, goTo);
+  const more = useContinueStory(storyData, onStoryChange);
 
   const page = storyData.pages[pageIndex] || storyData.pages[0];
   const imageSrc = toSrc(page?.generatedImage);
@@ -147,7 +159,41 @@ export default function StoryReader({ storyData, language, printableContainerId 
               {ar ? 'أعد المحاولة' : 'Retry'}
             </button>
           </div>
+          <FreeEngineCard ar={ar} mode="error" onSaved={illustrator.retryAll} />
           <ErrorDetails ar={ar} />
+        </div>
+      )}
+
+      {more.incomplete && (
+        <div className="space-y-2 rounded-3xl border border-lantern/40 bg-lantern/10 p-4" dir={ar ? 'rtl' : 'ltr'}>
+          <div className="flex items-center gap-3">
+            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-lantern/25 text-ink dark:text-moonlight">
+              <BookPlus size={20} aria-hidden />
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="font-display text-sm font-bold text-ink dark:text-moonlight">
+                {ar ? `القصة ${storyData.pages.length} من ${storyData.plannedPages} صفحة` : `Story at ${storyData.pages.length} of ${storyData.plannedPages} pages`}
+              </p>
+              <p className="text-xs text-ink/65 dark:text-moonlight/65">
+                {more.running ? (ar ? 'نكتب الفصل التالي وترسم صفحاته تباعاً...' : 'Writing the next chapter; pages are painted as they arrive...') : ar ? `بقي ${more.remaining} صفحة. أكمل من حيث توقفت القصة.` : `${more.remaining} pages left. Continue where it stopped.`}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={more.start}
+              disabled={more.running}
+              className="inline-flex min-h-11 shrink-0 items-center gap-1.5 rounded-full bg-lantern px-4 text-xs font-bold text-ink shadow-xs transition active:scale-95 disabled:opacity-60"
+            >
+              {more.running ? <Loader2 size={14} className="animate-spin" aria-hidden /> : <Sparkles size={14} aria-hidden />}
+              {more.running ? (ar ? 'جارٍ الكتابة' : 'Writing') : ar ? 'أكمل القصة' : 'Continue story'}
+            </button>
+          </div>
+          {more.error && (
+            <div role="alert" className="text-xs text-coral">
+              <p>{more.error}</p>
+              <ErrorDetails ar={ar} />
+            </div>
+          )}
         </div>
       )}
 
@@ -323,6 +369,13 @@ export default function StoryReader({ storyData, language, printableContainerId 
                 )}
               </div>
 
+              {page?.chapter && (
+                <p className="mb-2 inline-flex items-center gap-1.5 rounded-full bg-dream/15 px-3 py-1 font-display text-xs font-bold text-dream">
+                  <BookOpen size={12} aria-hidden />
+                  {page.chapter}
+                </p>
+              )}
+
               {/* نص الصفحة مع تظليل الكلمة المنطوقة */}
               <p className="text-base leading-relaxed text-ink sm:text-lg sm:leading-loose dark:text-moonlight">
                 {narrating
@@ -366,9 +419,14 @@ export default function StoryReader({ storyData, language, printableContainerId 
             </button>
           </div>
 
-          {isLast && <QuizCard key={storyData.id} storyData={storyData} ar={ar} onScore={(score) => onStoryChange((s) => ({ ...s, quizScore: score }))} />}
+          {page && <PageTools story={storyData} page={page} index={pageIndex} ar={ar} onPaint={illustrator.retryPage} />}
 
-          {isLast && onNextPart && (
+          {isLast && !more.incomplete && <QuizCard key={storyData.id} storyData={storyData} ar={ar} onScore={(score) => {
+            onStoryChange((s) => ({ ...s, quizScore: score }));
+            recordGame('story-quiz', score, storyData.quiz?.length ?? 3);
+          }} />}
+
+          {isLast && !more.incomplete && onNextPart && (
             <button
               type="button"
               onClick={() => onNextPart(storyData)}
@@ -382,6 +440,19 @@ export default function StoryReader({ storyData, language, printableContainerId 
                 <span className="block text-xs text-ink/60 dark:text-moonlight/60">{ar ? 'نفس الشخصيات ونفس الوجوه بمغامرة جديدة تكمل ما سبق' : 'Same characters and faces in a new adventure'}</span>
               </span>
             </button>
+          )}
+
+          {isLast && !more.incomplete && onNavigate && (
+            <div className="grid grid-cols-2 gap-3" dir={ar ? 'rtl' : 'ltr'}>
+              <button type="button" onClick={() => onNavigate('learn')} className="flex min-h-12 items-center justify-center gap-2 rounded-2xl border border-dream/30 bg-white/60 text-xs font-semibold text-ink dark:bg-white/5 dark:text-moonlight">
+                <BookOpen size={16} aria-hidden />
+                {ar ? 'تعلّم المزيد' : 'Learn more'}
+              </button>
+              <button type="button" onClick={() => onNavigate('games')} className="flex min-h-12 items-center justify-center gap-2 rounded-2xl border border-dream/30 bg-white/60 text-xs font-semibold text-ink dark:bg-white/5 dark:text-moonlight">
+                <Sparkles size={16} aria-hidden />
+                {ar ? 'العب واجمع النجوم' : 'Play & earn stars'}
+              </button>
+            </div>
           )}
 
           {/* فيديو القصة */}
@@ -406,6 +477,8 @@ export default function StoryReader({ storyData, language, printableContainerId 
               </span>
             </span>
           </button>
+
+          <ShareMenu story={storyData} ar={ar} />
 
           {/* PDF */}
           <div className="rounded-3xl border border-dream/20 bg-gradient-to-br from-white/90 to-dream/10 p-4 shadow-xs dark:from-white/10 dark:to-dusk/60">
@@ -506,6 +579,27 @@ export default function StoryReader({ storyData, language, printableContainerId 
             >
               <FileJson size={16} aria-hidden />
               <span>{busyAction === 'json' ? (ar ? 'جارٍ الحفظ...' : 'Saving...') : ar ? 'نسخة احتياطية (JSON)' : 'Save Story (JSON)'}</span>
+            </button>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <button
+              type="button"
+              disabled={busyAction !== null}
+              onClick={() => runAction('package', () => exportBundle(storyData, 'package', setExportProgress).finally(() => setExportProgress(null)))}
+              className="flex min-h-12 items-center justify-center gap-2 rounded-2xl border border-dream/30 bg-white/50 px-2 text-xs font-medium text-ink transition hover:border-lantern disabled:opacity-50 dark:bg-white/5 dark:text-moonlight"
+            >
+              {busyAction === 'package' ? <Loader2 size={16} className="animate-spin" aria-hidden /> : <Package size={16} aria-hidden />}
+              <span>{busyAction === 'package' ? exportProgress || (ar ? 'جارٍ التجهيز...' : 'Preparing...') : ar ? 'حزمة القصة الكاملة (ZIP)' : 'Full story package (ZIP)'}</span>
+            </button>
+            <button
+              type="button"
+              disabled={busyAction !== null}
+              onClick={() => runAction('anim', () => exportBundle(storyData, 'animation', setExportProgress).finally(() => setExportProgress(null)))}
+              className="flex min-h-12 items-center justify-center gap-2 rounded-2xl border border-dream/30 bg-white/50 px-2 text-xs font-medium text-ink transition hover:border-lantern disabled:opacity-50 dark:bg-white/5 dark:text-moonlight"
+            >
+              {busyAction === 'anim' ? <Loader2 size={16} className="animate-spin" aria-hidden /> : <Film size={16} aria-hidden />}
+              <span>{busyAction === 'anim' ? exportProgress || (ar ? 'جارٍ التجهيز...' : 'Preparing...') : ar ? 'حزمة التحريك (Veo / Flow)' : 'Animation pack (Veo / Flow)'}</span>
             </button>
           </div>
 

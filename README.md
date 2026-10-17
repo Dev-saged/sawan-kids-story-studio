@@ -18,6 +18,30 @@ with natural narration, read-along, story videos, science games and learning art
 - WebCodecs + `mp4-muxer` for MP4 video export (MediaRecorder fallback)
 - PWA: manifest + service worker (offline shell)
 
+## What's new in v2.2.0
+
+- **Images that actually draw** — one image layer for the whole app with three paths:
+  browser-direct (the key injected by AI Studio), the server Nano Banana chain, and a **free
+  Cloudflare FLUX fallback** (about two full stories a day on the free tier, no billing). Zero-quota
+  is now detected correctly (`BILLING`), and **Technical details → Test image paths** reports which
+  path works. Cloudflare setup: Account ID + a Workers AI API token, entered once in the in-app card.
+- **Long stories** — 3 to 40 pages with presets (6 / 12 / 24 / 36) and a slider. Long books are
+  written in chapters (first 10 pages, then batches of 6, each carrying the story so far); new pages
+  are painted as they arrive; if a batch fails the story is kept and **Continue story** resumes it,
+  also from the library.
+- **Read & Learn** — 49 bilingual fact cards in 7 categories with search, plus **Ask me anything**
+  (answer, fun fact, follow-up questions, illustration, narration, quiz) and "turn it into a story".
+- **Games** — stars for every game, day streak, a rotating **daily challenge**, and the new
+  **Quiz Master**: any topic, questions read aloud, difficulty that adapts to your score.
+- **Share** — WhatsApp, Telegram, Facebook, native share sheet (with the cover) and copy text.
+- **Packages** — one ZIP with text, JSON backup, images and prompts; and an **Animation pack**:
+  a 6-second Veo/Flow prompt per scene (camera, motion, ambient sound only — no music or dialogue)
+  next to the matching images.
+- **Scene tools** — edit the image prompt of any page, rewrite its camera angle (wide, close-up,
+  low, high, side, behind) or repaint it; copy the image or animation prompt.
+- Cross-links: Learn / Games → Studio with a ready idea, Story end → Learn / Games.
+- Not included (paid / later): API video generation (Veo), sharing a story by link.
+
 ## What's new in v2.1.0
 
 - **Any API key format** — `AIza…`, `AQ.…` and future formats are accepted; a rejected key is reported
@@ -84,7 +108,7 @@ Brand name, author and social links live in `src/config.ts` — edit that file o
 ## Project structure
 
 ```
-server.ts                  # Gemini proxy: story (NDJSON stream), image, narrate, music, name
+server.ts                  # Gemini proxy: story (NDJSON), continue-story, image (+Cloudflare), narrate, music, name, explain, rewrite-prompt
 src/config.ts              # brand + social links
 src/services/db.ts         # IndexedDB with schema migrations
 src/services/media.ts      # image store, WebP re-encode, similarity reuse
@@ -94,6 +118,12 @@ src/services/video.ts      # canvas renderer + MP4/WebM encoder
 src/services/videoFormats.ts # formats, qualities, sizes, device cap
 src/services/printBook.ts  # print-ready A5 PDF with bleed
 src/services/api.ts        # fetch with retry + localized errors
+src/services/imageEngine.ts# direct / server / free image paths + diagnostics
+src/services/storyBundle.ts# share + package / animation-pack ZIP
+src/services/animation.ts  # per-scene animation prompts
+src/services/learn.ts      # ask-anything, quizzes, illustrate, speak
+src/services/progress.ts   # stars, streak, daily challenge (localStorage)
+src/data/learnCards.ts     # Read & Learn cards
 src/hooks/useIllustrator.ts# image pipeline (sheet → pages → cover, 2 in parallel)
 src/hooks/useNarration.ts  # read-along playback
 src/components/story/      # form, hero picker, reader, gallery, quiz, video sheet

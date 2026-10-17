@@ -10,7 +10,7 @@ type Ref = { data: string; mimeType: string };
 
 const CONCURRENCY = 2;
 // أخطاء لا فائدة من تكرار الطلب معها
-const FATAL = new Set(['AUTH', 'BILLING', 'NOMODEL', 'OFFLINE']);
+const FATAL = new Set(['AUTH', 'BILLING', 'NOMODEL', 'OFFLINE', 'FREE_AUTH', 'FREE_QUOTA']);
 // حصة مؤقتة: نتوقف ثم نكمل تلقائياً (النص والصوت يعملان بحصص نماذج أخرى)
 const RESUME_AFTER_MS = 45_000;
 const MAX_AUTO_RESUMES = 3;
@@ -28,6 +28,7 @@ export function useIllustrator(story: StoryData, update: Updater, focusIndex: nu
   const resumeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const resumes = useRef(0);
   const retryAllRef = useRef<() => void>(() => undefined);
+  const rerunRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
 
@@ -43,7 +44,7 @@ export function useIllustrator(story: StoryData, update: Updater, focusIndex: nu
       const hit = await findSimilarImage(matchText, cacheStyle(s), kind, kind === 'sheet' ? 0.9 : 0.82, usedIds(s));
       if (hit) return hit;
     }
-    const raw = await generateIllustration({ prompt, aspectRatio: kind === 'sheet' ? '16:9' : s.story_info.aspect_ratio || '4:3', references: refs }, signal);
+    const raw = await generateIllustration({ prompt, aspectRatio: kind === 'sheet' ? '16:9' : s.story_info.aspect_ratio || '4:3', references: refs, kind }, signal);
     return saveImage(await reencode(raw, 2048), kind, cacheStyle(s), matchText);
   };
 
@@ -72,12 +73,14 @@ export function useIllustrator(story: StoryData, update: Updater, focusIndex: nu
     update((s) => ({ ...s, pages: s.pages.map((p) => (p.page === pageNo ? { ...p, ...patch } : p)) }));
 
   const paintPage = useCallback(
-    async (pageNo: number, force = false, signal: AbortSignal = new AbortController().signal) => {
+    async (pageNo: number, force = false, signal: AbortSignal = new AbortController().signal, promptOverride?: string) => {
       if (inFlight.current.has(pageNo)) return;
-      const page = storyRef.current.pages.find((p) => p.page === pageNo);
-      if (!page) return;
+      const found = storyRef.current.pages.find((p) => p.page === pageNo);
+      if (!found) return;
+      // وصف معدّل من المستخدم: يُحفظ في الصفحة ويُستعمل فوراً دون انتظار إعادة العرض
+      const page = promptOverride ? { ...found, image_prompt: promptOverride } : found;
       inFlight.current.add(pageNo);
-      setPage(pageNo, { isGeneratingImage: true, imageError: false });
+      setPage(pageNo, { isGeneratingImage: true, imageError: false, ...(promptOverride ? { image_prompt: promptOverride } : {}) });
       try {
         const refs = await references(signal);
         const img = await create(storyRef.current, 'page', buildPageImagePrompt(storyRef.current, page), page.image_prompt, refs, !force, signal);
@@ -154,6 +157,11 @@ export function useIllustrator(story: StoryData, update: Updater, focusIndex: nu
       if (ctrlRef.current === ctrl) {
         runningRef.current = false;
         setRunning(false);
+        // وصلت صفحات جديدة أثناء الرسم: دورة أخرى تلتقطها
+        if (rerunRef.current && !ctrl.signal.aborted) {
+          rerunRef.current = false;
+          setTimeout(run, 0);
+        }
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -171,11 +179,24 @@ export function useIllustrator(story: StoryData, update: Updater, focusIndex: nu
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [story.id]);
 
+  // صفحات جديدة من قصة طويلة: نعيد تشغيل خط الرسم لتشملها دون لمس ما رُسم
+  const pageTotal = story.pages.length;
+  const seenTotal = useRef(pageTotal);
+  useEffect(() => {
+    if (pageTotal > seenTotal.current) {
+      seenTotal.current = pageTotal;
+      if (runningRef.current) rerunRef.current = true;
+      else setTimeout(run, 0);
+    }
+    seenTotal.current = pageTotal;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pageTotal]);
+
   const retryPage = useCallback(
-    async (pageNo: number, force = false) => {
+    async (pageNo: number, force = false, prompt?: string) => {
       setError(null);
       try {
-        await paintPage(pageNo, force);
+        await paintPage(pageNo, force, undefined, prompt);
       } catch (err) {
         setError((err as Error).message);
       }

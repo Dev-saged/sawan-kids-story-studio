@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { ArrowLeft } from 'lucide-react';
 import { Language } from '../../types';
+import { recordGame } from '../../services/progress';
 
 interface Props {
   language: Language;
@@ -16,6 +17,7 @@ export default function VolcanoGame({ language, onBack }: Props) {
     if (erupting) return;
     setErupting(true);
     setCount((c) => c + 1);
+    if (count === 0) recordGame('volcano', 1, 1);
     window.setTimeout(() => setErupting(false), 900);
   };
 

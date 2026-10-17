@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { ArrowDown, ArrowUp } from 'lucide-react';
 import { feedback } from '../../services/feedback';
 import { GameShell, ResultBanner, choiceBtn, primaryBtn, type GameProps } from './gameKit';
+import { recordGame } from '../../services/progress';
 
 const randomTurns = () => Math.floor(Math.random() * 40) + 20;
 
@@ -28,6 +29,7 @@ export default function TransformerGame({ language, onBack }: GameProps) {
   const check = (guess: 'up' | 'down') => {
     const ok = guess === (secondary > primary ? 'up' : 'down');
     setResult(ok);
+    recordGame('transformer', ok ? 1 : 0, 1);
     feedback(ok ? 'good' : 'bad');
   };
 

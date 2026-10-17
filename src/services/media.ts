@@ -71,7 +71,30 @@ export const reencode = async (blob: Blob, maxSide: number, type = 'image/webp',
   return (await new Promise<Blob | null>((res) => canvas.toBlob(res, 'image/jpeg', quality))) ?? blob;
 };
 
-export const objectUrlFor = (id: string, blob: Blob): string => {
+// قص مركزي إلى نسبة العرض المطلوبة (المحرك المجاني يرسم مربعاً فقط)
+export const cropToAspect = async (blob: Blob, aspect: string): Promise<Blob> => {
+  const [aw, ah] = aspect.split(':').map(Number);
+  if (!aw || !ah) return blob;
+  const bmp = await loadBitmap(blob);
+  const target = aw / ah;
+  const current = bmp.width / bmp.height;
+  if (Math.abs(target - current) < 0.01) {
+    if ('close' in bmp) bmp.close();
+    return blob;
+  }
+  let sw = bmp.width;
+  let sh = bmp.height;
+  if (current > target) sw = Math.round(sh * target);
+  else sh = Math.round(sw / target);
+  const canvas = document.createElement('canvas');
+  canvas.width = sw;
+  canvas.height = sh;
+  canvas.getContext('2d')!.drawImage(bmp, Math.round((bmp.width - sw) / 2), Math.round((bmp.height - sh) / 2), sw, sh, 0, 0, sw, sh);
+  if ('close' in bmp) bmp.close();
+  return (await new Promise<Blob | null>((res) => canvas.toBlob(res, 'image/jpeg', 0.92))) ?? blob;
+};
+
+export const objectUrlFor =(id: string, blob: Blob): string => {
   const existing = urlCache.get(id);
   if (existing) return existing;
   const url = URL.createObjectURL(blob);

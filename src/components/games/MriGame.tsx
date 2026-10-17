@@ -1,6 +1,7 @@
 import { Activity, Magnet, Radio, RotateCcw } from 'lucide-react';
 import { useState } from 'react';
 import { GameShell, primaryBtn, type GameProps } from './gameKit';
+import { recordGame } from '../../services/progress';
 
 // Fixed "random" starting angles so protons don't jump around on every re-render.
 const SCRAMBLED = [20, -35, 140, 200, -80, 310];
@@ -41,7 +42,10 @@ export default function MriGame({ language, onBack }: GameProps) {
               key={label}
               type="button"
               disabled={!isNext}
-              onClick={() => setStep(i + 1)}
+              onClick={() => {
+                setStep(i + 1);
+                if (i + 1 === 3) recordGame('magnetic-resonance', 1, 1);
+              }}
               className={`flex flex-col items-center gap-1 rounded-2xl border px-2 py-3 text-xs font-semibold text-ink transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-lantern dark:text-moonlight ${
                 isDone ? 'border-meadow bg-meadow/15' : isNext ? 'animate-lantern border-lantern bg-lantern/15' : 'border-dream/20 opacity-50'
               }`}

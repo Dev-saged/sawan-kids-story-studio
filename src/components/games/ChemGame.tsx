@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { feedback } from '../../services/feedback';
 import { ELEMENTS, type ChemElement } from './elements';
 import { GameShell, ResultBanner, choiceBtn, pickRandom, shuffle, type GameProps } from './gameKit';
+import { recordGame } from '../../services/progress';
 
 interface Question {
   element: ChemElement;
@@ -32,6 +33,7 @@ export default function ChemGame({ language, onBack }: GameProps) {
     feedback(ok ? 'good' : 'bad');
     if (ok) {
       setScore((s) => s + 1);
+      recordGame('chemistry-lab', score + 1, 10);
       timer.current = window.setTimeout(() => {
         setQuestion((q) => makeQuestion(q.element));
         setResult(null);

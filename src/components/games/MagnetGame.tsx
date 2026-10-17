@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { ArrowLeft } from 'lucide-react';
 import { Language } from '../../types';
+import { recordGame } from '../../services/progress';
 
 interface Props {
   language: Language;
@@ -31,6 +32,7 @@ export default function MagnetGame({ language, onBack }: Props) {
   const test = (obj: TestObject) => {
     setTestedId(obj.id);
     setResult(obj.magnetic ? 'attract' : 'reject');
+    recordGame('magnet', 1, 1);
     window.setTimeout(() => {
       setTestedId(null);
       setResult(null);

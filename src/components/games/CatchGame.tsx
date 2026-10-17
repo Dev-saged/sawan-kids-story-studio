@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { feedback } from '../../services/feedback';
 import { ELEMENTS, type ChemElement } from './elements';
 import { GameShell, pickRandom, primaryBtn, type GameProps } from './gameKit';
+import { recordGame } from '../../services/progress';
 
 interface Falling {
   id: number;
@@ -96,6 +97,10 @@ export default function CatchGame({ language, onBack }: GameProps) {
 
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
+  }, [phase]);
+
+  useEffect(() => {
+    if (phase === 'over') recordGame('candy-catch', scoreRef.current, 100);
   }, [phase]);
 
   useEffect(() => {

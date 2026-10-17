@@ -9,10 +9,13 @@ import {
   BookOpen,
   Loader2,
   Wand2,
+  Clapperboard,
+  Check,
 } from 'lucide-react';
 import { Language, StoryData, StoryPage } from '../../types';
 import { srcToBlob, toSrc } from '../../services/media';
 import { saveAs } from 'file-saver';
+import { animationPrompt } from '../../services/animation';
 
 interface Props {
   storyData: StoryData;
@@ -25,6 +28,18 @@ interface Props {
 export default function StoryGallery({ storyData, language, onSelectPage, onPaint }: Props) {
   const ar = language === 'Arabic';
   const [fullscreenIndex, setFullscreenIndex] = useState<number | null>(null);
+  const [copiedPage, setCopiedPage] = useState<number | null>(null);
+
+  const copyAnimation = async (page: StoryPage, idx: number, e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      await navigator.clipboard.writeText(animationPrompt(storyData, page, idx));
+      setCopiedPage(page.page);
+      setTimeout(() => setCopiedPage(null), 2000);
+    } catch {
+      setCopiedPage(null);
+    }
+  };
 
   const pagesWithImages = storyData.pages.filter((p) => Boolean(p.generatedImage));
   const totalPages = storyData.pages.length;
@@ -185,6 +200,16 @@ export default function StoryGallery({ storyData, language, onSelectPage, onPain
                     {storyData.story_info.title}
                   </span>
 
+                  <button
+                    type="button"
+                    onClick={(e) => copyAnimation(page, idx, e)}
+                    className="inline-flex min-h-11 items-center gap-1 px-1 text-[11px] font-bold text-dream transition hover:underline"
+                    title={ar ? 'انسخ برومبت تحريك المشهد' : 'Copy scene animation prompt'}
+                  >
+                    {copiedPage === page.page ? <Check size={12} aria-hidden /> : <Clapperboard size={12} aria-hidden />}
+                    <span>{copiedPage === page.page ? (ar ? 'تم النسخ' : 'Copied') : ar ? 'برومبت التحريك' : 'Animation prompt'}</span>
+                  </button>
+
                   {onSelectPage && (
                     <button
                       type="button"
@@ -192,7 +217,7 @@ export default function StoryGallery({ storyData, language, onSelectPage, onPain
                         e.stopPropagation();
                         onSelectPage(idx);
                       }}
-                      className="inline-flex items-center gap-1 text-[11px] font-bold text-lantern transition hover:underline"
+                      className="inline-flex min-h-11 items-center gap-1 px-1 text-[11px] font-bold text-lantern transition hover:underline"
                     >
                       <BookOpen size={12} />
                       <span>{ar ? 'قراءة المشهد' : 'Read scene'}</span>

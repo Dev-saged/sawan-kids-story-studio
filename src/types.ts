@@ -25,7 +25,7 @@ export type AgeGroup = '3-4' | '4-6' | '7-9' | '9-12';
 
 export type StoryType = 'Bedtime' | 'Adventure' | 'Funny' | 'Educational' | 'Moral';
 
-export type StoryLength = 'Short' | 'Medium';
+export type StoryLength = 'Short' | 'Medium' | 'Long' | 'Epic';
 
 export type ArtStyle =
   | '3D Pixar Style'
@@ -93,6 +93,8 @@ export interface StoryPage {
   text: string;
   image_prompt: string;
   narration?: string;
+  // عنوان الفصل: على أول صفحة في كل فصل فقط
+  chapter?: string;
   // رابط عرض (blob:) وقت التشغيل، أو base64 قديم
   generatedImage?: string;
   imageId?: string;
@@ -136,6 +138,8 @@ export interface StoryData {
   seriesId?: string;
   seriesTitle?: string;
   partNumber?: number;
+  // العدد المستهدف لقصة طويلة تُكتب على دفعات؛ أقل من ذلك يعني قصة غير مكتملة تُستأنف
+  plannedPages?: number;
 }
 
 export type NarratorVoice = 'Sulafat' | 'Vindemiatrix' | 'Achernar' | 'Algieba' | 'Charon' | 'Puck' | 'Family';

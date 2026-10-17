@@ -5,7 +5,10 @@ import {
   ART_STYLE_OPTIONS,
   ASPECT_RATIO_OPTIONS,
   DIALECT_OPTIONS,
+  FIRST_BATCH_PAGES,
   MAX_IDEA_LENGTH,
+  MAX_STORY_PAGES,
+  MIN_STORY_PAGES,
   PROMPT_LIMITS,
   SECONDS_PER_PAGE,
   SMART_TIPS,
@@ -19,6 +22,8 @@ import { BRAND_PRESETS, DEFAULT_PRESET } from '../../config';
 import { setVoice as persistVoice } from '../../services/narration';
 
 interface Props {
+  // فكرة جاهزة (من بطاقة تعليمية أو لعبة)
+  initialIdea?: string;
   language: Language;
   onSubmit: (params: StoryParams, pageCount: number) => void;
   onLoadStory: () => void;
@@ -40,13 +45,13 @@ const readPreset = () => {
 
 const countWords = (text: string): number => text.trim().split(/\s+/).filter(Boolean).length;
 
-export default function StorySetupForm({ language, onSubmit, onLoadStory, canLoadStory, disabled, series, onCancelSeries }: Props) {
+export default function StorySetupForm({ initialIdea, language, onSubmit, onLoadStory, canLoadStory, disabled, series, onCancelSeries }: Props) {
   const ar = language === 'Arabic';
-  const [idea, setIdea] = useState('');
+  const [idea, setIdea] = useState(() => (initialIdea ?? '').slice(0, MAX_IDEA_LENGTH));
   const [dialect, setDialect] = useState<ArabicDialect>(() => series?.dialect ?? readPreset().dialect);
   const [ageGroup, setAgeGroup] = useState<AgeGroup>(() => series?.ageGroup ?? '4-6');
   const [storyType, setStoryType] = useState<StoryType>('Bedtime');
-  const [length, setLength] = useState<StoryLength>('Short');
+  const [pageCount, setPageCount] = useState(6);
   const [artStyle, setArtStyle] = useState<ArtStyle>(() => series?.artStyle ?? readPreset().artStyle);
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>(() => series?.aspectRatio ?? '4:3');
   const [hero, setHero] = useState<ChildProfile | null>(null);
@@ -67,12 +72,12 @@ export default function StorySetupForm({ language, onSubmit, onLoadStory, canLoa
     }
   };
 
-  const selectedLength = STORY_LENGTHS.find((l) => l.value === length)!;
+  const length: StoryLength = pageCount <= 8 ? 'Short' : pageCount <= 16 ? 'Medium' : pageCount <= 28 ? 'Long' : 'Epic';
   const selectedAge = AGE_GROUPS.find((g) => g.value === ageGroup)!;
   const words = countWords(idea);
   const minWords = PROMPT_LIMITS[ageGroup];
   const tooShort = words > 0 && words < minWords;
-  const readingMinutes = Math.max(1, Math.ceil((selectedLength.pages * SECONDS_PER_PAGE) / 60));
+  const readingMinutes = Math.max(1, Math.ceil((pageCount * SECONDS_PER_PAGE) / 60));
   const canSubmit = words >= minWords && !disabled;
 
   const surprise = () => {
@@ -96,7 +101,7 @@ export default function StorySetupForm({ language, onSubmit, onLoadStory, canLoa
       heroPhotoId: series?.heroPhotoId ?? hero?.photoId,
       series: series ?? undefined,
     };
-    onSubmit(params, selectedLength.pages);
+    onSubmit(params, pageCount);
   };
 
   const labelCls = 'block text-sm font-semibold text-ink/80 dark:text-moonlight/80 mb-1.5';
@@ -226,20 +231,39 @@ export default function StorySetupForm({ language, onSubmit, onLoadStory, canLoa
           </select>
         </div>
 
-        <div>
+        <div className="col-span-2">
           <label className={labelCls} htmlFor="length">
-            {ar ? 'طول القصة' : 'Length'}
+            {ar ? `طول القصة: ${pageCount} صفحة` : `Story length: ${pageCount} pages`}
           </label>
-          <select id="length" className={selectCls} value={length} onChange={(e) => setLength(e.target.value as StoryLength)}>
+          <div className="mb-2 flex flex-wrap gap-1.5" role="group" aria-label={ar ? 'أطوال جاهزة' : 'Length presets'}>
             {STORY_LENGTHS.map((l) => (
-              <option key={l.value} value={l.value}>
+              <button
+                key={l.value}
+                type="button"
+                onClick={() => setPageCount(l.pages)}
+                aria-pressed={pageCount === l.pages}
+                className={`min-h-11 rounded-full border px-3.5 text-xs font-semibold transition active:scale-95 ${
+                  pageCount === l.pages ? 'border-lantern bg-lantern text-ink' : 'border-dream/30 bg-white/70 text-ink dark:bg-white/10 dark:text-moonlight'
+                }`}
+              >
                 {ar ? l.label.ar : l.label.en}
-              </option>
+              </button>
             ))}
-          </select>
+          </div>
+          <input
+            id="length"
+            type="range"
+            min={MIN_STORY_PAGES}
+            max={MAX_STORY_PAGES}
+            step={1}
+            value={pageCount}
+            onChange={(e) => setPageCount(Number(e.target.value))}
+            className="h-11 w-full accent-lantern"
+          />
           <p className="mt-1 flex items-center gap-1 text-xs text-ink/60 dark:text-moonlight/60">
             <Clock size={12} aria-hidden />
             {ar ? `مدة القراءة التقريبية: ${readingMinutes} د` : `Approx. reading time: ${readingMinutes} min`}
+            {pageCount > FIRST_BATCH_PAGES && <span>{ar ? ' · تُكتب القصة الطويلة على دفعات بفصول، ويمكن استئنافها إن انقطعت' : ' · long stories are written in chapters and can be resumed'}</span>}
           </p>
         </div>
 
