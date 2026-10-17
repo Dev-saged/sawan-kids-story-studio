@@ -13,9 +13,28 @@ app.use(express.json({ limit: '30mb' }));
 
 // سلاسل النماذج: الأقوى أولاً، وكل نموذج له كوتا مستقلة
 const MODELS = {
-  text: ['gemini-3.8-flash', 'gemini-2.5-flash', 'gemini-3.1-flash-lite'],
-  image: ['gemini-2.5-flash-image', 'gemini-nano-banana-2.1', 'gemini-3-pro-image', 'gemini-3.1-flash-image', 'gemini-3.1-flash-lite-image'],
-  tts: ['gemini-3.8-flash-tts', 'gemini-3.8-flash-lite-tts', 'gemini-3.1-flash-tts-preview', 'gemini-2.5-pro-preview-tts'],
+  text: [
+    'gemini-2.5-flash',
+    'gemini-3.8-flash',
+    'gemini-3.1-flash-lite',
+    'gemini-flash-latest',
+    'gemini-flash-lite-latest',
+    'gemini-2.5-flash-lite',
+    'gemini-3.5-flash',
+  ],
+  image: [
+    'gemini-2.5-flash-image',
+    'gemini-3.1-flash-lite-image',
+    'gemini-nano-banana-2.1',
+    'gemini-3-pro-image',
+    'gemini-3.1-flash-image',
+  ],
+  tts: [
+    'gemini-3.8-flash-tts',
+    'gemini-3.8-flash-lite-tts',
+    'gemini-3.1-flash-tts-preview',
+    'gemini-2.5-pro-preview-tts',
+  ],
   music: ['lyria-3-clip-preview', 'lyria-3.5'],
 };
 // نماذج لا تقبل imageSize (ترفضه بخطأ 400): تأخذ نسبة الأبعاد فقط
@@ -256,18 +275,23 @@ NARRATION (field "narration", one per page)
 - Arabic dialect: same words as "text", add tashkeel only where pronunciation would be ambiguous.
 - English: identical to "text".
 
-CHARACTERS
-- 1-3 fixed main characters. Each keeps exactly the same name, species, face, hair, outfit and colors on every page.
-- "description" is an ENGLISH visual design sheet: species, age look, skin/fur tone, hair, eyes, outfit with colors, one distinctive accessory.
+CHARACTERS & VISUAL DESIGN (STRICT & POWERFUL)
+- 1-3 fixed main characters. Every character must have an iconic, unmistakable visual identity.
+- "description": Complete model sheet in ENGLISH: exact species, precise age look, skin/fur color and undertones, hairstyle and exact hair color (e.g. glossy ink-black bob with bangs, golden honey-brown messy curls), expressive luminous eyes with highlight reflection, signature outfit with exact colors (e.g. sapphire-blue knitted sweater over amber corduroy trousers), footwear, and one distinctive signature accessory (e.g. glowing bronze compass, carved wooden acorn brooch).
+- Art styles must strictly adapt the visual rendering:
+  * "Anime": Studio Ghibli / Makoto Shinkai aesthetic, luminous big expressive eyes, clean lines, lush cloudscapes, cinematic lighting.
+  * "3D Cartoon / Pixar": Modern 3D animation studio style, tactile soft textures, subsurface glow, emotive facial expressions, warm volumetric light.
+  * "Watercolor Storybook": Classic picture book style, textured washes, organic ink outlines, dreamy soft atmosphere.
+  * "Comic / Webtoon": Vibrant dynamic panels, bold inks, expressive action lines, colorful saturated palette.
+- Consistency Rule: On every single page, repeat the character's exact name and their 3 core visual signatures (hair, eye color, clothing color) so the character NEVER drifts.
 - Never introduce random new characters later.
 
 PAGES
 - Each page: 2-6 short child-friendly sentences in "text".
 - Optional "chapter": a short chapter title (3-5 words, in the story language) ONLY on the first page of each chapter.
-- "image_prompt" is ALWAYS ENGLISH, 70-120 words, written like a director's shot description:
-  main action and emotion, every character on the page BY NAME with 2-3 of their fixed visual traits repeated,
-  setting details, time of day, lighting, camera shot (wide / medium / close-up / low angle), mood and color palette.
-  Never put words, letters, captions or signs in the image.
+- "image_prompt" is ALWAYS ENGLISH, 80-140 words, written like an award-winning animation director's shot description:
+  exact camera shot (e.g. Cinematic close-up, Dutch angle, wide panoramic landscape), focal character(s) BY NAME with visual traits repeated performing a specific emotional action (e.g. wide astonished sparkling eyes, gentle comforting smile), background environmental details, time of day, lighting, color harmony.
+  Never put words, letters, captions, signs, or watermarks in the image.
 
 COVER, MUSIC, MORAL, QUIZ
 - "cover_image_prompt": ENGLISH, 70-120 words, a striking hero composition of the main characters in the story's key setting that captures the title, cinematic lighting, no text.
@@ -573,20 +597,54 @@ app.post('/api/generate-image', async (req: Request, res: Response) => {
       : '';
     const text = `${lead}${prompt} Masterpiece children's book illustration, sharp focus, rich detail, professional composition, consistent character design. Absolutely no text, letters, captions, logos or watermark.`;
 
-    const { value, model } = await runChain('image', await chainFor(req, 'image'), async (m) => {
-      const response = await session.ai.models.generateContent({
-        model: m,
-        contents: [{ role: 'user', parts: [...refs.map((r) => ({ inlineData: r })), { text }] }],
-        config: {
-          responseModalities: [Modality.TEXT, Modality.IMAGE],
-          imageConfig: NO_SIZE_IMAGE_MODELS.has(m) ? { aspectRatio } : { aspectRatio, imageSize: '2K' },
-        },
+    try {
+      const { value, model } = await runChain('image', await chainFor(req, 'image'), async (m) => {
+        const response = await session.ai.models.generateContent({
+          model: m,
+          contents: [{ role: 'user', parts: [...refs.map((r) => ({ inlineData: r })), { text }] }],
+          config: {
+            responseModalities: [Modality.TEXT, Modality.IMAGE],
+            imageConfig: NO_SIZE_IMAGE_MODELS.has(m) ? { aspectRatio } : { aspectRatio, imageSize: '2K' },
+          },
+        });
+        const part = (response.candidates?.[0]?.content?.parts ?? []).find((p) => p.inlineData?.data);
+        return part?.inlineData?.data ? { base64: part.inlineData.data, mimeType: part.inlineData.mimeType || 'image/png' } : null;
       });
-      const part = (response.candidates?.[0]?.content?.parts ?? []).find((p) => p.inlineData?.data);
-      return part?.inlineData?.data ? { base64: part.inlineData.data, mimeType: part.inlineData.mimeType || 'image/png' } : null;
-    });
 
-    return res.json({ ...value, model, engine: 'gemini' });
+      return res.json({ ...value, model, engine: 'gemini' });
+    } catch (rasterErr: any) {
+      console.warn('Raster image models unavailable on this tier; generating high-fidelity Gemini vector art...');
+      const artStyle = clip(req.body?.artStyle, 80) || 'Anime Storybook';
+      const svgPrompt = `You are an elite digital artist and children's storybook illustrator specializing in ${artStyle}.
+Generate an extraordinary, complete, vibrant standalone SVG children's story illustration.
+SCENE SPECIFICATION:
+${prompt}
+ART STYLE GUIDELINES:
+- Style: ${artStyle} (Anime: Studio Ghibli/Makoto Shinkai style, lush sky & expressive sparkling eyes; 3D Cartoon: Pixar/Disney warm lighting & rounded joyful characters; Watercolor: delicate washes & warm storybook palette).
+- Character Focus: Beautifully drawn characters with distinct facial expressions, glowing eyes, expressive poses, hair details, outfits with clean shadows and highlights.
+- Environment & Lighting: Immersive background (sky, trees, room, nature, clouds), rich gradients (<linearGradient>, <radialGradient>), soft atmospheric lighting.
+- TECHNICAL REQUIREMENTS:
+1. Return ONLY pure, valid SVG code: <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 600" width="100%" height="100%">...</svg>
+2. Absolutely NO markdown backticks (no \`\`\`xml or \`\`\`svg), no text outside the SVG.
+3. No letters, captions, watermark, or text rendered inside the image.`;
+
+      const { value: svgCode, model: textModel } = await runChain('image-vector', await chainFor(req, 'text'), async (m) => {
+        const resp = await session.ai.models.generateContent({
+          model: m,
+          contents: svgPrompt,
+        });
+        let raw = resp.text || '';
+        raw = raw.replace(/^```(xml|svg)?/i, '').replace(/```$/g, '').trim();
+        const match = raw.match(/<svg[\s\S]*<\/svg>/i);
+        return match ? match[0] : null;
+      });
+
+      if (svgCode) {
+        const base64 = Buffer.from(svgCode).toString('base64');
+        return res.json({ base64, mimeType: 'image/svg+xml', model: `${textModel}-svg`, engine: 'gemini' });
+      }
+      throw rasterErr;
+    }
   } catch (err) {
     return sendError(res, err, 'Failed to generate image with Gemini');
   }

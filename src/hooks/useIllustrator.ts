@@ -44,7 +44,10 @@ export function useIllustrator(story: StoryData, update: Updater, focusIndex: nu
       const hit = await findSimilarImage(matchText, cacheStyle(s), kind, kind === 'sheet' ? 0.9 : 0.82, usedIds(s));
       if (hit) return hit;
     }
-    const raw = await generateIllustration({ prompt, aspectRatio: kind === 'sheet' ? '16:9' : s.story_info.aspect_ratio || '4:3', references: refs, kind }, signal);
+    const raw = await generateIllustration(
+      { prompt, aspectRatio: kind === 'sheet' ? '16:9' : s.story_info.aspect_ratio || '4:3', references: refs, kind, artStyle: s.story_info.art_style },
+      signal
+    );
     return saveImage(await reencode(raw, 2048), kind, cacheStyle(s), matchText);
   };
 

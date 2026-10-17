@@ -15,6 +15,7 @@ export interface ImageRequest {
   aspectRatio: AspectRatio;
   references?: { data: string; mimeType: string }[];
   kind?: string;
+  artStyle?: string;
 }
 
 // يرمى عندما يتم تخطي صورة (مثلاً ورقة الشخصيات إن لم تكن مطلوبة)
@@ -149,6 +150,39 @@ const runDirect = async (eng: Engine, req: ImageRequest, signal?: AbortSignal): 
       }
     }
   }
+
+  // إذا كانت الموديلات النقطية تتطلب رصيداً غير متوفر، نولّد رسمة أطفال فنية فائقة عبر Gemini 2.5 Flash مجاناً
+  try {
+    const artStyle = req.artStyle || 'Anime Storybook';
+    const svgPrompt = `You are a world-class children's storybook digital artist specializing in ${artStyle}.
+Generate an extraordinary, complete, vibrant standalone SVG children's story illustration.
+SCENE: ${req.prompt}
+ART STYLE GUIDELINES:
+- Style: ${artStyle} (Anime: Studio Ghibli/Makoto Shinkai aesthetic, luminous big expressive eyes; 3D Cartoon: Pixar/Disney warm lighting & rounded characters; Watercolor: delicate washes & storybook palette).
+- Character: Expressive face, sparkling detailed eyes, clean contours, shadow and highlight gradients.
+- Environment: Rich background scenery, atmospheric depth with <linearGradient> and <radialGradient>.
+- TECHNICAL REQUIREMENTS:
+1. Return ONLY pure, valid SVG code: <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 600" width="100%" height="100%">...</svg>
+2. Absolutely NO markdown backticks (no \`\`\`xml or \`\`\`svg), no HTML, no explanation.
+3. No letters, words, or watermarks in the illustration.`;
+
+    const svgResp = await withTimeout(
+      ai.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents: svgPrompt,
+      }),
+      DIRECT_TIMEOUT
+    );
+    let raw = svgResp.text || '';
+    raw = raw.replace(/^```(xml|svg)?/i, '').replace(/```$/g, '').trim();
+    const match = raw.match(/<svg[\s\S]*<\/svg>/i);
+    if (match) {
+      return new Blob([match[0]], { type: 'image/svg+xml' });
+    }
+  } catch {
+    // continue to throw failed(trail)
+  }
+
   throw failed(trail);
 };
 
@@ -156,7 +190,7 @@ const runDirect = async (eng: Engine, req: ImageRequest, signal?: AbortSignal): 
 const runServer = async (req: ImageRequest, signal?: AbortSignal): Promise<Blob> => {
   const data = await postJson<{ base64?: string; mimeType: string; skipped?: boolean; engine?: string }>(
     '/api/generate-image',
-    { prompt: req.prompt, aspectRatio: req.aspectRatio, references: req.references, kind: req.kind },
+    { prompt: req.prompt, aspectRatio: req.aspectRatio, references: req.references, kind: req.kind, artStyle: req.artStyle },
     signal
   );
   if (data?.skipped) throw new SkippedImage('Image skipped: free engine takes no reference sheet.');

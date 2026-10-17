@@ -48,11 +48,22 @@ const easeInOut = (x: number) => {
   return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
 };
 
-// الصورة تُصغَّر لما يحتاجه الإطار (مع هامش حركة الكاميرا) حتى لا تستهلك ذاكرة الجوال
+// الصورة تُصغَّر لما يحتاجه الإطار وتدعم SVG والصور النقطية بكفاءة
 const loadBitmap = async (src: string | undefined, W: number, H: number): Promise<ImageBitmap | null> => {
   if (!src) return null;
   try {
-    const full = await createImageBitmap(await srcToBlob(src));
+    const blob = await srcToBlob(src);
+    let full: ImageBitmap;
+    if (blob.type.includes('svg') || src.includes('image/svg') || src.startsWith('PHN2') || src.startsWith('PD94')) {
+      const url = URL.createObjectURL(blob);
+      const img = new Image();
+      img.src = url;
+      await img.decode();
+      URL.revokeObjectURL(url);
+      full = await createImageBitmap(img);
+    } else {
+      full = await createImageBitmap(blob);
+    }
     const need = Math.max(W / full.width, H / full.height) * 1.25;
     if (need >= 0.9) return full;
     const small = await createImageBitmap(full, { resizeWidth: Math.ceil(full.width * need), resizeHeight: Math.ceil(full.height * need), resizeQuality: 'medium' });
@@ -126,7 +137,7 @@ class Renderer {
     return `${weight} ${size}px ${fam}, sans-serif`;
   }
 
-  // صورة بحركة كاميرا سينمائية (Ken Burns)
+  // صورة بحركة كاميرا سينمائية (Ken Burns) مع تحريك الشخصيات ونبض حي
   private drawImage(seg: Segment, local: number, extraScale = 1) {
     const { ctx, W, H } = this;
     if (!seg.image) {
@@ -144,9 +155,19 @@ class Renderer {
     const base = Math.max(W / img.width, H / img.height);
     const w = img.width * base * scale;
     const h = img.height * base * scale;
-    const panX = seg.dir * (p - 0.5) * W * 0.05;
-    const panY = (zoomIn ? -1 : 1) * (p - 0.5) * H * 0.03;
-    ctx.drawImage(img, (W - w) / 2 + panX, (H - h) / 2 + panY, w, h);
+
+    // حركة حية للشخصيات: تنفس خفيف + تمايل ديناميكي وتدوير ميكروي
+    const breath = Math.sin(local * 2.3) * (H * 0.005);
+    const sway = Math.sin(local * 1.5) * (W * 0.004);
+    const tilt = Math.sin(local * 1.6) * 0.005;
+    const panX = seg.dir * (p - 0.5) * W * 0.05 + sway;
+    const panY = (zoomIn ? -1 : 1) * (p - 0.5) * H * 0.03 + breath;
+
+    ctx.save();
+    ctx.translate(W / 2, H / 2);
+    ctx.rotate(tilt);
+    ctx.drawImage(img, -w / 2 + panX, -h / 2 + panY, w, h);
+    ctx.restore();
   }
 
   private overlay(strength: number) {
@@ -211,72 +232,83 @@ class Renderer {
     ctx.closePath();
   }
 
-  // شريط النص الزجاجي مع تظليل الكلمة المنطوقة (كاريوكي)
+  // شريط الترجمة السينمائي سطر بسطر متوافق مع الصوت مع تظليل الكلمة النشطة
   private caption(seg: Segment, local: number, alpha: number) {
     const { ctx, W, H, portrait } = this;
-    const size = portrait ? 40 : 34;
+    const size = portrait ? 38 : 32;
     ctx.font = this.font(size, 700);
-    const padX = portrait ? 40 : 56;
-    const boxW = W - (portrait ? 48 : 120);
-    const lines = this.wrap(seg.words, boxW - padX * 2);
-    const per = portrait ? 4 : 3;
-    const lh = size * 1.62;
+    const padX = portrait ? 32 : 44;
+    const maxTextW = W - (portrait ? 48 : 100);
+    const lines = this.wrap(seg.words, maxTextW - padX * 2);
+    if (!lines.length) return;
+
+    const lh = size * 1.55;
     const tm = this.timings.get(seg);
     const vt = local - seg.voiceStart;
     let active = -1;
     if (tm) for (let i = 0; i < tm.length; i++) if (vt >= tm[i].start) active = i;
+
     let wi = 0;
     const lineStart = lines.map((l) => {
       const s = wi;
       wi += l.length;
       return s;
     });
-    const chunkIdx = Math.max(0, Math.floor(Math.max(0, lines.findIndex((_, i) => active < lineStart[i] + lines[i].length)) / per));
-    const chunk = lines.slice(chunkIdx * per, chunkIdx * per + per);
-    const boxH = chunk.length * lh + 44;
-    const x0 = (W - boxW) / 2;
-    const rise = (1 - ease(local / 0.7)) * 30;
-    const y0 = H - boxH - (portrait ? 150 : 46) + rise + Math.sin(local * 1.3) * 2;
+
+    // سطر واحد فقط يظهر في كل لحظة بناءً على مكان القراءة
+    let currentLineIdx = 0;
+    for (let i = 0; i < lines.length; i++) {
+      if (active >= lineStart[i]) {
+        currentLineIdx = i;
+      }
+    }
+    const currentLine = lines[currentLineIdx] || lines[0];
+    const space = ctx.measureText(' ').width;
+    const widths = currentLine.map((w) => ctx.measureText(w).width);
+    const lineTextWidth = widths.reduce((a, b) => a + b, 0) + space * (currentLine.length - 1);
+    const pillW = Math.min(W - 40, Math.max(260, lineTextWidth + padX * 2));
+    const pillH = lh + 22;
+    const x0 = (W - pillW) / 2;
+    const rise = (1 - ease(local / 0.7)) * 20;
+    const y0 = H - pillH - (portrait ? 140 : 42) + rise + Math.sin(local * 1.2) * 1.5;
 
     ctx.save();
     ctx.globalAlpha = alpha;
-    this.roundRect(x0, y0, boxW, boxH, 28);
-    ctx.fillStyle = 'rgba(18,12,38,0.62)';
+    this.roundRect(x0, y0, pillW, pillH, 20);
+    ctx.fillStyle = 'rgba(14, 9, 32, 0.72)';
     ctx.fill();
-    ctx.strokeStyle = 'rgba(255,233,168,0.28)';
+    ctx.strokeStyle = 'rgba(255, 201, 74, 0.4)';
     ctx.lineWidth = 2;
     ctx.stroke();
 
     ctx.textBaseline = 'middle';
     ctx.textAlign = 'left';
     ctx.direction = this.rtl ? 'rtl' : 'ltr';
-    const space = ctx.measureText(' ').width;
-    chunk.forEach((line, li) => {
-      const widths = line.map((w) => ctx.measureText(w).width);
-      const total = widths.reduce((a, b) => a + b, 0) + space * (line.length - 1);
-      let x = this.rtl ? W / 2 + total / 2 : W / 2 - total / 2;
-      const y = y0 + 22 + lh * li + lh / 2;
-      line.forEach((w, k) => {
-        const idx = lineStart[chunkIdx * per + li] + k;
-        const ww = widths[k];
-        const left = this.rtl ? x - ww : x;
-        ctx.save();
-        if (idx === active) {
-          const pop = 1 + 0.08 * Math.max(0, 1 - (vt - (tm?.[idx]?.start ?? 0)) / 0.25);
-          ctx.translate(left + ww / 2, y);
-          ctx.scale(pop, pop);
-          ctx.translate(-(left + ww / 2), -y);
-          ctx.shadowColor = 'rgba(255,201,74,0.85)';
-          ctx.shadowBlur = 18;
-          ctx.fillStyle = LANTERN;
-        } else {
-          ctx.fillStyle = idx < active ? '#ffffff' : 'rgba(255,255,255,0.58)';
-        }
-        ctx.fillText(w, left, y);
-        ctx.restore();
-        x += this.rtl ? -(ww + space) : ww + space;
-      });
+
+    let x = this.rtl ? W / 2 + lineTextWidth / 2 : W / 2 - lineTextWidth / 2;
+    const y = y0 + pillH / 2;
+
+    currentLine.forEach((w, k) => {
+      const idx = lineStart[currentLineIdx] + k;
+      const ww = widths[k];
+      const left = this.rtl ? x - ww : x;
+      ctx.save();
+      if (idx === active) {
+        const pop = 1 + 0.1 * Math.max(0, 1 - (vt - (tm?.[idx]?.start ?? 0)) / 0.25);
+        ctx.translate(left + ww / 2, y);
+        ctx.scale(pop, pop);
+        ctx.translate(-(left + ww / 2), -y);
+        ctx.shadowColor = 'rgba(255, 201, 74, 0.9)';
+        ctx.shadowBlur = 18;
+        ctx.fillStyle = LANTERN;
+      } else {
+        ctx.fillStyle = idx < active ? '#ffffff' : 'rgba(255, 255, 255, 0.6)';
+      }
+      ctx.fillText(w, left, y);
+      ctx.restore();
+      x += this.rtl ? -(ww + space) : ww + space;
     });
+
     ctx.restore();
   }
 
@@ -519,6 +551,71 @@ const buildSegments = async (story: StoryData, voice: NarratorVoice, actx: BaseA
   return segs;
 };
 
+// توليد موسيقى تصويرية دافئة وهادئة عبر WebAudio كاحتياط موثوق عند غياب موسيقى السيرفر
+const createProceduralLullaby = async (durationSec: number, sr = SR): Promise<AudioBuffer> => {
+  const off = new OfflineAudioContext(2, Math.ceil(durationSec * sr), sr);
+  const notes = [261.63, 293.66, 329.63, 392.0, 440.0, 523.25, 587.33, 659.25, 783.99];
+  const melody = [
+    { n: 2, t: 0.0, d: 1.2 }, { n: 4, t: 0.8, d: 1.2 }, { n: 5, t: 1.6, d: 1.5 }, { n: 4, t: 2.6, d: 1.0 },
+    { n: 3, t: 3.4, d: 1.4 }, { n: 1, t: 4.4, d: 1.2 }, { n: 2, t: 5.2, d: 2.2 },
+    { n: 5, t: 7.0, d: 1.2 }, { n: 6, t: 7.8, d: 1.2 }, { n: 7, t: 8.6, d: 1.6 }, { n: 5, t: 9.8, d: 1.2 },
+    { n: 4, t: 10.8, d: 1.5 }, { n: 2, t: 12.0, d: 1.2 }, { n: 0, t: 13.0, d: 2.8 },
+  ];
+  const loopLen = 16.0;
+  const loops = Math.ceil(durationSec / loopLen);
+
+  for (let l = 0; l < loops; l++) {
+    const baseT = l * loopLen;
+    // تناغم خلفي دافئ (Warm Ambient Pad)
+    const padChordFreqs = l % 2 === 0 ? [130.81, 164.81, 196.0] : [110.0, 130.81, 174.61];
+    for (const f of padChordFreqs) {
+      const osc = off.createOscillator();
+      const g = off.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(f, baseT);
+      g.gain.setValueAtTime(0, baseT);
+      g.gain.linearRampToValueAtTime(0.04, baseT + 1.5);
+      g.gain.setValueAtTime(0.04, Math.min(durationSec, baseT + loopLen - 1.5));
+      g.gain.linearRampToValueAtTime(0, Math.min(durationSec, baseT + loopLen));
+      osc.connect(g).connect(off.destination);
+      osc.start(baseT);
+      osc.stop(Math.min(durationSec, baseT + loopLen));
+    }
+    // نغمات صندوق الموسيقى الحالم (Music Box Bell)
+    for (const m of melody) {
+      const t = baseT + m.t;
+      if (t >= durationSec) continue;
+      const freq = notes[m.n % notes.length];
+      const osc = off.createOscillator();
+      const g = off.createGain();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(freq, t);
+
+      const osc2 = off.createOscillator();
+      const g2 = off.createGain();
+      osc2.type = 'sine';
+      osc2.frequency.setValueAtTime(freq * 2, t);
+
+      const dur = m.d;
+      g.gain.setValueAtTime(0, t);
+      g.gain.linearRampToValueAtTime(0.12, t + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+
+      g2.gain.setValueAtTime(0, t);
+      g2.gain.linearRampToValueAtTime(0.04, t + 0.01);
+      g2.gain.exponentialRampToValueAtTime(0.0001, t + dur * 0.7);
+
+      osc.connect(g).connect(off.destination);
+      osc2.connect(g2).connect(off.destination);
+      osc.start(t);
+      osc.stop(t + dur);
+      osc2.start(t);
+      osc2.stop(t + dur);
+    }
+  }
+  return off.startRendering();
+};
+
 // خلط الراوي والموسيقى مع خفض الموسيقى تحت الصوت
 const mixAudio = async (segs: Segment[], music: AudioBuffer | null): Promise<AudioBuffer> => {
   const end = segs[segs.length - 1].start + segs[segs.length - 1].dur;
@@ -694,16 +791,27 @@ const render = async (story: StoryData, opts: VideoOptions, onProgress: Progress
   let music: AudioBuffer | null = null;
   let musicFailed = false;
   if (opts.withMusic) {
-    onProgress(0.47, ar ? '🎵 نؤلّف موسيقى القصة...' : '🎵 Composing the soundtrack...');
+    onProgress(0.45, ar ? '🎵 نؤلّف الموسيقى التصويرية للقصة (45%)...' : '🎵 Composing story soundtrack (45%)...');
     try {
-      music = await decode(decoder, await getStoryMusic(story, signal));
+      const musicPromise = getStoryMusic(story, signal);
+      const timeoutPromise = new Promise<null>((r) => setTimeout(() => r(null), 7000));
+      const res = await Promise.race([musicPromise, timeoutPromise]);
+      if (res instanceof Blob) {
+        onProgress(0.49, ar ? '🎶 معالجة وضبط صوت الموسيقى (49%)...' : '🎶 Processing soundtrack (49%)...');
+        music = await decode(decoder, res);
+      }
     } catch (err) {
       if ((err as Error).name === 'AbortError') throw err;
-      musicFailed = true;
+    }
+    // في حال عدم توفر أو تأخر موسيقى السيرفر: يتم التوليد التلقائي لموسيقى هادئة بالـ WebAudio
+    if (!music) {
+      onProgress(0.49, ar ? '🎶 توليد لحن موسيقي هادئ ومؤثرات صوتية (49%)...' : '🎶 Generating gentle lullaby score & effects (49%)...');
+      const totalDur = segs[segs.length - 1].start + segs[segs.length - 1].dur + 2;
+      music = await createProceduralLullaby(totalDur, SR);
     }
   }
 
-  onProgress(0.52, ar ? '🎚️ نمزج الصوت...' : '🎚️ Mixing audio...');
+  onProgress(0.53, ar ? '🎚️ مزج أصوات الراوي مع الموسيقى التصويرية (53%)...' : '🎚️ Mixing narration with soundtrack (53%)...');
   const mixed = await mixAudio(segs, music);
   const last = segs[segs.length - 1];
   const duration = last.start + last.dur;
