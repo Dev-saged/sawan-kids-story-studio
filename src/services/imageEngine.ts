@@ -1,16 +1,14 @@
 import { ApiError, postJson, preflight, type ApiErrorCode, type TrailItem } from './api';
-import { getFreeCreds, getUserApiKey, isWebFreeEnabled, keyShape } from './apiKey';
+import { getUserApiKey, keyShape } from './apiKey';
 import { hashText } from './db';
 import { base64ToBlob, cropToAspect } from './media';
 import type { AspectRatio } from '../types';
 
-// طبقة الصور الموحدة: كل رسم في التطبيق يمر من هنا، ومن المتصفح أولاً (كما تعمل النسخة المرجعية).
-// السلّم بالترتيب، وكل درجة تُجرَّب عند فشل التي قبلها:
-//  1) direct-user : Gemini من المتصفح بمفتاح الزائر الخاص          (gemini-2.5-flash-image)
-//  2) direct-env  : Gemini من المتصفح بالمفتاح المحقون من AI Studio (نفس النموذج، حتى لو كان placeholder)
-//  3) server      : الخادم (سلسلة Nano Banana + Cloudflare FLUX المجاني إن أُعدّ)
-//  4) web-free    : Pollinations مجاني بلا مفتاح (علامة مائية، بلا صور مرجعية) كشبكة أمان أخيرة
-export type EngineId = 'direct-user' | 'direct-env' | 'server' | 'web-free';
+// طبقة الصور الموحدة: كل رسم في التطبيق يمر من هنا عبر نماذج Gemini الحقيقية فقط.
+//  1) direct-user : Gemini من المتصفح بمفتاح الزائر الخاص (gemini-2.5-flash-image وغيره)
+//  2) server      : الخادم (سلسلة نماذج Gemini عبر proxy مع المفتاح المحقون)
+//  3) direct-env  : Gemini من المتصفح بالمفتاح المحقون
+export type EngineId = 'direct-user' | 'server' | 'direct-env';
 
 export interface ImageRequest {
   prompt: string;
@@ -19,18 +17,24 @@ export interface ImageRequest {
   kind?: string;
 }
 
-// يرمى عندما لا يحتاج المحرك المجاني ورقة الشخصيات؛ ليس ApiError كي لا يُسجَّل
+// يرمى عندما يتم تخطي صورة (مثلاً ورقة الشخصيات إن لم تكن مطلوبة)
 export class SkippedImage extends Error {}
 
-// النموذج المثبت عمله داخل AI Studio في النسخة المرجعية
-export const DIRECT_MODELS = ['gemini-2.5-flash-image'];
+// نماذج Gemini لتوليد الصور
+export const DIRECT_MODELS = [
+  'gemini-2.5-flash-image',
+  'gemini-3.1-flash-lite-image',
+  'gemini-nano-banana-2.1',
+  'gemini-3-pro-image',
+];
 const DIRECT_TIMEOUT = 60_000;
-const WEB_TIMEOUT = 80_000;
 const HARD_DOWN_MS = 30 * 60_000;
 const SOFT_DOWN_MS = 60_000;
-const WEB_BASE = 'https://image.pollinations.ai';
 
-const injectedKey = (): string => (typeof __DIRECT_KEY__ === 'string' ? __DIRECT_KEY__.trim() : '');
+const injectedKey = (): string => {
+  const k = typeof __DIRECT_KEY__ === 'string' ? __DIRECT_KEY__.trim() : '';
+  return k === 'MY_GEMINI_API_KEY' || k.length < 20 ? '' : k;
+};
 
 // ===== أدوات نقية (تُختبر في #test) =====
 export type FailKind = 'auth' | 'billing' | 'quota' | 'missing' | 'busy' | 'skip';
@@ -68,20 +72,6 @@ export const rankError = (code: ApiErrorCode): number => RANK[code] ?? 9;
 // أخطاء دائمة: لا فائدة من إعادة المحاولة معها في هذه الجلسة
 const HARD: ReadonlySet<ApiErrorCode> = new Set(['BILLING', 'AUTH', 'NOKEY', 'NOMODEL', 'FREE_AUTH']);
 
-export const WEB_SIZES: Record<AspectRatio, [number, number]> = {
-  '1:1': [1024, 1024],
-  '4:3': [1024, 768],
-  '3:4': [768, 1024],
-  '16:9': [1024, 576],
-  '9:16': [576, 1024],
-};
-
-export const webFreeUrl = (prompt: string, aspect: AspectRatio, seed: number): string => {
-  const [w, h] = WEB_SIZES[aspect] ?? WEB_SIZES['4:3'];
-  const text = `${prompt.replace(/\s+/g, ' ').trim().slice(0, 700)}, children's book illustration, no text, no letters`;
-  return `${WEB_BASE}/prompt/${encodeURIComponent(text)}?width=${w}&height=${h}&seed=${seed}&nologo=true&safe=true&nofeed=true&private=true`;
-};
-
 // ===== صحة المحركات داخل الجلسة =====
 const down = new Map<string, number>();
 const slot = (id: EngineId, key?: string) => (key ? `${id}:${hashText(key)}` : id);
@@ -94,15 +84,13 @@ interface Engine {
   key?: string;
 }
 
-const engines = (req: ImageRequest): Engine[] => {
+const engines = (_req?: ImageRequest): Engine[] => {
   const list: Engine[] = [];
   const user = getUserApiKey();
   const env = injectedKey();
   if (user) list.push({ id: 'direct-user', slot: slot('direct-user', user), key: user });
-  if (env && env !== user) list.push({ id: 'direct-env', slot: slot('direct-env', env), key: env });
   list.push({ id: 'server', slot: slot('server', user ?? 'env') });
-  // المحرك المجاني لا يقبل صوراً مرجعية: ورقة الشخصيات لا تُرسل إليه
-  if (isWebFreeEnabled() && req.kind !== 'sheet') list.push({ id: 'web-free', slot: slot('web-free') });
+  if (env && env !== user) list.push({ id: 'direct-env', slot: slot('direct-env', env), key: env });
   const live = list.filter((e) => !isDown(e.slot));
   return live.length ? live : list;
 };
@@ -177,59 +165,8 @@ const runServer = async (req: ImageRequest, signal?: AbortSignal): Promise<Blob>
   return data.engine === 'free' ? cropToAspect(blob, req.aspectRatio) : blob;
 };
 
-// ===== 4: Pollinations (مجاني بلا مفتاح). طلب واحد في كل مرة: الطبقة المجانية تحدّ التوازي =====
-let webChain: Promise<unknown> = Promise.resolve();
-
-const fetchWeb = async (req: ImageRequest, signal?: AbortSignal): Promise<Blob> => {
-  const trail: TrailItem[] = [];
-  for (let attempt = 0; attempt < 3; attempt++) {
-    if (signal?.aborted) throw abortError();
-    const ctrl = new AbortController();
-    const onAbort = () => ctrl.abort();
-    signal?.addEventListener('abort', onAbort);
-    const timer = setTimeout(() => ctrl.abort(), WEB_TIMEOUT);
-    try {
-      const res = await fetch(webFreeUrl(req.prompt, req.aspectRatio, Math.floor(Math.random() * 1e9)), { signal: ctrl.signal });
-      const type = res.headers.get('content-type') ?? '';
-      if (res.ok && type.startsWith('image/')) {
-        const blob = await res.blob();
-        if (blob.size > 2000) return cropToAspect(blob, req.aspectRatio);
-        trail.push({ model: 'web-free/pollinations', kind: 'skip', status: res.status, message: 'Image too small.' });
-        break;
-      }
-      const body = (await res.text().catch(() => '')).replace(/\s+/g, ' ').slice(0, 300);
-      const kind = classifyFailure(res.status, body);
-      trail.push({ model: 'web-free/pollinations', kind, status: res.status, message: body || `HTTP ${res.status}` });
-      if ((kind === 'quota' || kind === 'busy') && attempt < 2) {
-        await sleep(2500 * (attempt + 1));
-        continue;
-      }
-      break;
-    } catch (err: any) {
-      if (signal?.aborted) throw abortError();
-      const msg = err?.name === 'AbortError' ? 'timeout' : String(err?.message ?? err);
-      trail.push({ model: 'web-free/pollinations', kind: classifyFailure(0, msg), status: 0, message: msg });
-      if (attempt < 1) {
-        await sleep(1500);
-        continue;
-      }
-      break;
-    } finally {
-      clearTimeout(timer);
-      signal?.removeEventListener('abort', onAbort);
-    }
-  }
-  throw failed(trail);
-};
-
-const runWeb = (req: ImageRequest, signal?: AbortSignal): Promise<Blob> => {
-  const job = webChain.then(() => fetchWeb(req, signal));
-  webChain = job.catch(() => undefined);
-  return job;
-};
-
 const run = (eng: Engine, req: ImageRequest, signal?: AbortSignal): Promise<Blob> =>
-  eng.id === 'server' ? runServer(req, signal) : eng.id === 'web-free' ? runWeb(req, signal) : runDirect(eng, req, signal);
+  eng.id === 'server' ? runServer(req, signal) : runDirect(eng, req, signal);
 
 // ===== السلّم =====
 export const generateIllustration = async (req: ImageRequest, signal?: AbortSignal): Promise<Blob> => {
@@ -258,11 +195,9 @@ export const generateIllustration = async (req: ImageRequest, signal?: AbortSign
     }
   }
 
-  // كل المحركات فشلت: نُظهر أنفع رمز (حصة صفرية أوضح من «لا مفتاح على الخادم»)
-  const direct = codeFromTrail(trails.filter((t) => !t.model.startsWith('web-free')));
+  // كل مسارات Gemini المباشرة أو الخادم فشلت: نُظهر أنفع رمز
+  const direct = codeFromTrail(trails);
   const best: ApiErrorCode = serverErr && rankError(serverErr.code) <= rankError(direct) ? serverErr.code : direct;
-  // ورقة الشخصيات: المحرك المجاني لا يقبلها، فنتخطاها بدل إيقاف رسم الصفحات
-  if (req.kind === 'sheet' && isWebFreeEnabled() && HARD.has(best)) throw new SkippedImage('Character sheet skipped: no reference-capable engine.');
   if (serverErr && best === serverErr.code) {
     if (trails.length) serverErr.addTrail(trails);
     throw serverErr;
@@ -282,8 +217,6 @@ export interface KeyReport {
   injected: string;
   user: string;
   server: string;
-  webFree: boolean;
-  cloudflare: boolean;
 }
 
 const TEST_PROMPT = 'a small yellow star on a plain blue background, flat icon';
@@ -294,9 +227,8 @@ export const diagnoseImagePaths = async (): Promise<{ tests: PathTest[]; keys: K
   const env = injectedKey();
   const list: Engine[] = [];
   if (user) list.push({ id: 'direct-user', slot: slot('direct-user', user), key: user });
-  if (env && env !== user) list.push({ id: 'direct-env', slot: slot('direct-env', env), key: env });
   list.push({ id: 'server', slot: slot('server', user ?? 'env') });
-  if (isWebFreeEnabled()) list.push({ id: 'web-free', slot: slot('web-free') });
+  if (env && env !== user) list.push({ id: 'direct-env', slot: slot('direct-env', env), key: env });
   const probe: ImageRequest = { prompt: TEST_PROMPT, aspectRatio: '1:1', kind: 'diag' };
   for (const eng of list) {
     const t0 = performance.now();
@@ -317,8 +249,6 @@ export const diagnoseImagePaths = async (): Promise<{ tests: PathTest[]; keys: K
       injected: keyShape(env),
       user: keyShape(user ?? ''),
       server: pre.ok ? `${pre.keySource} key` : pre.code,
-      webFree: isWebFreeEnabled(),
-      cloudflare: Boolean(getFreeCreds()),
     },
   };
 };

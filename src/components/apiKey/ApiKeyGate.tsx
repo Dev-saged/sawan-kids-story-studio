@@ -1,14 +1,12 @@
 import { useState, type FormEvent } from 'react';
-import { KeyRound } from 'lucide-react';
-import { clearApiKey, isValidApiKeyFormat, saveApiKey } from '../../services/apiKey';
+import { Info, Sparkles, ExternalLink, ShieldCheck, ArrowRight } from 'lucide-react';
+import { clearApiKey, isValidApiKeyFormat, saveApiKey, setSharedServerSession } from '../../services/apiKey';
 import { preflight } from '../../services/api';
 import { Language } from '../../types';
-import FreeEngineCard, { WebFreeToggle } from './FreeEngineCard';
 
 interface Props {
   language: Language;
   onSaved: () => void;
-  // الخادم بلا مفتاح: نشرح الخيارين بدل رسالة عامة
   noKey?: boolean;
 }
 
@@ -21,89 +19,156 @@ export default function ApiKeyGate({ language, onSaved, noKey }: Props) {
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
-    if (!isValidApiKeyFormat(key)) {
-      setError(ar ? 'المفتاح فارغ أو قصير أو فيه مسافات. انسخه كاملًا.' : 'The key is empty, too short or contains spaces. Copy the full key.');
+    const cleanKey = key.trim();
+    if (!isValidApiKeyFormat(cleanKey)) {
+      setError(
+        ar
+          ? 'المفتاح فارغ أو قصير جداً أو يحتوي على مسافات. انسخ المفتاح كاملاً من Google AI Studio.'
+          : 'The key is empty, too short or contains spaces. Please paste the full key from Google AI Studio.'
+      );
       return;
     }
+
     setChecking(true);
-    await saveApiKey(key, remember);
+    await saveApiKey(cleanKey, remember);
     const result = await preflight();
     setChecking(false);
+
     if (!result.ok && result.code === 'AUTH') {
       clearApiKey();
-      setError(ar ? 'Google رفضت هذا المفتاح. تأكد أنه مفتاح Gemini API صالح ومنسوخ كاملاً.' : 'Google rejected this key. Make sure it is a valid Gemini API key copied in full.');
+      setError(
+        ar
+          ? 'Google رفضت هذا المفتاح (غير صالح أو منسوخ بشكل غير صحيح). يرجى التأكد من نسخه كاملاً من Google AI Studio.'
+          : 'Google rejected this key. Please make sure it is a valid Gemini API key copied in full from Google AI Studio.'
+      );
       return;
     }
+
     setKey('');
     setError(null);
     onSaved();
   };
 
+  const handleContinueShared = () => {
+    setSharedServerSession();
+    onSaved();
+  };
+
   return (
-    <div className="space-y-5 rounded-3xl border border-dream/20 bg-white/60 p-6 dark:bg-white/5" dir={ar ? 'rtl' : 'ltr'}>
-      <div className="text-center">
-        <KeyRound className="mx-auto text-lantern" size={32} aria-hidden />
-        <h2 className="mt-2 font-display text-lg font-semibold text-ink dark:text-moonlight">
-          {ar ? 'أدخل مفتاح Gemini الخاص بك' : 'Enter your Gemini API key'}
-        </h2>
-        <p className="mt-2 text-sm text-ink/70 dark:text-moonlight/70">
-          {ar
-            ? 'يُستخدم المفتاح للاتصال بـGoogle فقط، ويرسم الصور من جهازك مباشرة. اختر تذكّره ليُحفظ مشفّراً على هذا الجهاز.'
-            : 'The key is used only to talk to Google, and images are drawn straight from your device. Choose to remember it to keep it encrypted on this device.'}
-        </p>
-        {noKey && (
-          <p role="alert" className="mt-3 rounded-2xl border border-coral/30 bg-coral/10 px-3 py-2 text-sm text-coral">
+    <div className="mx-auto max-w-lg space-y-6 pt-4 sm:pt-10" dir={ar ? 'rtl' : 'ltr'}>
+      {/* Centered Modal Card matching Google AI Studio prompt aesthetic */}
+      <div className="relative rounded-3xl border border-dream/20 bg-white p-7 shadow-xl dark:bg-dusk/90 sm:p-9">
+        {/* Top Info Icon in Circle */}
+        <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full border-2 border-ink/15 text-ink dark:border-moonlight/25 dark:text-moonlight">
+          <Info size={30} strokeWidth={1.8} />
+        </div>
+
+        {/* Title */}
+        <div className="mt-5 text-center">
+          <h2 className="font-display text-xl font-bold tracking-tight text-ink dark:text-moonlight sm:text-2xl">
+            {ar ? 'تفعيل الوصول إلى Google Gemini' : 'Connect to Google Gemini'}
+          </h2>
+          <p className="mt-3 text-sm leading-relaxed text-ink/75 dark:text-moonlight/75">
             {ar
-              ? 'لا يوجد مفتاح على الخادم. أدخل مفتاحك هنا، أو أضف GEMINI_API_KEY في AI Studio من Settings ثم Secrets وأعد التشغيل.'
-              : 'The server has no key. Enter yours here, or add GEMINI_API_KEY in AI Studio under Settings, then Secrets, and restart.'}
+              ? 'لتوليد القصص وسرد الصوت ورسم صور الأطفال عالية الدقة بواسطة Gemini 2.5 مباشرة من داخل متصفحك مجاناً وبلا أي علامات مائية، يرجى إدخال مفتاح Gemini API الخاص بك.'
+              : 'To create illustrated stories, voice narration, and high-quality children illustrations using Gemini 2.5 directly in your browser without watermarks, please enter your Gemini API key.'}
           </p>
-        )}
+
+          {noKey && (
+            <p role="alert" className="mt-3 rounded-2xl border border-coral/30 bg-coral/10 p-3 text-xs font-semibold text-coral">
+              {ar
+                ? 'ملاحظة: الخادم ليس لديه مفتاح حالياً، لذا يلزم إدخال مفتاحك لتبدأ التوليد فوراً.'
+                : 'Note: The server currently has no key configured. Enter your key to start generating immediately.'}
+            </p>
+          )}
+        </div>
+
+        {/* Free Key Helper Link */}
+        <div className="mt-5 rounded-2xl bg-dream/10 p-3.5 text-center border border-dream/20">
+          <a
+            href="https://aistudio.google.com/apikey"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 font-display text-xs sm:text-sm font-bold text-lantern transition hover:underline"
+          >
+            <Sparkles size={15} />
+            <span>{ar ? 'احصل على مفتاح مجاني بنقرة واحدة من Google AI Studio' : 'Get a free key in 1 click from Google AI Studio'}</span>
+            <ExternalLink size={13} />
+          </a>
+        </div>
+
+        {/* Key Form */}
+        <form onSubmit={handleSubmit} className="mt-6 space-y-4">
+          <div>
+            <label htmlFor="api-key" className="block text-xs font-bold uppercase tracking-wider text-ink/70 dark:text-moonlight/70">
+              {ar ? 'مفتاح Gemini API' : 'Gemini API Key'}
+            </label>
+            <div className="mt-1.5 relative">
+              <input
+                id="api-key"
+                type="password"
+                value={key}
+                onChange={(e) => {
+                  setKey(e.target.value);
+                  setError(null);
+                }}
+                autoComplete="off"
+                autoCapitalize="none"
+                spellCheck={false}
+                dir="ltr"
+                placeholder="AIzaSy... أو AQ...."
+                className="w-full rounded-2xl border border-dream/30 bg-white/90 px-4 py-3 font-mono text-sm text-ink outline-none transition focus:border-lantern focus:ring-2 focus:ring-lantern/30 dark:bg-white/10 dark:text-moonlight"
+              />
+            </div>
+          </div>
+
+          {/* Remember Key Checkbox */}
+          <label className="flex items-center gap-2.5 text-xs text-ink/80 dark:text-moonlight/80 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={remember}
+              onChange={(e) => setRemember(e.target.checked)}
+              className="size-4 rounded text-lantern focus:ring-lantern"
+            />
+            <span className="flex items-center gap-1.5">
+              <ShieldCheck size={14} className="text-emerald-600 dark:text-emerald-400" />
+              <span>{ar ? 'تذكّر المفتاح على هذا الجهاز (مشفّر بأمان بتقنية AES-GCM)' : 'Remember key on this device (securely encrypted)'}</span>
+            </span>
+          </label>
+
+          {error && (
+            <p role="alert" className="text-xs font-semibold text-coral animate-shake">
+              {error}
+            </p>
+          )}
+
+          {/* Action Buttons matching screenshot style */}
+          <div className="pt-2 space-y-2.5">
+            <button
+              type="submit"
+              disabled={!key.trim() || checking}
+              className="w-full rounded-full bg-lantern py-3.5 px-6 font-display text-sm font-bold text-ink shadow-sm transition hover:brightness-105 active:scale-98 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {checking ? (
+                ar ? 'جارٍ التحقق من المفتاح...' : 'Checking key...'
+              ) : (
+                <span className="flex items-center justify-center gap-2">
+                  <span>{ar ? 'متابعة إلى التطبيق' : 'Continue to the app'}</span>
+                  <ArrowRight size={16} className={ar ? 'rotate-180' : ''} />
+                </span>
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={handleContinueShared}
+              className="w-full rounded-full border border-dream/30 bg-transparent py-2.5 text-xs font-semibold text-ink/70 transition hover:bg-dream/10 hover:text-ink dark:text-moonlight/70 dark:hover:text-moonlight"
+            >
+              {ar ? 'المتابعة بالخادم المشترك (تجربة التطبيق)' : 'Continue with shared server (trial mode)'}
+            </button>
+          </div>
+        </form>
       </div>
-
-      <form onSubmit={handleSubmit} className="space-y-3">
-        <label htmlFor="api-key" className="block text-sm font-semibold text-ink/80 dark:text-moonlight/80">
-          {ar ? 'مفتاح API' : 'API key'}
-        </label>
-        <input
-          id="api-key"
-          type="password"
-          value={key}
-          onChange={(e) => {
-            setKey(e.target.value);
-            setError(null);
-          }}
-          autoComplete="off"
-          autoCapitalize="none"
-          spellCheck={false}
-          dir="ltr"
-          placeholder="AIza… / AQ.…"
-          className="w-full rounded-2xl border border-dream/30 bg-white/70 px-4 py-2.5 font-mono text-sm text-ink outline-none focus-visible:border-lantern focus-visible:ring-2 focus-visible:ring-lantern/40 dark:bg-white/10 dark:text-moonlight"
-        />
-        <label className="flex min-h-11 items-center gap-2 text-sm text-ink/80 dark:text-moonlight/80">
-          <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} className="size-4" />
-          {ar ? 'تذكّر المفتاح على هذا الجهاز (مشفّر)' : 'Remember the key on this device (encrypted)'}
-        </label>
-        {error && <p className="text-sm text-coral">{error}</p>}
-        <button
-          type="submit"
-          disabled={!key.trim() || checking}
-          className="w-full rounded-full bg-lantern py-3 font-display text-base font-semibold text-ink transition disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink"
-        >
-          {checking ? (ar ? 'نتحقق من المفتاح...' : 'Checking key...') : ar ? 'متابعة' : 'Continue'}
-        </button>
-      </form>
-
-      <a
-        href="https://aistudio.google.com/apikey"
-        target="_blank"
-        rel="noopener noreferrer"
-        className="block text-center text-sm font-medium text-ink/70 underline-offset-4 hover:underline dark:text-moonlight/70"
-      >
-        {ar ? 'احصل على مفتاح من Google AI Studio' : 'Get a key from Google AI Studio'}
-      </a>
-
-      <FreeEngineCard ar={ar} mode="always" onSaved={onSaved} />
-      <WebFreeToggle ar={ar} />
     </div>
   );
 }

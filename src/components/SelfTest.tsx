@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { isValidApiKeyFormat, isValidFreeCreds, keyShape } from '../services/apiKey';
-import { classifyFailure, codeFromTrail, rankError, webFreeUrl } from '../services/imageEngine';
+import { classifyFailure, codeFromTrail, rankError } from '../services/imageEngine';
 import { codeFromStatus } from '../services/api';
 import { activeWordIndex, wordTimings } from '../services/narration';
 import { dbDelete, dbGet, dbPut, hashText } from '../services/db';
@@ -72,14 +72,7 @@ const TESTS: { name: string; run: () => void | Promise<void> }[] = [
         ['BILLING', 'QUOTA', 'AUTH', 'FAILED', true]
       ),
   },
-  {
-    name: 'رابط المحرك المجاني: أبعاد النسبة + الخصوصية + قص الوصف',
-    run: () => {
-      const u = new URL(webFreeUrl(`${'x '.repeat(900)}`, '16:9', 7));
-      eq([u.searchParams.get('width'), u.searchParams.get('height'), u.searchParams.get('nofeed'), u.searchParams.get('safe')], ['1024', '576', 'true', 'true']);
-      if (decodeURIComponent(u.pathname).length > 800) throw new Error('prompt not clipped');
-    },
-  },
+
   { name: 'شكل المفتاح لا يكشفه', run: () => eq([keyShape(''), keyShape('MY_GEMINI_API_KEY'), keyShape(FAKE_AQ).includes('Zz9')], ['none', 'placeholder', false]) },
   {
     name: 'قص مربع إلى 16:9',

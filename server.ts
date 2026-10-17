@@ -559,64 +559,36 @@ app.get('/api/free-check', async (req: Request, res: Response) => {
   }
 });
 
-// Nano Banana أولاً؛ عند غياب الحصة يُرسم بالمحرك المجاني (FLUX). لا SVG ولا مواقع صور عشوائية
+// توليد الصور عبر نماذج Gemini الحصرية (gemini-2.5-flash-image, gemini-3.1-flash-lite-image, gemini-nano-banana-2.1, إلخ)
 app.post('/api/generate-image', async (req: Request, res: Response) => {
   try {
     const prompt = clip(req.body?.prompt, 4000);
     if (!prompt) return res.status(400).json({ error: 'Image prompt is required.', code: 'FAILED' });
     const aspectRatio = ASPECTS.has(req.body?.aspectRatio) ? req.body.aspectRatio : '4:3';
     const refs = sanitizeRefs(req.body?.references);
-    const free = getFreeCreds(req);
-    let geminiErr: any = null;
-    let session: Session | null = null;
-    try {
-      session = getSession(req);
-    } catch (err: any) {
-      // لا مفتاح على الخادم: نكمل بالمحرك المجاني إن وُجد، وإلا نعيد NOKEY بوضوح
-      if (err?.code !== 'NOKEY' || !free) throw err;
-      geminiErr = err;
-    }
-    const blockedAt = session ? imageBlocked.get(session.fp) : undefined;
-    const skipGemini = !session || Boolean(free && blockedAt && Date.now() - blockedAt < BLOCK_TTL);
+    const session = getSession(req);
 
-    if (!skipGemini && session) {
-      const active = session;
-      try {
-        const lead = refs.length
-          ? 'Use the attached reference image(s) as the exact character design: keep the same face, hairstyle, skin tone, outfit, colors and proportions. Do not copy their background or pose. '
-          : '';
-        const text = `${lead}${prompt} Masterpiece children's book illustration, sharp focus, rich detail, professional composition, consistent character design. Absolutely no text, letters, captions, logos or watermark.`;
-        const { value, model } = await runChain('image', await chainFor(req, 'image'), async (m) => {
-          const response = await active.ai.models.generateContent({
-            model: m,
-            contents: [{ role: 'user', parts: [...refs.map((r) => ({ inlineData: r })), { text }] }],
-            config: {
-              responseModalities: [Modality.TEXT, Modality.IMAGE],
-              imageConfig: NO_SIZE_IMAGE_MODELS.has(m) ? { aspectRatio } : { aspectRatio, imageSize: '2K' },
-            },
-          });
-          const part = (response.candidates?.[0]?.content?.parts ?? []).find((p) => p.inlineData?.data);
-          return part?.inlineData?.data ? { base64: part.inlineData.data, mimeType: part.inlineData.mimeType || 'image/png' } : null;
-        });
-        return res.json({ ...value, model, engine: 'gemini' });
-      } catch (err: any) {
-        if ((err?.trail as TrailItem[] | undefined)?.some((t) => t.zero)) imageBlocked.set(session!.fp, Date.now());
-        if (!free || errorInfo(err, '').body.code === 'AUTH') throw err;
-        geminiErr = err;
-      }
-    }
+    const lead = refs.length
+      ? 'Use the attached reference image(s) as the exact character design: keep the same face, hairstyle, skin tone, outfit, colors and proportions. Do not copy their background or pose. '
+      : '';
+    const text = `${lead}${prompt} Masterpiece children's book illustration, sharp focus, rich detail, professional composition, consistent character design. Absolutely no text, letters, captions, logos or watermark.`;
 
-    // المحرك المجاني لا يقبل صور مرجعية: ورقة الشخصيات بلا فائدة معه فنوفّر حصة اليوم
-    if (req.body?.kind === 'sheet') return res.json({ skipped: true, engine: 'free' });
-    try {
-      const base64 = await runFree(free!, fluxPrompt(prompt, aspectRatio === '1:1'));
-      return res.json({ base64, mimeType: 'image/jpeg', model: FLUX_LABEL, engine: 'free', square: true });
-    } catch (err: any) {
-      err.trail = [...(Array.isArray(geminiErr?.trail) ? geminiErr.trail : []), ...(Array.isArray(err?.trail) ? err.trail : [])];
-      throw err;
-    }
+    const { value, model } = await runChain('image', await chainFor(req, 'image'), async (m) => {
+      const response = await session.ai.models.generateContent({
+        model: m,
+        contents: [{ role: 'user', parts: [...refs.map((r) => ({ inlineData: r })), { text }] }],
+        config: {
+          responseModalities: [Modality.TEXT, Modality.IMAGE],
+          imageConfig: NO_SIZE_IMAGE_MODELS.has(m) ? { aspectRatio } : { aspectRatio, imageSize: '2K' },
+        },
+      });
+      const part = (response.candidates?.[0]?.content?.parts ?? []).find((p) => p.inlineData?.data);
+      return part?.inlineData?.data ? { base64: part.inlineData.data, mimeType: part.inlineData.mimeType || 'image/png' } : null;
+    });
+
+    return res.json({ ...value, model, engine: 'gemini' });
   } catch (err) {
-    return sendError(res, err, 'Failed to generate image');
+    return sendError(res, err, 'Failed to generate image with Gemini');
   }
 });
 

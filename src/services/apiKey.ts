@@ -18,10 +18,20 @@ const readSession = (): string | null => {
 
 let memKey: string | null = readSession();
 
-export const getApiKey = (): string | null => memKey || 'studio-active';
+export const getApiKey = (): string | null => memKey;
 
 // المفتاح الحقيقي للزائر فقط (يُستخدم مباشرة من المتصفح نحو Google، ويُرسل للسيرفر لتوليد النص)
-export const getUserApiKey = (): string | null => (memKey && KEY_PATTERN.test(memKey) ? memKey : null);
+export const getUserApiKey = (): string | null =>
+  memKey && memKey !== 'server-proxy' && KEY_PATTERN.test(memKey) ? memKey : null;
+
+export const setSharedServerSession = (): void => {
+  memKey = 'server-proxy';
+  try {
+    sessionStorage.setItem(KEY_STORAGE, 'server-proxy');
+  } catch {
+    // ignore
+  }
+};
 
 // ===== خزنة مشفّرة =====
 const VAULT_DB = 'sawan-vault';
@@ -146,9 +156,9 @@ const WEB_FREE_KEY = 'sawan-web-free';
 
 export const isWebFreeEnabled = (): boolean => {
   try {
-    return localStorage.getItem(WEB_FREE_KEY) !== '0';
+    return localStorage.getItem(WEB_FREE_KEY) === '1';
   } catch {
-    return true;
+    return false;
   }
 };
 
