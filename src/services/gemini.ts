@@ -1,6 +1,6 @@
 import { Language, NameAnalysis, QuizItem, StoryData, StoryParams, StoryPage } from '../types';
 import { ART_STYLE_OPTIONS, FIRST_BATCH_PAGES, MAX_IDEA_LENGTH, MAX_STORY_PAGES, NEXT_BATCH_PAGES } from '../constants';
-import { ApiError, authHeaders, codeFromStatus, postJson, type ApiErrorCode, type TrailItem } from './api';
+import { ApiError, authHeaders, codeFromStatus, postJson, trackApiCall } from './api';
 import { base64ToBlob } from './media';
 
 export const API_KEY_MISSING = 'API_KEY_MISSING';
@@ -151,15 +151,44 @@ export const continueStory = async (
   }
 };
 
+export interface GeneratorLogEntry {
+  timestamp: string;
+  level: 'info' | 'warn' | 'error';
+  stage: string;
+  message: string;
+  data?: unknown;
+}
+
+const generatorLogs: GeneratorLogEntry[] = [];
+export const getGeneratorLogs = (): GeneratorLogEntry[] => [...generatorLogs];
+
 export class StoryGenerator {
   private isPaused = false;
   private resumeResolver: (() => void) | null = null;
 
+  private log(level: 'info' | 'warn' | 'error', stage: string, message: string, data?: unknown): void {
+    const entry: GeneratorLogEntry = {
+      timestamp: new Date().toISOString(),
+      level,
+      stage,
+      message,
+      data,
+    };
+    generatorLogs.push(entry);
+    if (generatorLogs.length > 60) generatorLogs.shift();
+    const prefix = `[StoryGenerator][${stage}]`;
+    if (level === 'error') console.error(prefix, message, data ?? '');
+    else if (level === 'warn') console.warn(prefix, message, data ?? '');
+    else console.info(prefix, message, data ?? '');
+  }
+
   public pause(): void {
+    this.log('info', 'lifecycle', 'Story generation paused by user.');
     this.isPaused = true;
   }
 
   public resume(): void {
+    this.log('info', 'lifecycle', 'Story generation resumed by user.');
     this.isPaused = false;
     if (this.resumeResolver) {
       this.resumeResolver();
@@ -182,24 +211,90 @@ export class StoryGenerator {
     if (!params.idea) throw new Error('Story idea cannot be empty.');
     const ar = params.language === 'Arabic';
 
+    this.log('info', 'init', `Starting story generation: ${total} pages planned (batch 1: ${pageCount} pages).`, {
+      language: params.language,
+      dialect: params.dialect,
+      artStyle: params.artStyle,
+      ageGroup: params.ageGroup,
+    });
+
     onProgress({ progress: 6, message: ar ? 'نجهّز فكرة القصة...' : 'Preparing your story...' });
     await this.waitIfPaused();
 
-    if (navigator.onLine === false) throw new ApiError('OFFLINE');
-    let res: Response;
-    try {
-      res = await fetch('/api/generate-story', { method: 'POST', headers: authHeaders(), body: JSON.stringify({ params, pageCount, totalPages: total }) });
-    } catch {
-      throw new ApiError('BUSY', undefined, undefined, '/api/generate-story');
+    if (navigator.onLine === false) {
+      this.log('error', 'network', 'Device is offline.');
+      throw new ApiError('OFFLINE');
     }
-    if (!res.ok || !res.body) {
-      let data: { code?: ApiErrorCode; error?: string; trail?: TrailItem[] } = {};
+
+    const MAX_RETRIES = 3;
+    let res: Response | null = null;
+    let lastError: unknown = null;
+
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       try {
-        data = await res.json();
-      } catch {
-        // ignore
+        if (attempt > 0) {
+          const backoffMs = Math.min(1500 * Math.pow(2, attempt) + Math.random() * 800, 10000);
+          this.log('warn', 'retry', `Quota or rate limit encountered. Applying exponential backoff: waiting ${Math.round(backoffMs)}ms before retry ${attempt + 1}/${MAX_RETRIES + 1}...`);
+          onProgress({
+            progress: 8,
+            message: ar
+              ? `ننتظر لحظات لتخفيف الضغط على النموذج (${attempt + 1}/${MAX_RETRIES + 1})...`
+              : `Stabilizing rate limit, retrying in ${Math.round(backoffMs / 1000)}s...`,
+          });
+          await new Promise((resolve) => setTimeout(resolve, backoffMs));
+          await this.waitIfPaused();
+        }
+
+        this.log('info', 'request', `Sending /api/generate-story request (attempt ${attempt + 1})...`);
+        const finishTracking = trackApiCall('/api/generate-story', 'POST', `attempt ${attempt + 1}, pages: ${pageCount}/${total}`);
+        res = await fetch('/api/generate-story', {
+          method: 'POST',
+          headers: authHeaders(),
+          body: JSON.stringify({ params, pageCount, totalPages: total }),
+        });
+
+        if (res.status === 429) {
+          let errorData: any = {};
+          try {
+            errorData = await res.json();
+          } catch {
+            // ignore
+          }
+          finishTracking(429, errorData.error || 'Rate limit', 'QUOTA');
+          this.log('warn', 'quota', `Received 429 Quota Exceeded from Gemini: ${errorData.error || 'Rate limit'}`);
+          lastError = new ApiError('QUOTA', errorData.error, errorData.trail, '/api/generate-story');
+          continue;
+        }
+
+        if (!res.ok) {
+          let errorData: any = {};
+          try {
+            errorData = await res.json();
+          } catch {
+            // ignore
+          }
+          const code = errorData.code ?? codeFromStatus(res.status);
+          finishTracking(res.status, errorData.error, code);
+          this.log('error', 'http_error', `Received HTTP ${res.status} from /api/generate-story`, errorData);
+          throw new ApiError(code, errorData.error, errorData.trail, '/api/generate-story');
+        }
+
+        finishTracking(res.status);
+        break;
+      } catch (err: any) {
+        lastError = err;
+        if (err instanceof ApiError && err.code === 'QUOTA' && attempt < MAX_RETRIES) {
+          continue;
+        }
+        if (attempt >= MAX_RETRIES) {
+          this.log('error', 'exhausted', `All ${MAX_RETRIES + 1} attempts exhausted.`, err);
+          throw err;
+        }
       }
-      throw new ApiError(data.code ?? codeFromStatus(res.status), data.error, data.trail, '/api/generate-story');
+    }
+
+    if (!res || !res.ok || !res.body) {
+      throw lastError ?? new ApiError('FAILED', undefined, undefined, '/api/generate-story');
     }
 
     const reader = res.body.getReader();

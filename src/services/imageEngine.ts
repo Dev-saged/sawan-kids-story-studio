@@ -23,10 +23,14 @@ export class SkippedImage extends Error {}
 
 // نماذج Gemini لتوليد الصور
 export const DIRECT_MODELS = [
-  'gemini-2.5-flash-image',
   'gemini-3.1-flash-lite-image',
   'gemini-nano-banana-2.1',
+  'gemini-3.1-flash-image',
+  'gemini-3.1-flash-image-preview',
+  'gemini-2.5-flash-image',
+  'nano-banana-pro-preview',
   'gemini-3-pro-image',
+  'gemini-3-pro-image-preview',
 ];
 const DIRECT_TIMEOUT = 60_000;
 const HARD_DOWN_MS = 30 * 60_000;
@@ -44,17 +48,19 @@ export type FailKind = 'auth' | 'billing' | 'quota' | 'missing' | 'busy' | 'skip
 export const isZeroQuota = (msg: string): boolean => /limit:\s*0\b|free_?tier/i.test(msg);
 
 export const classifyFailure = (status: number, msg: string): FailKind =>
-  status === 401 || status === 402 || status === 403 || /API_KEY_INVALID|API key not valid|PERMISSION_DENIED/i.test(msg)
+  status === 401 || /API_KEY_INVALID|API key not valid/i.test(msg)
     ? 'auth'
-    : status === 429 || /RESOURCE_EXHAUSTED|quota/i.test(msg)
-      ? isZeroQuota(msg)
-        ? 'billing'
-        : 'quota'
-      : status === 404 || /NOT_FOUND|is not found|not supported for/i.test(msg)
-        ? 'missing'
-        : status >= 500 || /UNAVAILABLE|overloaded|timeout|Failed to fetch|NetworkError/i.test(msg)
-          ? 'busy'
-          : 'skip';
+    : status === 403 || /PERMISSION_DENIED|permission denied/i.test(msg)
+      ? 'missing'
+      : status === 429 || /RESOURCE_EXHAUSTED|quota/i.test(msg)
+        ? isZeroQuota(msg)
+          ? 'billing'
+          : 'quota'
+        : status === 404 || /NOT_FOUND|is not found|not supported for/i.test(msg)
+          ? 'missing'
+          : status >= 500 || /UNAVAILABLE|overloaded|timeout|Failed to fetch|NetworkError/i.test(msg)
+            ? 'busy'
+            : 'skip';
 
 // أدق رمز لمستخدم التطبيق من سجل محاولات المسار المباشر
 export const codeFromTrail = (trail: TrailItem[]): ApiErrorCode => {
@@ -114,18 +120,35 @@ const runDirect = async (eng: Engine, req: ImageRequest, signal?: AbortSignal): 
   const { GoogleGenAI } = await import('@google/genai');
   const ai = new GoogleGenAI({ apiKey: eng.key! });
   const trail: TrailItem[] = [];
-  const lead = req.references?.length
+  const cleanRefs = (req.references ?? [])
+    .filter((r) => typeof r?.data === 'string' && r.data.trim().length > 100)
+    .slice(0, 2)
+    .map((r) => {
+      const data = String(r.data).replace(/^data:image\/[^;]+;base64,/, '').replace(/[\r\n\s]/g, '');
+      const rawMime = String(r.mimeType || '').toLowerCase();
+      const mimeType = rawMime.includes('png') ? 'image/png' : rawMime.includes('webp') ? 'image/webp' : 'image/jpeg';
+      return { data, mimeType };
+    })
+    .filter((r) => r.data.length > 200 && r.data.length < 5_000_000);
+
+  const lead = cleanRefs.length
     ? 'Use the attached reference image(s) as the exact character design: keep the same face, hairstyle, skin tone, outfit, colors and proportions. Do not copy their background or pose. '
     : '';
   const text = `${lead}${req.prompt} Masterpiece children's book illustration, sharp focus, rich detail, professional composition, consistent character design. Absolutely no text, letters, captions, logos or watermark.`;
+
   for (const model of DIRECT_MODELS) {
+    let currentRefs = cleanRefs;
     for (let attempt = 0; attempt < 2; attempt++) {
       if (signal?.aborted) throw abortError();
       try {
+        const parts: any[] = currentRefs.length
+          ? [...currentRefs.map((r) => ({ inlineData: { data: r.data, mimeType: r.mimeType } })), { text }]
+          : [{ text }];
+
         const response = await withTimeout(
           ai.models.generateContent({
             model,
-            contents: { parts: [...(req.references ?? []).map((r) => ({ inlineData: r })), { text }] },
+            contents: { parts },
             config: { abortSignal: signal, imageConfig: { aspectRatio: req.aspectRatio } },
           }),
           DIRECT_TIMEOUT
@@ -138,49 +161,32 @@ const runDirect = async (eng: Engine, req: ImageRequest, signal?: AbortSignal): 
         break;
       } catch (err: any) {
         if (signal?.aborted || err?.name === 'AbortError') throw abortError();
-        const status = Number(err?.status ?? err?.code ?? 0) || 0;
         const msg = String(err?.message ?? err).replace(/\s+/g, ' ');
+        if (/could not be decoded|source image/i.test(msg) && currentRefs.length > 0) {
+          console.warn(`[runDirect] Reference decode failure on ${model}, retrying without reference...`);
+          currentRefs = [];
+          continue;
+        }
+        const status = Number(err?.status ?? err?.code ?? 0) || 0;
         const kind = classifyFailure(status, msg);
         trail.push({ model: `${eng.id}/${model}`, kind, status, message: msg.slice(0, 480) });
-        if (kind === 'busy' && attempt === 0) {
-          await sleep(1200);
+
+        const isDaily = /daily limit|limit:\s*0\b|free_?tier/i.test(msg);
+        if (kind === 'quota' && isDaily) {
+          console.warn(`[runDirect] Model ${model} on key reached daily limit, immediately trying next model in chain...`);
+          break; // Don't retry same model on daily limit, try next model in DIRECT_MODELS
+        }
+
+        // استراتيجية إعادة المحاولة بتأخير متصاعد أسي
+        if ((kind === 'quota' || kind === 'busy') && attempt < 2) {
+          const backoff = Math.min(1500 * Math.pow(2, attempt) + Math.random() * 600, 8000);
+          console.warn(`[runDirect] Rate-limit hit on ${model} (attempt ${attempt + 1}), retrying with exponential backoff in ${Math.round(backoff)}ms...`);
+          await sleep(backoff);
           continue;
         }
         break;
       }
     }
-  }
-
-  // إذا كانت الموديلات النقطية تتطلب رصيداً غير متوفر، نولّد رسمة أطفال فنية فائقة عبر Gemini 2.5 Flash مجاناً
-  try {
-    const artStyle = req.artStyle || 'Anime Storybook';
-    const svgPrompt = `You are a world-class children's storybook digital artist specializing in ${artStyle}.
-Generate an extraordinary, complete, vibrant standalone SVG children's story illustration.
-SCENE: ${req.prompt}
-ART STYLE GUIDELINES:
-- Style: ${artStyle} (Anime: Studio Ghibli/Makoto Shinkai aesthetic, luminous big expressive eyes; 3D Cartoon: Pixar/Disney warm lighting & rounded characters; Watercolor: delicate washes & storybook palette).
-- Character: Expressive face, sparkling detailed eyes, clean contours, shadow and highlight gradients.
-- Environment: Rich background scenery, atmospheric depth with <linearGradient> and <radialGradient>.
-- TECHNICAL REQUIREMENTS:
-1. Return ONLY pure, valid SVG code: <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 600" width="100%" height="100%">...</svg>
-2. Absolutely NO markdown backticks (no \`\`\`xml or \`\`\`svg), no HTML, no explanation.
-3. No letters, words, or watermarks in the illustration.`;
-
-    const svgResp = await withTimeout(
-      ai.models.generateContent({
-        model: 'gemini-2.5-flash',
-        contents: svgPrompt,
-      }),
-      DIRECT_TIMEOUT
-    );
-    let raw = svgResp.text || '';
-    raw = raw.replace(/^```(xml|svg)?/i, '').replace(/```$/g, '').trim();
-    const match = raw.match(/<svg[\s\S]*<\/svg>/i);
-    if (match) {
-      return new Blob([match[0]], { type: 'image/svg+xml' });
-    }
-  } catch {
-    // continue to throw failed(trail)
   }
 
   throw failed(trail);

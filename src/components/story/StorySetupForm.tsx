@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react';
-import { Clock, FolderOpen, Lightbulb, Sparkles, Wand2 } from 'lucide-react';
+import { Clock, FolderOpen, Lightbulb, Mic, Sparkles, Wand2 } from 'lucide-react';
+import VoiceDictationModal from './VoiceDictationModal';
 import {
   AGE_GROUPS,
   ART_STYLE_OPTIONS,
@@ -56,6 +57,7 @@ export default function StorySetupForm({ initialIdea, language, onSubmit, onLoad
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>(() => series?.aspectRatio ?? '4:3');
   const [hero, setHero] = useState<ChildProfile | null>(null);
   const [presetId, setPresetId] = useState<string>(() => readPreset().id);
+  const [showVoiceModal, setShowVoiceModal] = useState(false);
 
   // الهوية تضبط الأسلوب الفني واللهجة وصوت الراوي معاً
   const applyPreset = (id: string) => {
@@ -129,14 +131,25 @@ export default function StorySetupForm({ initialIdea, language, onSubmit, onLoad
           <label className="text-sm font-semibold text-ink/80 dark:text-moonlight/80" htmlFor="idea">
             {ar ? 'فكرة القصة' : 'Story idea'}
           </label>
-          <button
-            type="button"
-            onClick={surprise}
-            className="inline-flex items-center gap-1.5 rounded-full border border-dream/30 px-3 py-1 text-xs font-medium text-ink transition hover:border-lantern focus-visible:outline focus-visible:outline-2 focus-visible:outline-lantern dark:text-moonlight"
-          >
-            <Sparkles size={14} aria-hidden className="text-lantern" />
-            {ar ? 'فاجئني' : 'Surprise me'}
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setShowVoiceModal(true)}
+              className="inline-flex items-center gap-1.5 rounded-full border border-dream/30 bg-dream/10 px-3 py-1 text-xs font-semibold text-ink transition hover:border-lantern hover:bg-dream/20 dark:text-moonlight"
+              title={ar ? 'تسجيل فكرة القصة بصوتك وتفريغها تلقائياً' : 'Speak your story idea with smart voice dictation'}
+            >
+              <Mic size={14} className="text-lantern" />
+              <span>{ar ? 'إملاء صوتي' : 'Voice dictation'}</span>
+            </button>
+            <button
+              type="button"
+              onClick={surprise}
+              className="inline-flex items-center gap-1.5 rounded-full border border-dream/30 px-3 py-1 text-xs font-medium text-ink transition hover:border-lantern focus-visible:outline focus-visible:outline-2 focus-visible:outline-lantern dark:text-moonlight"
+            >
+              <Sparkles size={14} aria-hidden className="text-lantern" />
+              {ar ? 'فاجئني' : 'Surprise me'}
+            </button>
+          </div>
         </div>
         <textarea
           id="idea"
@@ -312,6 +325,16 @@ export default function StorySetupForm({ initialIdea, language, onSubmit, onLoad
           <FolderOpen size={16} aria-hidden />
           {ar ? 'تحميل القصة المحفوظة' : 'Load saved story'}
         </button>
+      )}
+
+      {showVoiceModal && (
+        <VoiceDictationModal
+          language={language}
+          onApplyText={(spokenText) => {
+            setIdea((prev) => (prev ? `${prev} ${spokenText}` : spokenText).slice(0, MAX_IDEA_LENGTH));
+          }}
+          onClose={() => setShowVoiceModal(false)}
+        />
       )}
     </form>
   );

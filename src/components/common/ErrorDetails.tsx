@@ -1,20 +1,37 @@
 import { useState, useSyncExternalStore } from 'react';
 import { Check, ClipboardCopy, ImageIcon, Stethoscope } from 'lucide-react';
-import { getErrorLog, subscribeErrorLog } from '../../services/api';
+import { getApiRequestHistory, getErrorLog, subscribeApiHistory, subscribeErrorLog } from '../../services/api';
 import { getFreeCreds, isKeyRemembered, keyHint } from '../../services/apiKey';
 import { diagnoseImagePaths, getLastEngine, type KeyReport, type PathTest } from '../../services/imageEngine';
+import { getGeneratorLogs } from '../../services/gemini';
 import { APP_VERSION } from '../../config';
 
-// زر «تفاصيل تقنية»: يعرض النموذج ورسالة Google الفعلية ويسمح بنسخها للمطوّر
+// زر «تفاصيل تقنية»: يعرض النموذج ورسالة Google الفعلية وسجل API ويسمح بنسخها للمطوّر
 export default function ErrorDetails({ ar }: { ar: boolean }) {
   const log = useSyncExternalStore(subscribeErrorLog, getErrorLog);
+  const apiHistory = useSyncExternalStore(subscribeApiHistory, getApiRequestHistory);
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const [diag, setDiag] = useState<{ tests: PathTest[]; keys: KeyReport } | null>(null);
   const [testing, setTesting] = useState(false);
-  if (!log.length && !diag) return null;
+  if (!log.length && !diag && !apiHistory.length) return null;
 
-  const report = JSON.stringify({ app: APP_VERSION, key: keyHint(), remembered: isKeyRemembered(), freeEngine: Boolean(getFreeCreds()), lastImageEngine: getLastEngine() ?? undefined, keys: diag?.keys, imagePaths: diag?.tests, errors: log }, null, 2);
+  const report = JSON.stringify(
+    {
+      app: APP_VERSION,
+      key: keyHint(),
+      remembered: isKeyRemembered(),
+      freeEngine: Boolean(getFreeCreds()),
+      lastImageEngine: getLastEngine() ?? undefined,
+      keys: diag?.keys,
+      imagePaths: diag?.tests,
+      errors: log,
+      recentApiRequests: apiHistory.slice(0, 12),
+      generatorLogs: getGeneratorLogs().slice(-10),
+    },
+    null,
+    2
+  );
 
   const runTests = async () => {
     setTesting(true);
@@ -24,11 +41,29 @@ export default function ErrorDetails({ ar }: { ar: boolean }) {
 
   const copy = async () => {
     try {
-      await navigator.clipboard.writeText(report);
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(report);
+      } else {
+        throw new Error('Clipboard API unavailable');
+      }
       setCopied(true);
-      setTimeout(() => setCopied(false), 1800);
+      setTimeout(() => setCopied(false), 2000);
     } catch {
-      // التحديد اليدوي متاح في الصندوق
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = report;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      } catch {
+        // user can select directly
+      }
     }
   };
 

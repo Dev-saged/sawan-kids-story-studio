@@ -45,14 +45,100 @@ export interface ErrorRecord {
   trail?: TrailItem[];
 }
 
-const LOG_LIMIT = 6;
+export interface ApiRequestRecord {
+  id: string;
+  timestamp: string;
+  endpoint: string;
+  method: string;
+  status: number | 'pending' | 'network-error' | 'aborted';
+  durationMs?: number;
+  summary?: string;
+  error?: string;
+  code?: string;
+}
+
+const LOG_LIMIT = 10;
+const API_HISTORY_LIMIT = 30;
+const API_HISTORY_STORAGE_KEY = 'sawan_api_history';
+
 let errorLog: ErrorRecord[] = [];
+let apiHistory: ApiRequestRecord[] = (() => {
+  if (typeof localStorage === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(API_HISTORY_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+})();
+
 const listeners = new Set<() => void>();
+const apiListeners = new Set<() => void>();
 
 export const getErrorLog = (): ErrorRecord[] => errorLog;
 export const subscribeErrorLog = (fn: () => void) => {
   listeners.add(fn);
   return () => listeners.delete(fn);
+};
+
+export const getApiRequestHistory = (): ApiRequestRecord[] => [...apiHistory];
+export const subscribeApiHistory = (fn: () => void) => {
+  apiListeners.add(fn);
+  return () => apiListeners.delete(fn);
+};
+
+export const clearApiRequestHistory = (): void => {
+  apiHistory = [];
+  try {
+    localStorage.removeItem(API_HISTORY_STORAGE_KEY);
+  } catch {
+    // ignore
+  }
+  apiListeners.forEach((fn) => fn());
+};
+
+const persistApiHistory = () => {
+  try {
+    localStorage.setItem(API_HISTORY_STORAGE_KEY, JSON.stringify(apiHistory.slice(0, API_HISTORY_LIMIT)));
+  } catch {
+    // ignore
+  }
+  apiListeners.forEach((fn) => fn());
+};
+
+export const recordApiRequest = (record: ApiRequestRecord): void => {
+  const existingIdx = apiHistory.findIndex((r) => r.id === record.id);
+  if (existingIdx >= 0) {
+    apiHistory[existingIdx] = record;
+  } else {
+    apiHistory = [record, ...apiHistory].slice(0, API_HISTORY_LIMIT);
+  }
+  persistApiHistory();
+};
+
+export const trackApiCall = (endpoint: string, method = 'POST', summary?: string) => {
+  const id = `req_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+  const startTime = Date.now();
+  const entry: ApiRequestRecord = {
+    id,
+    timestamp: new Date().toISOString(),
+    endpoint,
+    method,
+    status: 'pending',
+    summary,
+  };
+  recordApiRequest(entry);
+
+  return (status: number | 'network-error' | 'aborted', error?: string, code?: string) => {
+    const durationMs = Date.now() - startTime;
+    recordApiRequest({
+      ...entry,
+      status,
+      durationMs,
+      error,
+      code,
+    });
+  };
 };
 
 const record = (entry: ErrorRecord) => {
@@ -100,13 +186,20 @@ export const codeFromStatus = (status: number): ApiErrorCode => (status === 429 
 
 // طلب JSON بإعادة محاولة متصاعدة على الانشغال وانقطاع الشبكة
 export const postJson = async <T>(url: string, body: unknown, signal?: AbortSignal, attempts = 3): Promise<T> => {
-  // لا نُنشئ ApiError مسبقاً: الإنشاء يسجّل في «تفاصيل تقنية» وكان يظهر خطأ FAILED فارغ مع كل طلب
+  const summary = typeof body === 'object' && body !== null ? Object.keys(body).join(', ') : undefined;
+  const finishTracking = trackApiCall(url, 'POST', summary ? `payload: [${summary}]` : undefined);
   let last: ApiError | null = null;
   for (let i = 0; i < attempts; i++) {
-    if (typeof navigator !== 'undefined' && navigator.onLine === false) throw new ApiError('OFFLINE', undefined, undefined, url);
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+      finishTracking('network-error', 'offline', 'OFFLINE');
+      throw new ApiError('OFFLINE', undefined, undefined, url);
+    }
     try {
       const res = await fetch(url, { method: 'POST', headers: authHeaders(), body: JSON.stringify(body), signal });
-      if (res.ok) return (await res.json()) as T;
+      if (res.ok) {
+        finishTracking(res.status);
+        return (await res.json()) as T;
+      }
       let data: ErrorBody = {};
       let raw = '';
       try {
@@ -116,14 +209,24 @@ export const postJson = async <T>(url: string, body: unknown, signal?: AbortSign
         // رد غير JSON (بوابة أو انتهاء مهلة): نحفظ بدايته للتشخيص
       }
       last = new ApiError(data.code ?? codeFromStatus(res.status), data.error ?? `HTTP ${res.status} ${raw.replace(/\s+/g, ' ').slice(0, 300)}`, data.trail, url);
-      if (last.code !== 'BUSY') throw last;
+      if (last.code !== 'BUSY') {
+        finishTracking(res.status, last.message, last.code);
+        throw last;
+      }
     } catch (err) {
-      if (err instanceof ApiError && err.code !== 'BUSY') throw err;
-      if ((err as Error).name === 'AbortError') throw err;
+      if ((err as Error).name === 'AbortError') {
+        finishTracking('aborted', 'Aborted');
+        throw err;
+      }
+      if (err instanceof ApiError && err.code !== 'BUSY') {
+        finishTracking(err.code === 'OFFLINE' ? 'network-error' : 500, err.message, err.code);
+        throw err;
+      }
       if (!(err instanceof ApiError)) last = new ApiError('BUSY', (err as Error).message, undefined, url);
     }
     if (i < attempts - 1) await sleep(900 * 2 ** i + Math.random() * 500);
   }
+  finishTracking(last?.code === 'BUSY' ? 503 : 500, last?.message, last?.code);
   throw last ?? new ApiError('FAILED', undefined, undefined, url);
 };
 
@@ -137,34 +240,49 @@ export interface Preflight {
 
 // اختبار بيانات Cloudflare بصورة صغيرة فعلية
 export const checkFree = async (): Promise<{ ok: true } | { ok: false; code: ApiErrorCode; detail?: string }> => {
+  const finishTracking = trackApiCall('/api/free-check', 'GET');
   try {
     const res = await fetch('/api/free-check', { headers: authHeaders() });
-    if (res.ok) return { ok: true };
+    if (res.ok) {
+      finishTracking(res.status);
+      return { ok: true };
+    }
     let data: ErrorBody = {};
     try {
       data = await res.json();
     } catch {
       // ignore
     }
-    return { ok: false, code: data.code ?? codeFromStatus(res.status), detail: data.error };
-  } catch {
+    const code = data.code ?? codeFromStatus(res.status);
+    finishTracking(res.status, data.error, code);
+    return { ok: false, code, detail: data.error };
+  } catch (err: any) {
+    finishTracking('network-error', err?.message, 'OFFLINE');
     return { ok: false, code: 'OFFLINE' };
   }
 };
 
 // فحص المفتاح والنماذج المتاحة له قبل البدء
 export const preflight = async (signal?: AbortSignal): Promise<Preflight | { ok: false; code: ApiErrorCode }> => {
+  const finishTracking = trackApiCall('/api/preflight', 'GET');
   try {
     const res = await fetch('/api/preflight', { headers: authHeaders(), signal });
-    if (res.ok) return (await res.json()) as Preflight;
+    if (res.ok) {
+      finishTracking(res.status);
+      return (await res.json()) as Preflight;
+    }
     let data: ErrorBody = {};
     try {
       data = await res.json();
     } catch {
       // ignore
     }
-    return { ok: false, code: data.code ?? codeFromStatus(res.status) };
-  } catch {
+    const code = data.code ?? codeFromStatus(res.status);
+    finishTracking(res.status, data.error, code);
+    return { ok: false, code };
+  } catch (err: any) {
+    if (err?.name === 'AbortError') finishTracking('aborted');
+    else finishTracking('network-error', err?.message, 'OFFLINE');
     return { ok: false, code: 'OFFLINE' };
   }
 };

@@ -3,6 +3,7 @@ import ReactDOM from 'react-dom/client';
 import App from './App';
 import './index.css';
 import { hydrateApiKey } from './services/apiKey';
+import ErrorBoundary from './components/common/ErrorBoundary';
 
 const SelfTest = lazy(() => import('./components/SelfTest'));
 
@@ -10,13 +11,15 @@ const SelfTest = lazy(() => import('./components/SelfTest'));
 hydrateApiKey().finally(() => {
   ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
     <React.StrictMode>
-      {window.location.hash === '#test' ? (
-        <Suspense fallback={null}>
-          <SelfTest />
-        </Suspense>
-      ) : (
-        <App />
-      )}
+      <ErrorBoundary>
+        {window.location.hash === '#test' ? (
+          <Suspense fallback={null}>
+            <SelfTest />
+          </Suspense>
+        ) : (
+          <App />
+        )}
+      </ErrorBoundary>
     </React.StrictMode>
   );
 });

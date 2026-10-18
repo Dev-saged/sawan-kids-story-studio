@@ -23,11 +23,14 @@ const MODELS = {
     'gemini-3.5-flash',
   ],
   image: [
-    'gemini-2.5-flash-image',
     'gemini-3.1-flash-lite-image',
     'gemini-nano-banana-2.1',
-    'gemini-3-pro-image',
     'gemini-3.1-flash-image',
+    'gemini-3.1-flash-image-preview',
+    'gemini-2.5-flash-image',
+    'nano-banana-pro-preview',
+    'gemini-3-pro-image',
+    'gemini-3-pro-image-preview',
   ],
   tts: [
     'gemini-3.8-flash-tts',
@@ -38,7 +41,12 @@ const MODELS = {
   music: ['lyria-3-clip-preview', 'lyria-3.5'],
 };
 // نماذج لا تقبل imageSize (ترفضه بخطأ 400): تأخذ نسبة الأبعاد فقط
-const NO_SIZE_IMAGE_MODELS = new Set(['gemini-2.5-flash-image', 'gemini-3.1-flash-lite-image']);
+const NO_SIZE_IMAGE_MODELS = new Set([
+  'gemini-2.5-flash-image',
+  'gemini-3.1-flash-lite-image',
+  'gemini-3.1-flash-image',
+  'gemini-3.1-flash-image-preview',
+]);
 const VOICES = new Set(['Sulafat', 'Vindemiatrix', 'Achernar', 'Algieba', 'Charon', 'Puck', 'Kore', 'Leda']);
 const ASPECTS = new Set(['1:1', '16:9', '9:16', '4:3', '3:4']);
 // أي صيغة مفتاح (AIza… / AQ.… / مستقبلية): نمنع المسافات فقط، وجوجل تحكم بالصلاحية
@@ -118,7 +126,8 @@ interface TrailItem {
 const classify = (err: any): ErrorKind => {
   const status = Number(err?.status ?? err?.code ?? 0);
   const msg = String(err?.message ?? '');
-  if (/API_KEY_INVALID|API key not valid|API key format|PERMISSION_DENIED/i.test(msg) || status === 401 || status === 403) return 'auth';
+  if (/API_KEY_INVALID|API key not valid|API key format/i.test(msg) || status === 401) return 'auth';
+  if (/PERMISSION_DENIED|permission denied/i.test(msg) || status === 403) return 'missing';
   if (status === 429 || /RESOURCE_EXHAUSTED|quota/i.test(msg)) return 'quota';
   if (status === 404 || /NOT_FOUND|is not found|not supported for/i.test(msg)) return 'missing';
   if (status >= 500 || /UNAVAILABLE|overloaded|ECONNRESET|ETIMEDOUT|fetch failed/i.test(msg)) return 'busy';
@@ -162,8 +171,19 @@ async function runChain<T>(label: string, models: string[], attempt: (model: str
         const item = trailItem(model, err);
         console.warn(`[${label}] ${model} #${i + 1}: ${item.kind} ${item.status} — ${item.message.slice(0, 160)}`);
         if (item.kind === 'auth') throw Object.assign(err instanceof Error ? err : new Error(item.message), { code: 'AUTH', trail: [...trail, item] });
-        if (item.kind === 'busy' && i < 2) {
-          await sleep(700 * 2 ** i + Math.random() * 400);
+        
+        const isDailyQuota = /daily limit|limit:\s*0\b|free_?tier/i.test(item.message);
+        if (item.kind === 'quota' && isDailyQuota) {
+          console.warn(`[${label}] Model ${model} reached daily quota limit (${item.message.slice(0, 100)}). Skipping immediately to next model...`);
+          trail.push(item);
+          break; // لا نكرر الطلب على نموذج استنفد حده اليومي، بل ننتقل فوراً للنموذج التالي في السلسلة
+        }
+
+        // استراتيجية إعادة المحاولة بتأخير متصاعد أسي (Exponential Backoff with Jitter) لتخفيف الضغط
+        if ((item.kind === 'quota' || item.kind === 'busy') && i < 2) {
+          const backoffMs = Math.min(1500 * Math.pow(2, i) + Math.random() * 800, 10000);
+          console.warn(`[${label}] Rate-limit or busy hit for ${model} (attempt ${i + 1}/3), retrying with exponential backoff in ${Math.round(backoffMs)}ms...`);
+          await sleep(backoffMs);
           continue;
         }
         trail.push(item);
@@ -475,9 +495,15 @@ interface InlineRef {
 
 const sanitizeRefs = (refs: unknown): InlineRef[] =>
   (Array.isArray(refs) ? refs : [])
-    .filter((r: any) => typeof r?.data === 'string' && /^image\/(png|jpeg|webp)$/.test(r?.mimeType))
-    .slice(0, 4)
-    .map((r: any) => ({ data: r.data, mimeType: r.mimeType }));
+    .filter((r: any) => typeof r?.data === 'string' && r.data.trim().length > 100)
+    .slice(0, 2)
+    .map((r: any) => {
+      const data = String(r.data).replace(/^data:image\/[^;]+;base64,/, '').replace(/[\r\n\s]/g, '');
+      const rawMime = String(r.mimeType || '').toLowerCase();
+      const mimeType = rawMime.includes('png') ? 'image/png' : rawMime.includes('webp') ? 'image/webp' : 'image/jpeg';
+      return { data, mimeType };
+    })
+    .filter((r) => r.data.length > 200 && r.data.length < 5_000_000);
 
 // ===== محرك الصور المجاني: Cloudflare Workers AI (FLUX.1 schnell) — بديل تلقائي حين لا يملك مفتاح Gemini حصة صور =====
 const CF_BASE = process.env.CF_API_BASE || 'https://api.cloudflare.com';
@@ -583,7 +609,53 @@ app.get('/api/free-check', async (req: Request, res: Response) => {
   }
 });
 
-// توليد الصور عبر نماذج Gemini الحصرية (gemini-2.5-flash-image, gemini-3.1-flash-lite-image, gemini-nano-banana-2.1, إلخ)
+const AI_IMAGE_SIZES: Record<string, [number, number]> = {
+  '1:1': [1024, 1024],
+  '4:3': [1024, 768],
+  '3:4': [768, 1024],
+  '16:9': [1024, 576],
+  '9:16': [576, 1024],
+};
+
+const runAiFallback = async (prompt: string, aspectRatio: string): Promise<{ base64: string; mimeType: string; model: string }> => {
+  const cleanPrompt = `${prompt.slice(0, 900)}. Masterpiece children picture book illustration, vibrant colors, expressive characters, clean lines, professional digital art, sharp focus, no text, no watermark.`;
+  const encodedPrompt = encodeURIComponent(cleanPrompt);
+  const seed = Math.floor(Math.random() * 2 ** 31);
+  
+  const urls = [
+    `https://image.pollinations.ai/prompt/${encodedPrompt}?width=512&height=512&seed=${seed}&nologo=true`,
+    `https://image.pollinations.ai/prompt/${encodedPrompt}?seed=${seed}&nologo=true`,
+  ];
+
+  for (let attempt = 0; attempt < urls.length; attempt++) {
+    const url = urls[attempt];
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 45_000);
+    try {
+      const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' }, signal: ctrl.signal });
+      if (res.ok) {
+        const ct = res.headers.get('content-type') || '';
+        if (ct.includes('image')) {
+          const buf = await res.arrayBuffer();
+          const base64 = Buffer.from(buf).toString('base64');
+          return { base64, mimeType: 'image/jpeg', model: 'ai-image-generator' };
+        }
+      }
+      if (res.status === 402) {
+        // Free limit or rate limit on IP: wait 2s and try next URL
+        await sleep(2500);
+      }
+    } catch {
+      // try next URL
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  throw new Error('AI fallback image generator currently busy. Please retry in a moment.');
+};
+
+// توليد الصور: أولاً عبر نماذج Gemini المتقدمة (Nano Banana / Flash Lite)، وعند انتهاء الحصة ينتقل بسلاسة للمحرك الذكي Flux
 app.post('/api/generate-image', async (req: Request, res: Response) => {
   try {
     const prompt = clip(req.body?.prompt, 4000);
@@ -599,54 +671,87 @@ app.post('/api/generate-image', async (req: Request, res: Response) => {
 
     try {
       const { value, model } = await runChain('image', await chainFor(req, 'image'), async (m) => {
-        const response = await session.ai.models.generateContent({
-          model: m,
-          contents: [{ role: 'user', parts: [...refs.map((r) => ({ inlineData: r })), { text }] }],
-          config: {
-            responseModalities: [Modality.TEXT, Modality.IMAGE],
-            imageConfig: NO_SIZE_IMAGE_MODELS.has(m) ? { aspectRatio } : { aspectRatio, imageSize: '2K' },
-          },
-        });
-        const part = (response.candidates?.[0]?.content?.parts ?? []).find((p) => p.inlineData?.data);
-        return part?.inlineData?.data ? { base64: part.inlineData.data, mimeType: part.inlineData.mimeType || 'image/png' } : null;
+        const isNoSize = NO_SIZE_IMAGE_MODELS.has(m);
+        let currentRefs = refs;
+        for (let attempt = 0; attempt < 2; attempt++) {
+          try {
+            const parts: any[] = currentRefs.length
+              ? [...currentRefs.map((r) => ({ inlineData: { data: r.data, mimeType: r.mimeType } })), { text }]
+              : [{ text }];
+            const response = await session.ai.models.generateContent({
+              model: m,
+              contents: [{ role: 'user', parts }],
+              config: {
+                responseModalities: [Modality.TEXT, Modality.IMAGE],
+                imageConfig: isNoSize ? { aspectRatio } : { aspectRatio, imageSize: '1K' },
+              },
+            });
+            const part = (response.candidates?.[0]?.content?.parts ?? []).find((p) => p.inlineData?.data);
+            if (part?.inlineData?.data) {
+              return { base64: part.inlineData.data, mimeType: part.inlineData.mimeType || 'image/png' };
+            }
+            break;
+          } catch (err: any) {
+            const msg = String(err?.message || '');
+            if (/could not be decoded|source image/i.test(msg) && currentRefs.length > 0) {
+              console.warn(`[image] Reference image decode issue on ${m}, retrying without reference...`);
+              currentRefs = [];
+              continue;
+            }
+            throw err;
+          }
+        }
+        return null;
       });
 
       return res.json({ ...value, model, engine: 'gemini' });
-    } catch (rasterErr: any) {
-      console.warn('Raster image models unavailable on this tier; generating high-fidelity Gemini vector art...');
-      const artStyle = clip(req.body?.artStyle, 80) || 'Anime Storybook';
-      const svgPrompt = `You are an elite digital artist and children's storybook illustrator specializing in ${artStyle}.
-Generate an extraordinary, complete, vibrant standalone SVG children's story illustration.
-SCENE SPECIFICATION:
-${prompt}
-ART STYLE GUIDELINES:
-- Style: ${artStyle} (Anime: Studio Ghibli/Makoto Shinkai style, lush sky & expressive sparkling eyes; 3D Cartoon: Pixar/Disney warm lighting & rounded joyful characters; Watercolor: delicate washes & warm storybook palette).
-- Character Focus: Beautifully drawn characters with distinct facial expressions, glowing eyes, expressive poses, hair details, outfits with clean shadows and highlights.
-- Environment & Lighting: Immersive background (sky, trees, room, nature, clouds), rich gradients (<linearGradient>, <radialGradient>), soft atmospheric lighting.
-- TECHNICAL REQUIREMENTS:
-1. Return ONLY pure, valid SVG code: <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 600" width="100%" height="100%">...</svg>
-2. Absolutely NO markdown backticks (no \`\`\`xml or \`\`\`svg), no text outside the SVG.
-3. No letters, captions, watermark, or text rendered inside the image.`;
-
-      const { value: svgCode, model: textModel } = await runChain('image-vector', await chainFor(req, 'text'), async (m) => {
-        const resp = await session.ai.models.generateContent({
-          model: m,
-          contents: svgPrompt,
-        });
-        let raw = resp.text || '';
-        raw = raw.replace(/^```(xml|svg)?/i, '').replace(/```$/g, '').trim();
-        const match = raw.match(/<svg[\s\S]*<\/svg>/i);
-        return match ? match[0] : null;
-      });
-
-      if (svgCode) {
-        const base64 = Buffer.from(svgCode).toString('base64');
-        return res.json({ base64, mimeType: 'image/svg+xml', model: `${textModel}-svg`, engine: 'gemini' });
-      }
-      throw rasterErr;
+    } catch (geminiErr: any) {
+      console.warn(`[image] Gemini image models unavailable (${geminiErr?.message?.slice(0, 100)}), generating with AI Flux illustration engine...`);
+      const fallback = await runAiFallback(prompt, aspectRatio);
+      return res.json({ ...fallback, engine: 'flux' });
     }
   } catch (err) {
-    return sendError(res, err, 'Failed to generate image with Gemini');
+    return sendError(res, err, 'Failed to generate image');
+  }
+});
+
+// تفريغ الصوت وتحويله إلى نص بالذكاء الاصطناعي (Gemini 2.5 Flash) لدعم الإملاء الصوتي
+app.post('/api/transcribe', async (req: Request, res: Response) => {
+  try {
+    const audio = req.body?.audio;
+    const rawMime = String(req.body?.mimeType || 'audio/webm');
+    if (!audio || typeof audio !== 'string') {
+      return res.status(400).json({ error: 'Audio data is required.', code: 'FAILED' });
+    }
+    const cleanBase64 = audio.replace(/^data:audio\/[^;]+;base64,/, '').replace(/[\r\n\s]/g, '');
+    if (cleanBase64.length < 50) {
+      return res.status(400).json({ error: 'Audio recording is empty or too short.', code: 'FAILED' });
+    }
+    const mimeType = rawMime.split(';')[0].trim() || 'audio/webm';
+    const ai = getAiClient(req);
+    const prompt = 'You are a highly accurate speech transcriber. Listen to this user audio recording. Transcribe the spoken speech word for word in Arabic or English as spoken. Do NOT add any notes, conversational text, formatting, or commentary. Output ONLY the exact transcribed text.';
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: [
+        {
+          role: 'user',
+          parts: [
+            {
+              inlineData: {
+                data: cleanBase64,
+                mimeType,
+              },
+            },
+            { text: prompt },
+          ],
+        },
+      ],
+    });
+    const text = response.candidates?.[0]?.content?.parts?.find((p) => p.text)?.text?.trim() || '';
+    return res.json({ text });
+  } catch (err) {
+    return sendError(res, err, 'Failed to transcribe audio');
   }
 });
 

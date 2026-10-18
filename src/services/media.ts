@@ -46,12 +46,26 @@ export const srcToBlob = async (src: string): Promise<Blob> => {
 };
 
 const loadBitmap = async (blob: Blob): Promise<ImageBitmap | HTMLImageElement> => {
-  if ('createImageBitmap' in window) return createImageBitmap(blob);
+  if ('createImageBitmap' in window && !blob.type.includes('svg')) {
+    try {
+      return await createImageBitmap(blob);
+    } catch {
+      // fallback to Image element
+    }
+  }
   const url = URL.createObjectURL(blob);
   const img = new Image();
   img.src = url;
-  await img.decode();
-  URL.revokeObjectURL(url);
+  try {
+    await img.decode();
+  } catch {
+    await new Promise((res, rej) => {
+      img.onload = () => res(null);
+      img.onerror = rej;
+    });
+  } finally {
+    URL.revokeObjectURL(url);
+  }
   return img;
 };
 

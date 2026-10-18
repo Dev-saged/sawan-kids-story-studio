@@ -8,12 +8,12 @@ import { hashText } from '../services/db';
 type Updater = (fn: (s: StoryData) => StoryData) => void;
 type Ref = { data: string; mimeType: string };
 
-const CONCURRENCY = 2;
+const CONCURRENCY = 1;
 // أخطاء لا فائدة من تكرار الطلب معها
 const FATAL = new Set(['AUTH', 'NOKEY', 'BILLING', 'NOMODEL', 'OFFLINE', 'FREE_AUTH', 'FREE_QUOTA']);
 // حصة مؤقتة: نتوقف ثم نكمل تلقائياً (النص والصوت يعملان بحصص نماذج أخرى)
-const RESUME_AFTER_MS = 45_000;
-const MAX_AUTO_RESUMES = 3;
+const RESUME_AFTER_MS = 15_000;
+const MAX_AUTO_RESUMES = 5;
 
 // خط إنتاج الصور: ورقة الشخصيات ← الغلاف ← الصفحات (الأقرب للقارئ أولاً، صورتان بالتوازي)
 export function useIllustrator(story: StoryData, update: Updater, focusIndex: number) {
@@ -147,13 +147,18 @@ export function useIllustrator(story: StoryData, update: Updater, focusIndex: nu
         for (let next = nextPage(); next !== null && !ctrl.signal.aborted; next = nextPage()) {
           try {
             await paintPage(next, false, ctrl.signal);
+            // مهلة بسيطة بين كل صفحة لتفادي كوتا الدقيقة للنماذج (Rate Limit per minute)
+            if (!ctrl.signal.aborted) await new Promise((r) => setTimeout(r, 1800));
           } catch (err) {
             if (fatal(err)) return;
           }
         }
       };
       await Promise.all(Array.from({ length: CONCURRENCY }, worker));
-      if (!ctrl.signal.aborted && !storyRef.current.coverImage) await paintCover(ctrl.signal).catch(fatal);
+      if (!ctrl.signal.aborted && !storyRef.current.coverImage) {
+        if (!ctrl.signal.aborted) await new Promise((r) => setTimeout(r, 1200));
+        await paintCover(ctrl.signal).catch(fatal);
+      }
     } catch (err) {
       fatal(err);
     } finally {
