@@ -10,15 +10,16 @@ const normalize = (key: string): string => key.trim().replace(/^["'`]+|["'`]+$/g
 const readSession = (): string | null => {
   try {
     const key = sessionStorage.getItem(KEY_STORAGE);
-    return key && KEY_PATTERN.test(key) ? key : null;
+    if (key === 'server-proxy') return 'server-proxy';
+    return key && KEY_PATTERN.test(key) ? key : 'server-proxy';
   } catch {
-    return null;
+    return 'server-proxy';
   }
 };
 
 let memKey: string | null = readSession();
 
-export const getApiKey = (): string | null => memKey;
+export const getApiKey = (): string | null => memKey ?? 'server-proxy';
 
 // المفتاح الحقيقي للزائر فقط (يُستخدم مباشرة من المتصفح نحو Google، ويُرسل للسيرفر لتوليد النص)
 export const getUserApiKey = (): string | null =>

@@ -40,60 +40,141 @@ export interface TeenDramaTemplate {
 
 export const TEEN_DRAMA_TEMPLATES: TeenDramaTemplate[] = [
   {
-    id: 'fruit-kingdom-saga',
-    icon: '🍇',
-    title: { ar: 'مملكة الفواكه العتيقة وصراع بذور الخلود', en: 'The Ancient Fruit Kingdom & Eternity Seeds' },
-    tagline: { ar: 'صراع العروش والولاء، الشرف، والبحث عن إكسير الحكمة', en: 'Throne conflicts, honor, and ancient secrets in a royal realm' },
-    badge: { ar: 'صراع العروش والولاء', en: 'Thrones & Honor' },
-    emotionalWorld: { ar: 'الشرف، الوفاء بالعهد، ومسؤولية القيادة', en: 'Honor, solemn vows, and leadership' },
+    id: 'highschool-identity-drama',
+    icon: '🎒',
+    title: { ar: 'صراع الهوية والقبول: أسرار الثانوية', en: 'High School Identity & Belonging' },
+    tagline: { ar: 'البحث عن الذات، مواجهة التنمر، وتحدي توقعات الآخرين', en: 'Self-discovery, overcoming peer pressure, and inner courage' },
+    badge: { ar: 'هوية وانتماء', en: 'Identity & Voice' },
+    emotionalWorld: { ar: 'الحيرة الوجودية، الرغبة في التعبير، والبحث عن الصداقة الحقيقية', en: 'Existential angst, authentic voice, and finding true loyalty' },
     defaultIdea: {
-      ar: 'في عالم تنقسم فيه حضارات الفواكه إلى ممالك متناحرة، يكتشف فارس شاب من عشيرة الرمان سراً دفيناً عن بذور الخلود التي توشك أن تقع في أيدي أمراء الظل، فينطلق في رحلة مصيرية محفوفة بالمخاطر لتوحيد القبائل.',
-      en: 'In an epic realm where fruit civilizations rule fractured territories, a young warrior from the Pomegranate Dynasty uncovers a conspiracy to seize the mystical eternity seeds, embarking on a dangerous quest across ancient orchards.',
+      ar: 'ينتقل طالب جديد يملك موهبة سرية في الموسيقى إلى مدرسة ثانوية كبرى، حيث يواجه ضغوط التأقلم بين المجموعات المختلفة ويتعلم الشجاعة ليكون نفسه دون خوف.',
+      en: 'A transfer student with a hidden musical talent navigates high school social hierarchies, choosing authenticity over superficial popularity.',
     },
-    artStyle: 'Fantasy Fairy Tale',
-    storyType: 'Adventure',
+    artStyle: 'Comic Book',
+    storyType: 'Moral',
     dialect: 'Modern Standard',
   },
   {
-    id: 'cyber-fruit-2099',
+    id: 'cyber-future-rebellion',
     icon: '⚡',
-    title: { ar: 'سايبر فروت 2099: حرب الطاقة البيولوجية', en: 'CyberFruit 2099: Bio-Energy War' },
-    tagline: { ar: 'أبراج النيون الشاهقة، أسرار الذكاء الحيوي، وسباق النجاة الأخير', en: 'Neon mega-orchards, digital hacking, and bio-tech rebellion' },
-    badge: { ar: 'سايبربانك وحرية', en: 'Cyberpunk Freedom' },
-    emotionalWorld: { ar: 'التحدي الرقمي، استقلال الذات، وثورة الحرية', en: 'Digital challenge, autonomy, and rebellion for freedom' },
+    title: { ar: 'سايبر 2099: ثورة الجيل القادم', en: 'Cyber 2099: Next-Gen Rebellion' },
+    tagline: { ar: 'عالم رقمي غامض، شبكات نيون، ونضال من أجل استقلال القرار', en: 'Neon mega-cities, ethical hacking, and fighting for personal autonomy' },
+    badge: { ar: 'حرية واستقلال', en: 'Digital Autonomy' },
+    emotionalWorld: { ar: 'التحدي، الشغف بالحرية، والمسؤولية الأخلاقية للتكنولوجيا', en: 'Tech rebellion, passion for freedom, and ethical responsibility' },
     defaultIdea: {
-      ar: 'في مدينة مستقبلية عملاقة تضاء بالنيون، يكتشف فريق من ثوار الفواكه المعدلة جينياً أن مختبرات الطاقة المركزية تستنزف عصير الحياة من البساتين الطبيعية لتغذية الأبراج، فيخوضون معركة اختراق إلكتروني مثيرة.',
-      en: 'In a futuristic neon metropolis, a squad of cyber-enhanced fruit heroes discovers that corporate conglomerates are secretly siphoning the vital botanical grid, executing a high-stakes digital hack to liberate the city.',
+      ar: 'فريق من المراهقين العباقرة في البرمجة يكتشفون خوارزمية لتوجيه المشاعر والآراء في مدينتهم الذكية، فيخوضون مغامرة رقمية لحماية خصوصية وإرادة زملائهم.',
+      en: 'A group of tech-savvy teens uncovers an AI emotion-manipulation system in their futuristic city, orchestrating a clever digital rescue for personal freedom.',
     },
     artStyle: 'Comic Book',
     storyType: 'Adventure',
     dialect: 'Modern Standard',
   },
   {
-    id: 'survival-orchard',
-    icon: '🥭',
-    title: { ar: 'بساتين المجهول: رحلة البقاء في الغابة المحرمة', en: 'Orchards of the Unknown: Wild Survival' },
-    tagline: { ar: 'عواصف غادرة، نباتات عملاقة، واختبار الصداقة الحقيقية في الظروف الصعبة', en: 'Raging storms, wild flora, and true friendship tested in danger' },
-    badge: { ar: 'بقاء وصمود', en: 'Wild Survival' },
-    emotionalWorld: { ar: 'الصمود أمام الصعاب، الاعتماد على النفس، وقوة الصداقة', en: 'Endurance, self-reliance, and fierce friendship' },
+    id: 'wilderness-survival-bonds',
+    icon: '⛺',
+    title: { ar: 'اختبار العاصفة: البقاء والتضامن', en: 'Wilderness Survival: The Test' },
+    tagline: { ar: 'عواصف جبلية، اعتماد على النفس، واكتشاف القوة الكامنة', en: 'Mountain storms, intense resilience, and unbreakable team trust' },
+    badge: { ar: 'صمود وقيادة', en: 'Resilience & Trust' },
+    emotionalWorld: { ar: 'الصمود أمام الصعاب، الاعتماد على الذات، وتقدير قيمة الرفاق', en: 'Grit under pressure, self-reliance, and deep emotional bonds' },
     defaultIdea: {
-      ar: 'ينعزل ثلاثة مراهقين في وادي البساتين البرية بعد انهيار الجسر المعلق، ويضطرون للتعاون باستخدام معرفتهم بالثمار الطبيعية وفخاخ الطبيعة للنجاة من عاصفة شتوية مرعبة والعودة إلى ديارهم.',
-      en: 'Three resourceful teenagers stranded deep inside a treacherous wild valley must use their botanical survival skills and fierce friendship to endure harsh winter winds and navigate home.',
+      ar: 'تتقطع الأسباب بأربعة مراهقين في رحلة استكشافية جبلية إثر عاصفة مفاجئة، فيتجاوزون الخلافات الشخصية بالتعاون والثقة المتبادلة للعودة بسلام.',
+      en: 'Four teenagers stranded in a sudden wilderness blizzard must put aside rivalries and rely on leadership and trust to navigate home safely.',
+    },
+    artStyle: 'Watercolor',
+    storyType: 'Adventure',
+    dialect: 'Modern Standard',
+  },
+  {
+    id: 'philosophical-destiny-dilemma',
+    icon: '🧭',
+    title: { ar: 'بوصلة الحقيقة: صراع القرارات الصعبة', en: 'Compass of Truth: Moral Dilemmas' },
+    tagline: { ar: 'أسئلة حائرة حول العدالة، التضحية، واختيار الطريق الأصوب', en: 'Deep character choices, moral courage, and standing up for truth' },
+    badge: { ar: 'حقيقة وعدالة', en: 'Moral Courage' },
+    emotionalWorld: { ar: 'التأمل العميق، صراع الواجب والشغف، والنزاهة الداخلية', en: 'Deep introspection, duty vs passion, and unshakeable integrity' },
+    defaultIdea: {
+      ar: 'يجد شاب يافع نفسه أمام قرار حاسم بين حماية مصلحة شخصية لقريب له أو قول الحقيقة للجميع لإنقاذ صديق مظلوم، متعلماً أن القوة الحقيقية تكمن في الصدق.',
+      en: 'A 16-year-old faces a defining moral dilemma between protecting a family privilege and testifying to the truth, revealing the authentic meaning of integrity.',
+    },
+    artStyle: '3D Pixar Style',
+    storyType: 'Moral',
+    dialect: 'Modern Standard',
+  },
+];
+
+export interface FruitFantasyTemplate {
+  id: string;
+  icon: string;
+  title: { ar: string; en: string };
+  tagline: { ar: string; en: string };
+  badge: { ar: string; en: string };
+  emotionalWorld: { ar: string; en: string };
+  characterPersona: { ar: string; en: string };
+  defaultIdea: { ar: string; en: string };
+  artStyle: ArtStyle;
+  storyType: StoryType;
+  dialect: ArabicDialect;
+}
+
+export const FRUIT_FANTASY_TEMPLATES: FruitFantasyTemplate[] = [
+  {
+    id: 'pomegranate-knight-citadel',
+    icon: '🍇',
+    title: { ar: 'قلعة الرمان وصراع بذور الحكمة', en: 'Pomegranate Citadel & Wisdom Seeds' },
+    tagline: { ar: 'فارس الرمان الشجاع ورحلة توحيد قبائل الفواكه في المملكة', en: 'The brave Pomegranate Knight seeking true unity in the Orchard Realm' },
+    badge: { ar: 'الولاء والقيادة', en: 'Loyalty & Valor' },
+    emotionalWorld: { ar: 'مسؤولية الحماية، الشرف، والرباط الوجداني بين القبائل', en: 'Protective duty, honor, and deep bonds between orchard clans' },
+    characterPersona: { ar: 'فارس الرمان (شخصية مجسدة بشرية الملامح بعباءة حب الرمان ويرتدي درعاً عضويّاً ذهبياً)', en: 'Ruby Pomegranate Knight with vibrant seeds armor and noble heart' },
+    defaultIdea: {
+      ar: 'في مملكة بساتين الفواكه السحرية، يخوض فارس الرمان الشجاع "جلنار" ومساعدته اللطيفة "مشمشة" مغامرة مشوقة للبحث عن بذور الحكمة القديمة لجمع شمل قبائل الفواكه وإعادة الحياة للبستان المقدس.',
+      en: 'In the enchanted Orchard Realm, Julnar the Pomegranate Knight and his loyal friend Apricot embark on a quest for the ancient Wisdom Seeds to unite the fruit clans and restore life to the Sacred Tree.',
+    },
+    artStyle: '3D Pixar Style',
+    storyType: 'Adventure',
+    dialect: 'Modern Standard',
+  },
+  {
+    id: 'citrus-cyber-rebellion',
+    icon: '🍋',
+    title: { ar: 'ثورة الليمون الذكي: سايبر فروت', en: 'CyberFruit: The Citrus Hackers' },
+    tagline: { ar: 'فريق الليمون المبتكر في مواجهة آلات امتصاص العصير المستقبلية', en: 'Cyber-enhanced citrus heroes hacking the bio-grid to free the neon orchard' },
+    badge: { ar: 'الابتكار والحرية', en: 'Innovation & Freedom' },
+    emotionalWorld: { ar: 'الشغف بالعلم، الإصرار على الحرية، وتحدي الصعاب التقنية', en: 'Passion for discovery, insistence on autonomy, and techno-grit' },
+    characterPersona: { ar: 'المهندس ليمون (شخصية حيوية مجسدة بنظارات نيون وسترة تقنية مضاءة)', en: 'Citrus Hacker Lemon with neon goggles and bio-energy circuits' },
+    defaultIdea: {
+      ar: 'في مدينة الفواكه المستقبلية التكنولوجية، يكتشف المخترع ليمون الذكي وسريعة البديهة "توتة" مخططاً لاستهلاك طاقة الفواكه العضوية، فيبتكران شبكة حماية أثيرية لحماية بساتين الطبيعة.',
+      en: 'In a futuristic techno fruit metropolis, inventive Lemon Hacker and agile Berry team up to construct a bio-energy protective shield, freeing natural orchards from automated energy drained systems.',
+    },
+    artStyle: 'Comic Book',
+    storyType: 'Adventure',
+    dialect: 'Modern Standard',
+  },
+  {
+    id: 'exotic-mango-survival',
+    icon: '🥭',
+    title: { ar: 'وادي المانجو: رحلة البقاء والاستكشاف', en: 'Wild Mango Valley: Untamed Discovery' },
+    tagline: { ar: 'رحالة المانجو الشجاع ومغامرة الصمود أمام العواصف العاتية', en: 'Exotic Mango Explorer trekking through wild botanical storms with friends' },
+    badge: { ar: 'الصمود والاستكشاف', en: 'Resilience & Courage' },
+    emotionalWorld: { ar: 'الشجاعة في مواجهة المجهول، التضامن، واكتشاف القوة الذاتية', en: 'Courage facing the wild unknown, solidarity, and inner strength' },
+    characterPersona: { ar: 'المستكشف مانجو (شخصية مجسدة بقميص مغامر وقبعة خيزران)', en: 'Exotic Mango Explorer with botanical trekking gear' },
+    defaultIdea: {
+      ar: 'يتعرض الرحالة مانجو وأصدقاؤه الفضوليون لعاصفة استوائية تجرفهم إلى الوادي المحرم، فيستخدمون ثمارهم العضوية وذكاءهم للبقاء على قيد الحياة ومساعدة سكان الغابة.',
+      en: 'Stranded in the forbidden mist valley after a tropical storm, Mango Explorer and his botanical companions rely on their fruit instincts and teamwork to survive and guide forest creatures home.',
     },
     artStyle: 'Classic Storybook',
     storyType: 'Adventure',
     dialect: 'Modern Standard',
   },
   {
-    id: 'fruit-destiny-drama',
+    id: 'royal-apple-destiny',
     icon: '🍎',
-    title: { ar: 'فلسفة الظل والنور: سر شجرة الحكمة والقدر', en: 'Philosophy of Light & Shadow: Tree of Destiny' },
-    tagline: { ar: 'حوارات فكرية عميقة، صراعات أخلاقية، واكتشاف معنى الشجاعة', en: 'Deep character dilemmas, philosophical debates, and integrity' },
-    badge: { ar: 'دراما وفلسفة', en: 'Philosophical Drama' },
-    emotionalWorld: { ar: 'البحث عن الذات، الأخلاق، واتخاذ القرارات الصعبة', en: 'Self-discovery, moral courage, and tough choices' },
+    title: { ar: 'حكيم التفاح وشجرة القدر والضوء', en: 'Royal Apple Sage & The Destiny Tree' },
+    tagline: { ar: 'حكيم التفاح الذهبي ورحلة البحث عن معنى العدالة والصدق', en: 'The Royal Apple Sage unraveling ancient moral riddles in the sacred library' },
+    badge: { ar: 'الحكمة والعدالة', en: 'Wisdom & Integrity' },
+    emotionalWorld: { ar: 'التأمل الأخلاقي، التسامح، والبحث عن الصدق والجمال الداخلي', en: 'Moral discernment, empathy, and seeking truth beyond appearances' },
+    characterPersona: { ar: 'الحكيم تفاحة (شخصية مجسدة برداء حكماء زمردي وتاج أوراق شجر)', en: 'Royal Apple Sage with emerald robes and golden leaf crown' },
     defaultIdea: {
-      ar: 'قصة درامية مؤثرة تدور حول شاب يافع يجد نفسه أمام مفترق طرق أخلاقي بين ولاء عائلته لبستان الأجداد أو الدفاع عن الحقيقة والعدالة لإنقاذ قرية المزارعين الفقراء، متعلماً أن القوة الحقيقية تنبع من الصدق.',
-      en: 'A profound character drama following a young protagonist torn between family heritage and standing up for truth, confronting hard moral dilemmas that reveal the authentic meaning of integrity.',
+      ar: 'في مكتبة شجرة القدر السحرية، يواجه الحكيم تفاحة ومساعدوه لغزاً أخلاقياً حول أسرار بستان المعرفة، ليتعلم الجميع أن الجمال الحقيقي يكمن في نقاء القلوب والنوايا.',
+      en: 'Inside the mystical Destiny Tree library, Royal Apple Sage and his companions solve an ancient moral riddle, learning that true splendor resides in pure intentions and honesty.',
     },
     artStyle: 'Watercolor',
     storyType: 'Moral',
@@ -142,12 +223,23 @@ export default function StorySetupForm({ initialIdea, language, onSubmit, onLoad
   const [availableDraft, setAvailableDraft] = useState<ReturnType<typeof getStoryDraft>>(null);
   const [isTeenDrama, setIsTeenDrama] = useState(() => (series?.ageGroup ?? ageGroup) === '13-18');
   const [selectedTeenTemplate, setSelectedTeenTemplate] = useState<string | null>('fruit-kingdom-saga');
+  const [isFruitFantasy, setIsFruitFantasy] = useState(false);
+  const [selectedFruitTemplate, setSelectedFruitTemplate] = useState<string | null>('pomegranate-knight-citadel');
 
   const handleSelectTeenTemplate = (tmpl: TeenDramaTemplate) => {
     setSelectedTeenTemplate(tmpl.id);
     setIdea(tmpl.defaultIdea[ar ? 'ar' : 'en']);
     setAgeGroup('13-18');
     setIsTeenDrama(true);
+    setArtStyle(tmpl.artStyle);
+    setStoryType(tmpl.storyType);
+    if (tmpl.dialect) setDialect(tmpl.dialect);
+  };
+
+  const handleSelectFruitTemplate = (tmpl: FruitFantasyTemplate) => {
+    setSelectedFruitTemplate(tmpl.id);
+    setIdea(tmpl.defaultIdea[ar ? 'ar' : 'en']);
+    setIsFruitFantasy(true);
     setArtStyle(tmpl.artStyle);
     setStoryType(tmpl.storyType);
     if (tmpl.dialect) setDialect(tmpl.dialect);
@@ -255,6 +347,7 @@ export default function StorySetupForm({ initialIdea, language, onSubmit, onLoad
       heroPhotoId: series?.heroPhotoId ?? hero?.photoId,
       series: series ?? undefined,
       coverFontStyle,
+      fruitFantasy: isFruitFantasy,
     };
     onSubmit(params, pageCount);
   };
@@ -388,6 +481,80 @@ export default function StorySetupForm({ initialIdea, language, onSubmit, onLoad
                   </div>
                   <p className="text-[11px] font-semibold text-amber-300/90 dark:text-amber-200/90 mb-1">
                     {ar ? `الجو الوجداني: ${tmpl.emotionalWorld.ar}` : `Emotional World: ${tmpl.emotionalWorld.en}`}
+                  </p>
+                  <p className="text-[11px] text-ink/70 dark:text-moonlight/70 leading-relaxed line-clamp-2">
+                    {ar ? tmpl.tagline.ar : tmpl.tagline.en}
+                  </p>
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* مفتاح ونموذج فواكه الفانتازيا Fruit Fantasy Mode Toggle & Anthropomorphic Character Templates */}
+      <div className="space-y-3 rounded-2xl border border-amber-500/35 bg-gradient-to-r from-amber-950/25 via-orange-950/20 to-slate-900/15 p-4 shadow-sm" dir={ar ? 'rtl' : 'ltr'}>
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5">
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-amber-500/20 text-xl">🍎</span>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="font-display text-xs sm:text-sm font-bold text-ink dark:text-moonlight">
+                  {ar ? 'وضع فواكه الفانتازيا (شخصيات الفواكه الملونة)' : 'Fruit Fantasy Mode (Anthropomorphic Fruits)'}
+                </h3>
+                <span className="rounded-full bg-amber-500/25 border border-amber-500/40 text-amber-300 dark:text-amber-200 px-2.5 py-0.5 text-[10px] font-bold">
+                  {ar ? 'فانتازيا مجسدة' : 'Fruit Fantasy'}
+                </span>
+              </div>
+              <p className="text-[11px] text-ink/70 dark:text-moonlight/70">
+                {ar ? 'تفعيل 4 عوالم وجدانية لشخصيات الفواكه الملونة ذات السمات القيادية والبطولية' : 'Enable 4 unique emotional world templates featuring anthropomorphic fruit heroes'}
+              </p>
+            </div>
+          </div>
+          <label className="relative inline-flex cursor-pointer items-center shrink-0">
+            <input
+              type="checkbox"
+              checked={isFruitFantasy}
+              onChange={(e) => {
+                const checked = e.target.checked;
+                setIsFruitFantasy(checked);
+                if (checked && !selectedFruitTemplate) {
+                  handleSelectFruitTemplate(FRUIT_FANTASY_TEMPLATES[0]);
+                }
+              }}
+              className="peer sr-only"
+            />
+            <div className="peer h-6 w-11 rounded-full bg-slate-700/70 after:absolute after:start-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:bg-white after:transition-all after:content-[''] peer-checked:bg-amber-600 peer-checked:after:translate-x-full peer-checked:after:border-white peer-focus-visible:ring-2 peer-focus-visible:ring-amber-400" />
+          </label>
+        </div>
+
+        {/* بطاقات قوالب الفواكه الأربعة */}
+        {isFruitFantasy && (
+          <div className="pt-2 border-t border-amber-500/20 grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+            {FRUIT_FANTASY_TEMPLATES.map((tmpl) => {
+              const active = selectedFruitTemplate === tmpl.id;
+              return (
+                <button
+                  key={tmpl.id}
+                  type="button"
+                  onClick={() => handleSelectFruitTemplate(tmpl)}
+                  className={`flex flex-col text-start p-3.5 rounded-xl border transition active:scale-[0.98] ${
+                    active
+                      ? 'border-amber-500 bg-amber-500/20 ring-2 ring-amber-500/50 shadow-md text-ink dark:text-moonlight'
+                      : 'border-amber-500/25 bg-black/25 hover:bg-black/40 text-ink/80 dark:text-moonlight/80'
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-2 mb-1">
+                    <span className="flex items-center gap-1.5 font-bold text-xs text-amber-300">
+                      <span className="text-base">{tmpl.icon}</span>
+                      <span>{ar ? tmpl.title.ar : tmpl.title.en}</span>
+                    </span>
+                    <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber-500/20 border border-amber-500/30 text-amber-200 shrink-0">
+                      {ar ? tmpl.badge.ar : tmpl.badge.en}
+                    </span>
+                  </div>
+                  <p className="text-[11px] font-semibold text-rose-300/90 dark:text-rose-200/90 mb-1">
+                    {ar ? `الشخصية: ${tmpl.characterPersona.ar}` : `Hero: ${tmpl.characterPersona.en}`}
                   </p>
                   <p className="text-[11px] text-ink/70 dark:text-moonlight/70 leading-relaxed line-clamp-2">
                     {ar ? tmpl.tagline.ar : tmpl.tagline.en}

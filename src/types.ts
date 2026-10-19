@@ -25,7 +25,11 @@ export type AgeGroup = '3-4' | '4-6' | '7-9' | '9-12' | '13-18';
 
 export type CoverFontStyle = 'kufi' | 'diwani' | 'naskh' | 'display3d';
 
-export type VeoMotionMode = 'cinematic-pack' | 'parallax-script' | 'sweeps-3d';
+export type VeoMotionMode = 'cinematic-pack' | 'parallax-script' | 'sweeps-3d' | 'auto-composite';
+
+export type Book3DTheme = 'hardcover' | 'carddeck' | 'grimoire';
+
+export type PDFPreset = 'storybook' | 'minimalist' | 'collector';
 
 export type StoryType = 'Bedtime' | 'Adventure' | 'Funny' | 'Educational' | 'Moral';
 
@@ -83,6 +87,7 @@ export interface StoryParams {
   heroPhotoId?: string;
   series?: SeriesContext;
   coverFontStyle?: CoverFontStyle;
+  fruitFantasy?: boolean;
 }
 
 export interface Character {
@@ -117,6 +122,7 @@ export interface StoryInfo {
   lessons: string[];
   moral?: string;
   coverFontStyle?: CoverFontStyle;
+  fruitFantasy?: boolean;
 }
 
 export interface QuizItem {

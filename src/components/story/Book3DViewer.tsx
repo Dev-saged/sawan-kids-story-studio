@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
-import { Rotate3D, Video, X, Play, Pause, Sparkles, BookOpen } from 'lucide-react';
-import { StoryData } from '../../types';
+import { Rotate3D, Video, X, Play, Pause, Sparkles, BookOpen, Layers, Image as ImageIcon } from 'lucide-react';
+import { Book3DTheme, StoryData } from '../../types';
 import { Muxer, ArrayBufferTarget } from 'mp4-muxer';
 
 interface Props {
@@ -10,6 +10,7 @@ interface Props {
 }
 
 export default function Book3DViewer({ storyData, ar, onClose }: Props) {
+  const [theme, setTheme] = useState<Book3DTheme>('hardcover');
   const [rotY, setRotY] = useState(25);
   const [rotX, setRotX] = useState(-5);
   const [isAutoRotating, setIsAutoRotating] = useState(true);
@@ -246,15 +247,138 @@ export default function Book3DViewer({ storyData, ar, onClose }: Props) {
       a.href = url;
       a.download = `${title.replace(/\s+/g, '_')}_3D_Book.mp4`;
       document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
     } catch (err) {
       console.error('3D Video export error:', err);
     } finally {
       setIsExportingVideo(false);
       setExportProgress(0);
     }
+  };
+
+  // تنزيل صورة الغلاف الأمامي عالية الدقة
+  const handleDownloadFrontCover = () => {
+    if (!coverImg) return;
+    const a = document.createElement('a');
+    a.href = coverImg;
+    a.download = `${title.replace(/\s+/g, '_')}_Front_Cover.png`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  };
+
+  // تنزيل لوحة الأغلفة المجمّعة المكتملة من كل الزوايا (Front, Spine, 3D Angle, Back)
+  const handleDownloadMultiAngleSheet = async () => {
+    const W = 1920;
+    const H = 1080;
+    const canvas = document.createElement('canvas');
+    canvas.width = W;
+    canvas.height = H;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const loadImg = (src: string | undefined): Promise<HTMLImageElement | null> =>
+      new Promise((res) => {
+        if (!src) return res(null);
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.onload = () => res(img);
+        img.onerror = () => res(null);
+        img.src = src;
+      });
+
+    const [loadedCover, loadedBack] = await Promise.all([loadImg(coverImg), loadImg(backImg)]);
+
+    const bgGrad = ctx.createLinearGradient(0, 0, W, H);
+    bgGrad.addColorStop(0, '#0f172a');
+    bgGrad.addColorStop(0.5, '#1e1b4e');
+    bgGrad.addColorStop(1, '#020617');
+    ctx.fillStyle = bgGrad;
+    ctx.fillRect(0, 0, W, H);
+
+    ctx.fillStyle = '#ffc94a';
+    ctx.font = 'bold 36px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(title, W / 2, 70);
+
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+    ctx.font = '18px sans-serif';
+    ctx.fillText('استوديو ساجد لقصص الأطفال — طقم الأغلفة الكامل من جميع الزوايا', W / 2, 105);
+
+    ctx.fillStyle = '#1e1b2e';
+    ctx.fillRect(100, 160, 480, 680);
+    if (loadedCover) {
+      ctx.drawImage(loadedCover, 100, 160, 480, 680);
+    }
+    ctx.strokeStyle = '#ffc94a';
+    ctx.lineWidth = 6;
+    ctx.strokeRect(100, 160, 480, 680);
+
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 20px sans-serif';
+    ctx.fillText('الغلاف الأمامي (Front)', 340, 880);
+
+    const spineGrad = ctx.createLinearGradient(640, 160, 720, 160);
+    spineGrad.addColorStop(0, '#b3861e');
+    spineGrad.addColorStop(0.5, '#ffc94a');
+    spineGrad.addColorStop(1, '#996f13');
+    ctx.fillStyle = spineGrad;
+    ctx.fillRect(640, 160, 80, 680);
+
+    ctx.save();
+    ctx.translate(680, 500);
+    ctx.rotate(-Math.PI / 2);
+    ctx.fillStyle = '#1e1b2e';
+    ctx.font = 'bold 22px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(title.slice(0, 30), 0, 8);
+    ctx.restore();
+
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 20px sans-serif';
+    ctx.fillText('الكعب (Spine)', 680, 880);
+
+    ctx.fillStyle = '#1e1b2e';
+    ctx.fillRect(780, 160, 480, 680);
+    if (loadedBack) {
+      ctx.drawImage(loadedBack, 780, 160, 480, 680);
+    }
+    ctx.strokeStyle = '#ffc94a';
+    ctx.lineWidth = 6;
+    ctx.strokeRect(780, 160, 480, 680);
+
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 20px sans-serif';
+    ctx.fillText('الغلاف الخلفي (Back)', 1020, 880);
+
+    ctx.save();
+    ctx.translate(1550, 500);
+    ctx.transform(0.8, -0.15, 0.2, 0.9, 0, 0);
+    if (loadedCover) {
+      ctx.drawImage(loadedCover, -180, -260, 360, 520);
+    } else {
+      ctx.fillStyle = '#ffc94a';
+      ctx.fillRect(-180, -260, 360, 520);
+    }
+    ctx.strokeStyle = '#f4a261';
+    ctx.lineWidth = 4;
+    ctx.strokeRect(-180, -260, 360, 520);
+    ctx.restore();
+
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 20px sans-serif';
+    ctx.fillText('منظور 3D المائل (Perspective)', 1550, 880);
+
+    ctx.fillStyle = '#ffc94a';
+    ctx.font = 'bold 18px sans-serif';
+    ctx.fillText('حقوق النشر والتأليف محفوظة © استوديو ساجد لقصص الأطفال — Sajed Story Studio', W / 2, 1020);
+
+    const url = canvas.toDataURL('image/png');
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${title.replace(/\s+/g, '_')}_MultiAngle_CoverSheet.png`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
   };
 
   return (
@@ -371,6 +495,51 @@ export default function Book3DViewer({ storyData, ar, onClose }: Props) {
                 </div>
               </div>
             </div>
+          </div>
+        </div>
+
+        {/* 3D Theme Switcher & Cover Downloads Row */}
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-white/10 pt-3">
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-semibold text-white/70">{ar ? 'قالب الغلاف:' : '3D Theme:'}</span>
+            {(
+              [
+                { id: 'hardcover', label: { ar: 'مجلّد فاخر مطعّم بالذهب', en: 'Gold Hardcover' } },
+                { id: 'carddeck', label: { ar: 'كارت مودرن', en: 'Minimal Card Deck' } },
+                { id: 'grimoire', label: { ar: 'جلد ملكي عتيق', en: 'Antique Grimoire' } },
+              ] as const
+            ).map((t) => (
+              <button
+                key={t.id}
+                type="button"
+                onClick={() => setTheme(t.id)}
+                className={`rounded-full px-3 py-1 text-xs font-bold transition active:scale-95 ${
+                  theme === t.id ? 'bg-lantern text-ink shadow-sm' : 'bg-white/10 text-white/70 hover:bg-white/20'
+                }`}
+              >
+                {ar ? t.label.ar : t.label.en}
+              </button>
+            ))}
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleDownloadFrontCover}
+              className="inline-flex items-center gap-1.5 rounded-full border border-lantern/50 bg-lantern/15 px-3.5 py-1.5 text-xs font-bold text-lantern transition hover:bg-lantern/25"
+            >
+              <ImageIcon size={14} />
+              <span>{ar ? 'تنزيل الواجهة فقط' : 'Front Cover PNG'}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={handleDownloadMultiAngleSheet}
+              className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/50 bg-emerald-500/15 px-3.5 py-1.5 text-xs font-bold text-emerald-300 transition hover:bg-emerald-500/25"
+            >
+              <Layers size={14} />
+              <span>{ar ? 'طقم الأغلفة الكامل من كل الزوايا' : 'Full Multi-Angle Cover Sheet'}</span>
+            </button>
           </div>
         </div>
 

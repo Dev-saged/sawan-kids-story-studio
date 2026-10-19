@@ -11,27 +11,30 @@ export const getArtStylePrompt = (style: string): string => {
 };
 
 export const NEGATIVE_PROMPT_ARTIFACTS =
-  'Negative prompt: extra fingers, mutated hands, missing limbs, distorted faces, asymmetrical eyes, blurry details, double heads, cloned characters, extra limbs, floating objects, unwanted text, letters, captions, logos, signature, watermark, bad anatomy, deformed bodies, cut off heads, low resolution, jpeg artifacts.';
+  'Negative prompt: extra fingers, mutated hands, missing limbs, distorted faces, asymmetrical eyes, blurry details, double heads, cloned characters, floating objects, unwanted text, letters, captions, logos, signature, watermark, bad anatomy, deformed bodies, cut off heads, low resolution, jpeg artifacts, inconsistent face features, changing hair color, changing outfit.';
 
 export const CHARACTER_SHEET_BINDING =
-  '[STRICT CHARACTER SHEET BINDING]: Enforce 100% visual consistency with the character reference sheet. Maintain exact face shape, eye color, hairstyle, hair color, skin tone, clothing design, color palette, and body proportions across all scenes.';
+  '[GLOBAL CHARACTER SEED & STRICT BINDING]: Enforce 100% visual consistency with the character reference sheet. Maintain exact face shape, eye color, hairstyle, hair color, skin tone, clothing design, color palette, and body proportions across every scene generation.';
 
 const characterSheetText = (story: StoryData): string =>
   story.characters
     .map((c) => `CHARACTER "${c.name.toUpperCase()}" (${c.gender || 'hero'}, ${c.age}): ${c.description}. Visual anchor: distinct hair style, face features, outfit colors, and proportions.`)
     .join(' | ');
 
-const styleLock = (story: StoryData): string =>
-  `[STYLE LOCK: ${story.story_info.art_style.toUpperCase()}] Visual style guidelines: ${getArtStylePrompt(story.story_info.art_style)}. Maintain identical linework, color palette, and rendering model on every image of this book.`;
+const styleLock = (story: StoryData): string => {
+  const seedTag = story.characterSheetId ? `[GLOBAL SEED: ${story.characterSheetId}]` : `[GLOBAL SEED: seed-${story.id || 'default'}]`;
+  return `[STYLE LOCK: ${story.story_info.art_style.toUpperCase()}] ${seedTag} Visual style guidelines: ${getArtStylePrompt(story.story_info.art_style)}. Maintain identical linework, character facial features, color palette, and rendering model on every image of this book.`;
+};
 
 const isFruitStory = (story: StoryData): boolean =>
+  Boolean(story.story_info.fruitFantasy) ||
   /frui|فواكه|رمان|ليمون|برتقال|تفاح|بساتين|بذور الخلود|سايبر فروت/i.test(
     `${story.story_info.title} ${(story.story_info.lessons || []).join(' ')} ${story.seriesTitle ?? ''}`
   );
 
 const fruitThemeBoost = (story: StoryData): string =>
   isFruitStory(story)
-    ? 'Vivid fruit fantasy design elements, organic fruit motifs, vibrant fruit armor and attire, lush fruit kingdom environment with giant exotic fruit trees.'
+    ? 'Anthropomorphic vibrant fruit character design with expressive eyes, human-like limbs, organic fruit armor and attire, lush fruit kingdom environment with giant exotic fruit trees.'
     : '';
 
 export const buildPageImagePrompt = (story: StoryData, page: StoryPage): string =>
@@ -369,12 +372,15 @@ export class StoryGenerator {
     let result: StoryData = {
       ...parsed,
       plannedPages: total > pageCount ? total : undefined,
+      characterSheetId: params.series?.characterSheetId ?? parsed.characterSheetId ?? `seed-${Date.now()}-${Math.floor(Math.random() * 89999 + 10000)}`,
       story_info: {
         ...parsed.story_info,
         lessons: parsed.story_info.lessons ?? [],
         art_style: params.artStyle,
         aspect_ratio: params.aspectRatio,
         dialect: params.dialect,
+        fruitFantasy: params.fruitFantasy,
+        coverFontStyle: params.coverFontStyle,
       },
       heroPhotoId: params.series?.heroPhotoId ?? params.heroPhotoId,
       // الجزء التالي يحتفظ بنفس الشخصيات وورقة المراجع لتبقى الوجوه ثابتة

@@ -1,6 +1,6 @@
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
-import { BookSize, StoryData } from '../types';
+import { BookSize, PDFPreset, StoryData } from '../types';
 import { toSrc } from './media';
 import { BRAND } from '../config';
 
@@ -26,7 +26,8 @@ export const generatePDFBlob = async (
   story: StoryData,
   bookSize: BookSize,
   isRTL: boolean,
-  onProgress?: (msg: string) => void
+  onProgress?: (msg: string) => void,
+  pdfPreset: PDFPreset = 'storybook'
 ): Promise<Blob> => {
   const { width, height } = SIZES[bookSize];
   const pages = story.pages;
@@ -79,35 +80,55 @@ export const generatePDFBlob = async (
       )
     );
 
-    onProgress?.(t('جارٍ تجهيز المقدمة...', 'Preparing introduction...'));
-    await addPage(
-      frame(
-        `<div style="flex:1;display:flex;align-items:center;justify-content:center;">
-          <p style="font-family:${bodyFont};font-size:36px;line-height:1.8;text-align:center;color:${COLORS.soft};max-width:80%;margin:0;">
-            ${t('تم إنشاء هذه القصة لتنمية خيال الأطفال وإسعادهم.', 'This story was created to inspire imagination and joy.')}
-          </p>
-        </div>`
-      )
-    );
+    if (pdfPreset === 'storybook') {
+      onProgress?.(t('جارٍ تجهيز المقدمة...', 'Preparing introduction...'));
+      await addPage(
+        frame(
+          `<div style="flex:1;display:flex;align-items:center;justify-content:center;">
+            <p style="font-family:${bodyFont};font-size:36px;line-height:1.8;text-align:center;color:${COLORS.soft};max-width:80%;margin:0;">
+              ${t('تم إنشاء هذه القصة لتنمية خيال الأطفال وإسعادهم.', 'This story was created to inspire imagination and joy.')}
+            </p>
+          </div>`
+        )
+      );
 
-    onProgress?.(t('جارٍ تجهيز الفهرس...', 'Preparing table of contents...'));
-    const toc = pages
-      .map(
-        (_, i) => `<li style="margin-bottom:20px;font-size:26px;display:flex;align-items:center;">
-          <span>${t(`المشهد ${i + 1}`, `Scene ${i + 1}`)}</span>
-          <span style="flex:1;border-bottom:2px dotted ${COLORS.faint};margin:0 15px;position:relative;top:-6px;"></span>
-          <span>${t(`صفحة ${i + 4}`, `Page ${i + 4}`)}</span>
-        </li>`
-      )
-      .join('');
-    await addPage(
-      frame(
-        `<h2 style="font-family:${headFont};font-size:40px;margin:0 0 50px;text-align:${align};border-bottom:2px solid ${COLORS.faint};padding-bottom:15px;">${t('المحتويات:', 'Contents:')}</h2>
-        <ul style="list-style:none;padding:0;margin:0;color:${COLORS.soft};">${toc}</ul>
-        <div style="margin-top:auto;text-align:center;font-size:14px;color:${COLORS.faint};">${t(`تم إنشاء القصة باستخدام ${BRAND.fullName.ar} — تصميم وتطوير ${BRAND.author.ar} · ${BRAND.madeIn.ar}`, `Created with ${BRAND.fullName.en} — by ${BRAND.author.en} · ${BRAND.madeIn.en}`)}</div>`,
-        '80px 100px'
-      )
-    );
+      onProgress?.(t('جارٍ تجهيز الفهرس...', 'Preparing table of contents...'));
+      const toc = pages
+        .map(
+          (_, i) => `<li style="margin-bottom:20px;font-size:26px;display:flex;align-items:center;">
+            <span>${t(`المشهد ${i + 1}`, `Scene ${i + 1}`)}</span>
+            <span style="flex:1;border-bottom:2px dotted ${COLORS.faint};margin:0 15px;position:relative;top:-6px;"></span>
+            <span>${t(`صفحة ${i + 4}`, `Page ${i + 4}`)}</span>
+          </li>`
+        )
+        .join('');
+      await addPage(
+        frame(
+          `<h2 style="font-family:${headFont};font-size:40px;margin:0 0 50px;text-align:${align};border-bottom:2px solid ${COLORS.faint};padding-bottom:15px;">${t('المحتويات:', 'Contents:')}</h2>
+          <ul style="list-style:none;padding:0;margin:0;color:${COLORS.soft};">${toc}</ul>
+          <div style="margin-top:auto;text-align:center;font-size:14px;color:${COLORS.faint};">${t(`تم إنشاء القصة باستخدام ${BRAND.fullName.ar} — تصميم وتطوير ${BRAND.author.ar} · ${BRAND.madeIn.ar}`, `Created with ${BRAND.fullName.en} — by ${BRAND.author.en} · ${BRAND.madeIn.en}`)}</div>`,
+          '80px 100px'
+        )
+      );
+    } else if (pdfPreset === 'collector' && story.characters?.length) {
+      onProgress?.(t('جارٍ تجهيز بطاقات الشخصيات...', 'Preparing character sheet...'));
+      const charItems = story.characters
+        .map(
+          (c) => `<div style="padding:20px;background:#fff;border-radius:16px;box-shadow:0 4px 12px rgba(0,0,0,0.05);margin-bottom:16px;">
+            <h3 style="font-family:${headFont};font-size:28px;margin:0 0 8px;color:${COLORS.ink};">${esc(c.name)}</h3>
+            <p style="font-size:20px;color:${COLORS.soft};margin:0;">${esc(c.description)}</p>
+          </div>`
+        )
+        .join('');
+      await addPage(
+        frame(
+          `<h2 style="font-family:${headFont};font-size:36px;margin:0 0 30px;text-align:${align};border-bottom:2px solid ${COLORS.accent};padding-bottom:12px;">${t('شخصيات القصة:', 'Story Characters:')}</h2>
+          <div style="display:flex;flex-direction:column;gap:16px;">${charItems}</div>
+          <div style="margin-top:auto;text-align:center;font-size:14px;color:${COLORS.faint};">${t(`حقوق النشر © ${BRAND.fullName.ar} — ${BRAND.author.ar}`, `Copyright © ${BRAND.fullName.en} — ${BRAND.author.en}`)}</div>`,
+          '60px 80px'
+        )
+      );
+    }
 
     for (let i = 0; i < pages.length; i++) {
       onProgress?.(t(`جارٍ تجهيز الصفحة ${i + 1}...`, `Preparing page ${i + 1}...`));

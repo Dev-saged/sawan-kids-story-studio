@@ -153,8 +153,13 @@ class Renderer {
     const img = seg.image;
     const p = easeInOut(local / (seg.dur + TRANSITION));
     const zoomIn = seg.dir > 0;
+    let mode = this.veoMotionMode;
+    if (mode === 'auto-composite') {
+      const idx = this.segments.indexOf(seg);
+      mode = idx % 3 === 0 ? 'cinematic-pack' : idx % 3 === 1 ? 'parallax-script' : 'sweeps-3d';
+    }
 
-    if (this.veoMotionMode === 'parallax-script') {
+    if (mode === 'parallax-script') {
       // مود 2: حركة ديناميكية ثنائية الأبعاد ونصف مع تأثير المنظر ثلاثي الأبعاد (2.5D Parallax)
       const scale = (zoomIn ? 1.08 + 0.18 * p : 1.25 - 0.18 * p) * extraScale;
       const base = Math.max(W / img.width, H / img.height);

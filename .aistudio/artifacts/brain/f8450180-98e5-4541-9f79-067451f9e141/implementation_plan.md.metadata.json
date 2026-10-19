@@ -1,6 +1,6 @@
 {
-  "summary": "تحديث خطة التنفيذ للإصدار 2.3.0 لتشمل:\n- ميزة استنساخ الصوت الذكي (Smart Voice Cloning): تسجيل عينة صوتية واحدة (10-15 ثانية) للأب أو الأم، ليحللها النظام ويحفظ بصمة الصوت الصوتية (Acoustic Voice Profile)، ثم يقرأ الذكاء الاصطناعي كامل القصة تلقائياً بنبرة الصوت المستنسخة دون الحاجة لقراءة كل صفحة يدوياً.\n- رفع رقم الإصدار تلقائياً إلى 2.3.0.\n- القضاء على خطأ React اللانهائي (Maximum update depth exceeded) في ErrorDetails.\n- كتم تنبيهات الحصة المزعجة بأعلى الشاشة واستبدالها بحالة ذكية وهادئة وتراجع أسي.\n- خطوط غلاف كتاب فاخرة مع 4 أساليب خطية عربية راقية ومبدّل فوري (كوفي هندسي، ديواني ملكي، نسخ ورقعة، وثلاثي الأبعاد).\n- قسم قصص الفواكه الدرامية لليافعين (12-18 سنة) مع 4 عوالم درامية قابلة للتبديل ومفاجآت ذكية متكيفة.\n- تكامل تحريك Veo 3 المتطور في تصدير الفيديو بـ 3 أنماط سينمائية تفاعلية.",
-  "updatedAt": "2026-10-19T05:53:14.360344597Z",
+  "summary": "Updated implementation plan to include automated Veo 3 video motion generation per scene, incorporating all three motion modes (Cinematic sweeps, 2.5D depth parallax, and Multi-angle kinetic camera scans) automatically.",
+  "updatedAt": "2026-10-19T10:19:46.683188038Z",
   "requestFeedback": true,
   "userFacing": true
 }

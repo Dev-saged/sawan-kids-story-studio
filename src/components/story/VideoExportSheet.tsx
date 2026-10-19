@@ -19,7 +19,7 @@ export default function VideoExportSheet({ storyData, ar, voice, onClose }: Prop
   const allowed = VIDEO_QUALITIES.findIndex((q) => q.id === maxQuality());
   const [format, setFormat] = useState<VideoFormatId>('landscape');
   const [quality, setQuality] = useState<VideoQualityId>(VIDEO_QUALITIES[Math.min(1, allowed)].id);
-  const [veoMotionMode, setVeoMotionMode] = useState<VeoMotionMode>('cinematic-pack');
+  const [veoMotionMode, setVeoMotionMode] = useState<VeoMotionMode>('auto-composite');
   const [withMusic, setWithMusic] = useState(true);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -138,8 +138,13 @@ export default function VideoExportSheet({ storyData, ar, voice, onClose }: Prop
                 {(
                   [
                     {
+                      id: 'auto-composite',
+                      title: { ar: '🎬 مونتاج آلي شامل (دمج جميع حركات Veo 3 تلقائياً)', en: '🎬 Full Auto Production (Combines All Veo 3 Motions)' },
+                      desc: { ar: 'تبديل آلي ذكي بين الحركة السينمائية و2.5D والمسح متعدد الزوايا لكل مشهد', en: 'Smart automated switching between Cinematic, 2.5D Depth, and 3D Sweeps per scene' },
+                    },
+                    {
                       id: 'cinematic-pack',
-                      title: { ar: '1 (مُستَحسَن): حزمة مؤثرات سينمائية كاملة', en: '1 (Recommended): Full Cinematic Effects Pack' },
+                      title: { ar: '1: حزمة مؤثرات سينمائية كاملة', en: '1: Full Cinematic Effects Pack' },
                       desc: { ar: 'تحريك كاميرا احترافي، زوم تدريجي وتفاعل عمق المشهد', en: 'Pro camera moves, smooth zoom, and dynamic scene depth' },
                     },
                     {
