@@ -45,12 +45,15 @@ import SleepMode from './SleepMode';
 import FamilyRecorder from './FamilyRecorder';
 import ShareMenu from './ShareMenu';
 import PageTools from './PageTools';
+import InteractiveFlipbook from './InteractiveFlipbook';
+import InteractiveBookReader from './InteractiveBookReader';
 import Book3DViewer from './Book3DViewer';
 import LivingCanvas from './LivingCanvas';
 import FullPageEditor from './FullPageEditor';
 import InteractiveBranches from './InteractiveBranches';
 import VoiceClonerModal from './VoiceClonerModal';
-import { Rotate3D, ShieldCheck, AudioWaveform } from 'lucide-react';
+import { ambientEngine, detectAmbientEnvironment, AMBIENT_PRESETS } from '../../services/ambientAudio';
+import { Rotate3D, ShieldCheck, AudioWaveform, VolumeX, Volume2 as VolumeIcon } from 'lucide-react';
 
 const VideoExportSheet = lazy(() => import('./VideoExportSheet'));
 
@@ -75,6 +78,7 @@ export default function StoryReader({ storyData, language, printableContainerId 
   const [pdfSuccess, setPdfSuccess] = useState(false);
   const [showVideo, setShowVideo] = useState(false);
   const [show3DViewer, setShow3DViewer] = useState(false);
+  const [showFlipbook, setShowFlipbook] = useState(false);
   const [fullEditMode, setFullEditMode] = useState(false);
   const [showVoiceCloner, setShowVoiceCloner] = useState(false);
 
@@ -87,6 +91,17 @@ export default function StoryReader({ storyData, language, printableContainerId 
   const imageSrc = toSrc(page?.generatedImage);
   const illustratedCount = storyData.pages.filter((p) => p.generatedImage).length;
   const allDrawn = illustratedCount === storyData.pages.length;
+
+  const [ambientMuted, setAmbientMuted] = useState(() => ambientEngine.isMuted());
+  const activeAmbientType = page ? detectAmbientEnvironment(page.text, page.image_prompt) : 'dream';
+  const activeAmbientInfo = AMBIENT_PRESETS[activeAmbientType];
+
+  useEffect(() => {
+    if (page) {
+      const env = detectAmbientEnvironment(page.text, page.image_prompt);
+      ambientEngine.playAmbient(env);
+    }
+  }, [pageIndex, page?.text, page?.image_prompt]);
 
   const handleUpdateCurrentPage = useCallback(
     (patch: Partial<StoryPage>) => {
@@ -146,12 +161,20 @@ export default function StoryReader({ storyData, language, printableContainerId 
   );
 
   const handleExportPDF = async () => {
+    handleExportPDFWithPreset('storybook');
+  };
+
+  const handleExportPDFWithPreset = async (preset: PDFPreset = 'storybook') => {
     setBusyAction('pdf');
     setActionError(null);
     setPdfSuccess(false);
-    setExportProgress(ar ? 'جارٍ تجهيز صفحات القصة للطباعة...' : 'Preparing storybook pages for printing...');
+    setExportProgress(ar ? 'جارٍ تجهيز وقص صفحات القصة...' : 'Preparing PDF pages with template...');
     try {
-      await exportStoryAsPDF(storyData, printableContainerId, setExportProgress);
+      const { generatePDFBlob } = await import('../../services/pdf');
+      const blob = await generatePDFBlob(storyData, 'A4', ar, setExportProgress, preset);
+      const { saveAs } = await import('file-saver');
+      const { safeFileName } = await import('../../services/export');
+      saveAs(blob, `${safeFileName(storyData.story_info.title, 'story')}_${preset}.pdf`);
       setPdfSuccess(true);
       setTimeout(() => setPdfSuccess(false), 4000);
     } catch (err) {
@@ -341,6 +364,30 @@ export default function StoryReader({ storyData, language, printableContainerId 
         >
           <Rotate3D size={16} className="text-lantern" />
           <span>{ar ? 'كتاب 3D' : '3D Book'}</span>
+        </button>
+
+        {/* Ambient Sound Badge & Mute Toggle Button */}
+        <button
+          type="button"
+          onClick={() => setAmbientMuted(ambientEngine.toggleMute())}
+          className={`inline-flex min-h-11 items-center gap-2 rounded-2xl border px-4 font-display text-xs font-bold transition active:scale-95 shadow-xs ${
+            ambientMuted
+              ? 'border-white/20 bg-white/10 text-white/50 line-through'
+              : 'border-emerald-500/40 bg-emerald-500/15 text-emerald-300'
+          }`}
+          title={ar ? 'الأصوات المحيطية للمشهد' : 'Scene Ambient Sound Effects'}
+        >
+          {ambientMuted ? <VolumeX size={16} /> : <VolumeIcon size={16} className="text-emerald-400 animate-pulse" />}
+          <span>{ar ? activeAmbientInfo.label.ar : activeAmbientInfo.label.en}</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setShowFlipbook(true)}
+          className="inline-flex min-h-11 items-center gap-2 rounded-2xl border border-amber-500/40 bg-amber-500/15 px-4 font-display text-xs font-bold text-amber-300 transition hover:bg-amber-500/25 active:scale-95 shadow-xs"
+          title={ar ? 'الكتاب التفاعلي بخصائص تقليب الصفحات' : 'Interactive Flipbook Reader'}
+        >
+          <BookOpen size={16} className="text-amber-400" />
+          <span>{ar ? 'الكتاب التفاعلي (Flipbook)' : 'Flipbook Reader'}</span>
         </button>
 
         {/* Full Edit Mode Toggle Button */}
@@ -808,6 +855,15 @@ export default function StoryReader({ storyData, language, printableContainerId 
           storyData={storyData}
           ar={ar}
           onClose={() => setShow3DViewer(false)}
+        />
+      )}
+
+      {showFlipbook && (
+        <InteractiveBookReader
+          storyData={storyData}
+          language={language}
+          onClose={() => setShowFlipbook(false)}
+          onDownloadPDFWithPreset={handleExportPDFWithPreset}
         />
       )}
 

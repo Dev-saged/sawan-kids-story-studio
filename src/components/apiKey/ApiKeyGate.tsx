@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react';
+import { useState, useEffect, type FormEvent } from 'react';
 import { Info, Sparkles, ExternalLink, ShieldCheck, ArrowRight } from 'lucide-react';
 import { clearApiKey, isValidApiKeyFormat, saveApiKey, setSharedServerSession } from '../../services/apiKey';
 import { preflight } from '../../services/api';
@@ -16,6 +16,27 @@ export default function ApiKeyGate({ language, onSaved, noKey }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
   const [remember, setRemember] = useState(true);
+
+  // فحص وجود المفتاح المشارك في رابط URL للتفعيل التلقائي (shared-key=...)
+  useEffect(() => {
+    try {
+      const urlParams = new URLSearchParams(window.location.search);
+      const sharedKey = urlParams.get('shared-key') || urlParams.get('shared_key') || urlParams.get('key');
+      if (sharedKey && isValidApiKeyFormat(sharedKey.trim())) {
+        const cleanKey = sharedKey.trim();
+        saveApiKey(cleanKey, true).then(() => {
+          try {
+            localStorage.setItem('sawan-shared-key', cleanKey);
+          } catch {
+            // ignore
+          }
+          onSaved();
+        });
+      }
+    } catch {
+      // ignore
+    }
+  }, [onSaved]);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();

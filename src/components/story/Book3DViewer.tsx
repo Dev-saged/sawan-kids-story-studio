@@ -193,7 +193,10 @@ export default function Book3DViewer({ storyData, ar, onClose }: Props) {
           ctx.textAlign = 'center';
           ctx.fillText(title.slice(0, 24), 0, bookH / 2 - 40);
         } else {
-          // Back Cover
+          // Back Cover (Unmirror text horizontally so it renders readable)
+          ctx.save();
+          ctx.scale(-1, 1);
+
           if (loadedBack) {
             ctx.drawImage(loadedBack, -bookW / 2, -bookH / 2, bookW, bookH);
           } else {
@@ -213,6 +216,12 @@ export default function Book3DViewer({ storyData, ar, onClose }: Props) {
           ctx.fillStyle = '#e2e8f0';
           ctx.font = '11px sans-serif';
           ctx.fillText(moral.slice(0, 70), 0, -bookH / 2 + 110);
+
+          ctx.fillStyle = '#ffc94a';
+          ctx.font = 'bold 10px sans-serif';
+          ctx.fillText('حقوق النشر والتأليف © 2026 — المهندس ساجد العبادلة', 0, bookH / 2 - 25);
+
+          ctx.restore();
         }
         ctx.restore();
 
@@ -226,10 +235,10 @@ export default function Book3DViewer({ storyData, ar, onClose }: Props) {
         ctx.restore();
 
         // Watermark / Branding
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
         ctx.font = 'bold 15px sans-serif';
         ctx.textAlign = 'center';
-        ctx.fillText('استوديو ساجد — Sajed 3D Storybook', W / 2, H - 35);
+        ctx.fillText('استوديو ساجد لقصص الأطفال — Sajed 3D Storybook | المهندس ساجد العبادلة', W / 2, H - 35);
 
         // Encode frame
         const videoFrame = new VideoFrame(canvas, { timestamp: (f * 1_000_000) / FPS });

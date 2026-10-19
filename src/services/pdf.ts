@@ -51,11 +51,30 @@ export const generatePDFBlob = async (
   container.setAttribute('aria-hidden', 'true');
   document.body.appendChild(container);
 
+  const templateClass = pdfPreset === 'storybook' ? 'pdf-classic' : pdfPreset === 'minimalist' ? 'pdf-minimal' : 'pdf-modern';
+  container.className = templateClass;
+
   const pdf = new jsPDF({ orientation: 'portrait', unit: 'px', format: [width, height] });
   let firstPage = true;
 
+  const styleTag = `
+    <style>
+      .pdf-classic { font-family: ${bodyFont}; background-color: #f6f1fa; color: #241b2f; }
+      .pdf-classic .pdf-cover-title { font-family: ${headFont}; font-size: 58px; line-height: 1.3; color: #241b2f; font-weight: 800; }
+      .pdf-classic .pdf-page-text { font-size: ${isRTL ? 36 : 32}px; line-height: 1.85; color: #241b2f; }
+
+      .pdf-modern { font-family: ${headFont}; background-color: #0f172a; color: #f8fafc; }
+      .pdf-modern .pdf-cover-title { font-family: ${headFont}; font-size: 64px; line-height: 1.2; color: #f59e0b; font-weight: 900; }
+      .pdf-modern .pdf-page-text { font-size: ${isRTL ? 38 : 34}px; line-height: 1.75; color: #f8fafc; }
+
+      .pdf-minimal { font-family: ${bodyFont}; background-color: #ffffff; color: #111827; }
+      .pdf-minimal .pdf-cover-title { font-family: ${bodyFont}; font-size: 48px; line-height: 1.35; color: #111827; font-weight: 700; letter-spacing: -0.02em; }
+      .pdf-minimal .pdf-page-text { font-size: ${isRTL ? 32 : 28}px; line-height: 1.9; color: #374151; }
+    </style>
+  `;
+
   const frame = (inner: string, padding = '60px') =>
-    `<div style="width:${width}px;height:${height}px;display:flex;flex-direction:column;padding:${padding};box-sizing:border-box;background:${COLORS.paper};position:relative;font-family:${bodyFont};">${inner}</div>`;
+    `<div class="${templateClass}" style="width:${width}px;height:${height}px;display:flex;flex-direction:column;padding:${padding};box-sizing:border-box;position:relative;">${styleTag}${inner}</div>`;
 
   const addPage = async (html: string) => {
     container.innerHTML = html;
@@ -73,7 +92,7 @@ export const generatePDFBlob = async (
     await addPage(
       frame(
         `<div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:48px;">
-          <h1 style="font-family:${headFont};font-size:56px;line-height:1.3;text-align:center;margin:0;max-width:90%;word-wrap:break-word;">${esc(story.story_info.title)}</h1>
+          <h1 class="pdf-cover-title" style="text-align:center;margin:0;max-width:90%;word-wrap:break-word;">${esc(story.story_info.title)}</h1>
           ${(story.coverImage || pages[0]?.generatedImage) ? image((story.coverImage || pages[0].generatedImage)!, 'max-width:80%;max-height:50%;border-radius:20px;box-shadow:0 10px 30px rgba(36,27,47,0.18);') : ''}
         </div>`,
         '40px'
@@ -139,7 +158,7 @@ export const generatePDFBlob = async (
             ${page.generatedImage ? image(page.generatedImage, 'max-width:100%;max-height:100%;object-fit:contain;border-radius:24px;box-shadow:0 10px 30px rgba(36,27,47,0.15);') : ''}
           </div>
           <div style="flex:1;display:flex;justify-content:center;">
-            <p style="font-size:${isRTL ? 36 : 32}px;line-height:1.8;text-align:${align};color:${COLORS.ink};max-width:90%;margin:0;white-space:pre-wrap;">${esc(page.text)}</p>
+            <p class="pdf-page-text" style="text-align:${align};max-width:90%;margin:0;white-space:pre-wrap;">${esc(page.text)}</p>
           </div>
           <div style="position:absolute;bottom:40px;left:0;right:0;text-align:center;font-size:18px;color:${COLORS.faint};font-weight:600;">${i + 1}</div>`,
           '60px 80px'

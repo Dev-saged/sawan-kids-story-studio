@@ -1,6 +1,7 @@
 import type { ArabicDialect, ArtStyle, NarratorVoice } from './types';
+import { CURRENT_VERSION } from './version';
 
-export const APP_VERSION = '2.4.0';
+export const APP_VERSION = CURRENT_VERSION.version;
 
 // الهوية وروابط التواصل — تعديل هذا الملف فقط يغيّر العلامة في كل التطبيق
 export const BRAND = {

@@ -18,6 +18,43 @@
   --font-display-ar: 'Baloo Bhaijaan 2', 'Fredoka', sans-serif;
   --font-body-en: 'Nunito', 'Cairo', sans-serif;
   --font-body-ar: 'Cairo', 'Nunito', sans-serif;
+  --font-serif-ar: 'Amiri', 'Reem Kufi', serif;
+}
+
+/* Global Typography Scale */
+.type-display-2xl {
+  font-family: var(--font-display-ar);
+  font-size: clamp(2.25rem, 5.5vw, 3.75rem);
+  line-height: 1.25;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+}
+
+.type-heading-xl {
+  font-family: var(--font-display-ar);
+  font-size: clamp(1.5rem, 3.8vw, 2.5rem);
+  line-height: 1.35;
+  font-weight: 700;
+}
+
+.type-body-lg {
+  font-family: var(--font-body-ar);
+  font-size: clamp(1rem, 2vw, 1.25rem);
+  line-height: 1.8;
+  font-weight: 500;
+}
+
+/* Dynamic Text Wrapping & 3D Anti-Mirroring Safeguards */
+.text-balance-wrap {
+  text-wrap: balance;
+  overflow-wrap: break-word;
+  word-break: break-word;
+  hyphens: auto;
+}
+
+.unmirror-3d {
+  transform: scaleX(1);
+  direction: rtl;
 }
 
 html,
