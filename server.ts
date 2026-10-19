@@ -140,6 +140,9 @@ const isZeroQuota = (msg: string) => /limit:\s*0\b|free_?tier/i.test(msg);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // الفحص على الرسالة الكاملة قبل القص: عبارة limit: 0 تأتي في آخرها
+const isDailyQuota = (msg: string) =>
+  /daily limit|limit:\s*0\b|free_?tier|requests today|limit of requests|tomorrow/i.test(msg);
+
 const trailItem = (model: string, err: any): TrailItem => {
   const full = String(err?.message ?? err).replace(/\s+/g, ' ');
   return { model, kind: classify(err), status: Number(err?.status ?? err?.code ?? 0) || 0, message: full.slice(0, 480), zero: isZeroQuota(full) };
@@ -171,18 +174,20 @@ async function runChain<T>(label: string, models: string[], attempt: (model: str
         const item = trailItem(model, err);
         console.warn(`[${label}] ${model} #${i + 1}: ${item.kind} ${item.status} — ${item.message.slice(0, 160)}`);
         if (item.kind === 'auth') throw Object.assign(err instanceof Error ? err : new Error(item.message), { code: 'AUTH', trail: [...trail, item] });
-        
-        const isDailyQuota = /daily limit|limit:\s*0\b|free_?tier/i.test(item.message);
-        if (item.kind === 'quota' && isDailyQuota) {
-          console.warn(`[${label}] Model ${model} reached daily quota limit (${item.message.slice(0, 100)}). Skipping immediately to next model...`);
-          trail.push(item);
-          break; // لا نكرر الطلب على نموذج استنفد حده اليومي، بل ننتقل فوراً للنموذج التالي في السلسلة
+
+        // إذا استنفد النموذج حده اليومي أو كوتا الدقيقة، ننتقل فوراً للنموذج التالي في السلسلة دون تأخير
+        if (item.kind === 'quota') {
+          if (isDailyQuota(item.message) || i >= 1) {
+            console.warn(`[${label}] Model ${model} reached quota limit (${item.message.slice(0, 100)}). Skipping immediately to next model in chain...`);
+            trail.push(item);
+            break;
+          }
         }
 
         // استراتيجية إعادة المحاولة بتأخير متصاعد أسي (Exponential Backoff with Jitter) لتخفيف الضغط
         if ((item.kind === 'quota' || item.kind === 'busy') && i < 2) {
-          const backoffMs = Math.min(1500 * Math.pow(2, i) + Math.random() * 800, 10000);
-          console.warn(`[${label}] Rate-limit or busy hit for ${model} (attempt ${i + 1}/3), retrying with exponential backoff in ${Math.round(backoffMs)}ms...`);
+          const backoffMs = Math.min(1000 * Math.pow(2, i) + Math.random() * 500, 6000);
+          console.warn(`[${label}] Rate-limit or busy hit for ${model} (attempt ${i + 1}/3), retrying in ${Math.round(backoffMs)}ms...`);
           await sleep(backoffMs);
           continue;
         }
@@ -194,11 +199,28 @@ async function runChain<T>(label: string, models: string[], attempt: (model: str
   throw failure(label, trail, lastError);
 }
 
+const humanizeErrorMessage = (raw: string, code: ErrorCode): string => {
+  if (/quota exceeded|limit of requests today|token limit per minute|requests today/i.test(raw)) {
+    return 'انتهت حصة النموذج المؤقتة. جاري تجربة نموذج بديل أو انتظر لحظات وسيعود للعمل.';
+  }
+  if (/API_KEY_INVALID|API key not valid|permission denied/i.test(raw)) {
+    return 'مفتاح Gemini غير صالح أو تنقصه الصلاحيات. تأكد من إدخال المفتاح بشكل صحيح.';
+  }
+  if (/Failed to call the Gemini API/i.test(raw)) {
+    return code === 'QUOTA'
+      ? 'انتهت حصة الاستخدام المؤقتة للنموذج. انتظر قليلاً ثم أعد المحاولة.'
+      : 'تعذّر الاتصال بخوادم الذكاء الاصطناعي مؤقتاً. يرجى إعادة المحاولة.';
+  }
+  return raw;
+};
+
 const errorInfo = (err: any, fallback: string): { status: number; body: { error: string; code: ErrorCode; trail?: TrailItem[] } } => {
   const kind = classify(err);
   const code: ErrorCode = err?.code && typeof err.code === 'string' ? err.code : kind === 'auth' ? 'AUTH' : kind === 'quota' ? 'QUOTA' : kind === 'busy' ? 'BUSY' : 'FAILED';
   const status = code === 'AUTH' || code === 'NOKEY' || code === 'FREE_AUTH' ? 401 : code === 'QUOTA' || code === 'BILLING' || code === 'FREE_QUOTA' ? 429 : code === 'BUSY' ? 503 : code === 'NOMODEL' ? 404 : 500;
-  return { status, body: { error: err?.message || fallback, code, trail: Array.isArray(err?.trail) ? err.trail : undefined } };
+  const rawMsg = err?.message || fallback;
+  const friendlyError = humanizeErrorMessage(rawMsg, code);
+  return { status, body: { error: friendlyError, code, trail: Array.isArray(err?.trail) ? err.trail : undefined } };
 };
 
 const sendError = (res: Response, err: any, fallback: string) => {
@@ -618,12 +640,13 @@ const AI_IMAGE_SIZES: Record<string, [number, number]> = {
 };
 
 const runAiFallback = async (prompt: string, aspectRatio: string): Promise<{ base64: string; mimeType: string; model: string }> => {
-  const cleanPrompt = `${prompt.slice(0, 900)}. Masterpiece children picture book illustration, vibrant colors, expressive characters, clean lines, professional digital art, sharp focus, no text, no watermark.`;
+  const dims = AI_IMAGE_SIZES[aspectRatio] || [1024, 768];
+  const cleanPrompt = `${prompt.slice(0, 900)}. Masterpiece children picture book illustration, vibrant colors, expressive faces, sharp focus, consistent character design. Negative prompt: extra fingers, mutated hands, missing limbs, distorted faces, asymmetrical eyes, blurry details, double heads, cloned characters, extra limbs, floating objects, unwanted text, signature, watermark, bad anatomy, deformed bodies, cut off heads, low resolution, jpeg artifacts.`;
   const encodedPrompt = encodeURIComponent(cleanPrompt);
   const seed = Math.floor(Math.random() * 2 ** 31);
   
   const urls = [
-    `https://image.pollinations.ai/prompt/${encodedPrompt}?width=512&height=512&seed=${seed}&nologo=true`,
+    `https://image.pollinations.ai/prompt/${encodedPrompt}?width=${dims[0]}&height=${dims[1]}&seed=${seed}&nologo=true`,
     `https://image.pollinations.ai/prompt/${encodedPrompt}?seed=${seed}&nologo=true`,
   ];
 
@@ -665,9 +688,9 @@ app.post('/api/generate-image', async (req: Request, res: Response) => {
     const session = getSession(req);
 
     const lead = refs.length
-      ? 'Use the attached reference image(s) as the exact character design: keep the same face, hairstyle, skin tone, outfit, colors and proportions. Do not copy their background or pose. '
+      ? '[STRICT CHARACTER REFERENCE ATTACHED]: Use the attached character reference sheet image(s) as the EXACT character model. Keep the identical face shape, hairstyle, hair color, skin tone, outfit design, color palette, and body proportions. '
       : '';
-    const text = `${lead}${prompt} Masterpiece children's book illustration, sharp focus, rich detail, professional composition, consistent character design. Absolutely no text, letters, captions, logos or watermark.`;
+    const text = `${lead}${prompt} Masterpiece children's book illustration, sharp focus, rich detail, professional composition, consistent character design. Negative prompt: extra fingers, mutated hands, missing limbs, distorted faces, asymmetrical eyes, blurry details, double heads, cloned characters, extra limbs, floating objects, unwanted text, letters, captions, logos, signature, watermark, bad anatomy, deformed bodies, cut off heads, low resolution, jpeg artifacts.`;
 
     try {
       const { value, model } = await runChain('image', await chainFor(req, 'image'), async (m) => {
@@ -790,12 +813,15 @@ app.post('/api/narrate', async (req: Request, res: Response) => {
     const voice = VOICES.has(req.body?.voice) ? req.body.voice : 'Sulafat';
     const ai = getAiClient(req);
 
+    const NARRATION_SYSTEM_INSTRUCTION = `STRICT NARRATOR DIRECTIVE: You are an audio story narrator performing voice '${voice}'. Maintain 100% strict acoustic consistency across all narration clips in this book. Use the exact same voice pitch, speaking rate (steady, warm, expressive storytelling cadence), articulation, and audio timbre on every single paragraph. Do not vary pitch or tone randomly between calls. Read ONLY the requested story text cleanly with perfect diction. Do not omit words, do not speak any preamble, intro, or commentary.`;
+
     const { value, model } = await runChain('tts', await chainFor(req, 'tts'), async (m) => {
       try {
         const response = await ai.models.generateContent({
           model: m,
           contents: [{ role: 'user', parts: [{ text }] }],
           config: {
+            systemInstruction: NARRATION_SYSTEM_INSTRUCTION,
             responseModalities: [Modality.AUDIO],
             speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voice } } },
           },
@@ -807,7 +833,7 @@ app.post('/api/narrate', async (req: Request, res: Response) => {
         // بعض نماذج TTS الجديدة متاحة عبر Interactions فقط
         const r: any = await (ai as any).interactions.create({
           model: m,
-          input: text,
+          input: `${NARRATION_SYSTEM_INSTRUCTION}\nText to narrate:\n${text}`,
           response_format: { type: 'audio' },
           generation_config: { speech_config: [{ voice }] },
         });

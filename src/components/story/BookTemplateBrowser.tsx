@@ -12,7 +12,8 @@ export default function BookTemplateBrowser({ ar, onSelectTemplate, onClose }: P
   const [selectedFilter, setSelectedFilter] = useState<string>('all');
 
   const filters = [
-    { id: 'all', label: ar ? 'الكل (12 قالب)' : 'All (12 Templates)' },
+    { id: 'all', label: ar ? 'الكل (16 قالباً)' : 'All (16 Templates)' },
+    { id: 'fruit-saga', label: ar ? '🍇 ملحمة الفواكه (12-18 سنة)' : '🍇 YA Fruit Saga (12-18)' },
     { id: 'cultural', label: ar ? 'نكهات عربية وتراثية' : 'Arab & Cultural' },
     { id: 'science', label: ar ? 'علوم وفضاء (STEM)' : 'Science & Space' },
     { id: 'bedtime', label: ar ? 'قبل النوم وهادئة' : 'Bedtime & Calm' },
@@ -21,6 +22,7 @@ export default function BookTemplateBrowser({ ar, onSelectTemplate, onClose }: P
 
   const filtered = BOOK_TEMPLATES.filter((t) => {
     if (selectedFilter === 'all') return true;
+    if (selectedFilter === 'fruit-saga') return t.flavor === 'fruit-saga';
     if (selectedFilter === 'cultural') return ['palestinian', 'syrian', 'egyptian', 'bedouin'].includes(t.flavor);
     if (selectedFilter === 'science') return ['space', 'science', 'nature'].includes(t.flavor);
     if (selectedFilter === 'bedtime') return ['bedtime', 'ocean'].includes(t.flavor);

@@ -1,8 +1,7 @@
-// IndexedDB بسيط بإصدارات مخطط وترحيل تلقائي
 const DB_NAME = 'sawan-studio';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
-export type StoreName = 'stories' | 'images' | 'audio' | 'children';
+export type StoreName = 'stories' | 'images' | 'audio' | 'children' | 'voice_profiles';
 
 const MIGRATIONS: Record<number, (db: IDBDatabase) => void> = {
   1: (db) => {
@@ -10,6 +9,11 @@ const MIGRATIONS: Record<number, (db: IDBDatabase) => void> = {
     db.createObjectStore('images', { keyPath: 'id' }).createIndex('style', 'style');
     db.createObjectStore('audio', { keyPath: 'id' });
     db.createObjectStore('children', { keyPath: 'id' });
+  },
+  2: (db) => {
+    if (!db.objectStoreNames.contains('voice_profiles')) {
+      db.createObjectStore('voice_profiles', { keyPath: 'id' });
+    }
   },
 };
 

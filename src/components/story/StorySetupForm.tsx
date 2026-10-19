@@ -20,10 +20,86 @@ import {
   STORY_TYPES,
   SURPRISE_PROMPTS,
 } from '../../constants';
-import { AgeGroup, ArabicDialect, ArtStyle, AspectRatio, ChildProfile, Language, SeriesContext, StoryLength, StoryParams, StoryType } from '../../types';
+import { AgeGroup, ArabicDialect, ArtStyle, AspectRatio, ChildProfile, CoverFontStyle, Language, SeriesContext, StoryLength, StoryParams, StoryType } from '../../types';
 import HeroPicker from './HeroPicker';
 import { BRAND_PRESETS, DEFAULT_PRESET } from '../../config';
 import { setVoice as persistVoice } from '../../services/narration';
+
+export interface TeenDramaTemplate {
+  id: string;
+  icon: string;
+  title: { ar: string; en: string };
+  tagline: { ar: string; en: string };
+  badge: { ar: string; en: string };
+  emotionalWorld: { ar: string; en: string };
+  defaultIdea: { ar: string; en: string };
+  artStyle: ArtStyle;
+  storyType: StoryType;
+  dialect: ArabicDialect;
+}
+
+export const TEEN_DRAMA_TEMPLATES: TeenDramaTemplate[] = [
+  {
+    id: 'fruit-kingdom-saga',
+    icon: '🍇',
+    title: { ar: 'مملكة الفواكه العتيقة وصراع بذور الخلود', en: 'The Ancient Fruit Kingdom & Eternity Seeds' },
+    tagline: { ar: 'صراع العروش والولاء، الشرف، والبحث عن إكسير الحكمة', en: 'Throne conflicts, honor, and ancient secrets in a royal realm' },
+    badge: { ar: 'صراع العروش والولاء', en: 'Thrones & Honor' },
+    emotionalWorld: { ar: 'الشرف، الوفاء بالعهد، ومسؤولية القيادة', en: 'Honor, solemn vows, and leadership' },
+    defaultIdea: {
+      ar: 'في عالم تنقسم فيه حضارات الفواكه إلى ممالك متناحرة، يكتشف فارس شاب من عشيرة الرمان سراً دفيناً عن بذور الخلود التي توشك أن تقع في أيدي أمراء الظل، فينطلق في رحلة مصيرية محفوفة بالمخاطر لتوحيد القبائل.',
+      en: 'In an epic realm where fruit civilizations rule fractured territories, a young warrior from the Pomegranate Dynasty uncovers a conspiracy to seize the mystical eternity seeds, embarking on a dangerous quest across ancient orchards.',
+    },
+    artStyle: 'Fantasy Fairy Tale',
+    storyType: 'Adventure',
+    dialect: 'Modern Standard',
+  },
+  {
+    id: 'cyber-fruit-2099',
+    icon: '⚡',
+    title: { ar: 'سايبر فروت 2099: حرب الطاقة البيولوجية', en: 'CyberFruit 2099: Bio-Energy War' },
+    tagline: { ar: 'أبراج النيون الشاهقة، أسرار الذكاء الحيوي، وسباق النجاة الأخير', en: 'Neon mega-orchards, digital hacking, and bio-tech rebellion' },
+    badge: { ar: 'سايبربانك وحرية', en: 'Cyberpunk Freedom' },
+    emotionalWorld: { ar: 'التحدي الرقمي، استقلال الذات، وثورة الحرية', en: 'Digital challenge, autonomy, and rebellion for freedom' },
+    defaultIdea: {
+      ar: 'في مدينة مستقبلية عملاقة تضاء بالنيون، يكتشف فريق من ثوار الفواكه المعدلة جينياً أن مختبرات الطاقة المركزية تستنزف عصير الحياة من البساتين الطبيعية لتغذية الأبراج، فيخوضون معركة اختراق إلكتروني مثيرة.',
+      en: 'In a futuristic neon metropolis, a squad of cyber-enhanced fruit heroes discovers that corporate conglomerates are secretly siphoning the vital botanical grid, executing a high-stakes digital hack to liberate the city.',
+    },
+    artStyle: 'Comic Book',
+    storyType: 'Adventure',
+    dialect: 'Modern Standard',
+  },
+  {
+    id: 'survival-orchard',
+    icon: '🥭',
+    title: { ar: 'بساتين المجهول: رحلة البقاء في الغابة المحرمة', en: 'Orchards of the Unknown: Wild Survival' },
+    tagline: { ar: 'عواصف غادرة، نباتات عملاقة، واختبار الصداقة الحقيقية في الظروف الصعبة', en: 'Raging storms, wild flora, and true friendship tested in danger' },
+    badge: { ar: 'بقاء وصمود', en: 'Wild Survival' },
+    emotionalWorld: { ar: 'الصمود أمام الصعاب، الاعتماد على النفس، وقوة الصداقة', en: 'Endurance, self-reliance, and fierce friendship' },
+    defaultIdea: {
+      ar: 'ينعزل ثلاثة مراهقين في وادي البساتين البرية بعد انهيار الجسر المعلق، ويضطرون للتعاون باستخدام معرفتهم بالثمار الطبيعية وفخاخ الطبيعة للنجاة من عاصفة شتوية مرعبة والعودة إلى ديارهم.',
+      en: 'Three resourceful teenagers stranded deep inside a treacherous wild valley must use their botanical survival skills and fierce friendship to endure harsh winter winds and navigate home.',
+    },
+    artStyle: 'Classic Storybook',
+    storyType: 'Adventure',
+    dialect: 'Modern Standard',
+  },
+  {
+    id: 'fruit-destiny-drama',
+    icon: '🍎',
+    title: { ar: 'فلسفة الظل والنور: سر شجرة الحكمة والقدر', en: 'Philosophy of Light & Shadow: Tree of Destiny' },
+    tagline: { ar: 'حوارات فكرية عميقة، صراعات أخلاقية، واكتشاف معنى الشجاعة', en: 'Deep character dilemmas, philosophical debates, and integrity' },
+    badge: { ar: 'دراما وفلسفة', en: 'Philosophical Drama' },
+    emotionalWorld: { ar: 'البحث عن الذات، الأخلاق، واتخاذ القرارات الصعبة', en: 'Self-discovery, moral courage, and tough choices' },
+    defaultIdea: {
+      ar: 'قصة درامية مؤثرة تدور حول شاب يافع يجد نفسه أمام مفترق طرق أخلاقي بين ولاء عائلته لبستان الأجداد أو الدفاع عن الحقيقة والعدالة لإنقاذ قرية المزارعين الفقراء، متعلماً أن القوة الحقيقية تنبع من الصدق.',
+      en: 'A profound character drama following a young protagonist torn between family heritage and standing up for truth, confronting hard moral dilemmas that reveal the authentic meaning of integrity.',
+    },
+    artStyle: 'Watercolor',
+    storyType: 'Moral',
+    dialect: 'Modern Standard',
+  },
+];
 
 interface Props {
   // فكرة جاهزة (من بطاقة تعليمية أو لعبة)
@@ -60,9 +136,22 @@ export default function StorySetupForm({ initialIdea, language, onSubmit, onLoad
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>(() => series?.aspectRatio ?? '4:3');
   const [hero, setHero] = useState<ChildProfile | null>(null);
   const [presetId, setPresetId] = useState<string>(() => readPreset().id);
+  const [coverFontStyle, setCoverFontStyle] = useState<CoverFontStyle>('kufi');
   const [showVoiceModal, setShowVoiceModal] = useState(false);
   const [showTemplates, setShowTemplates] = useState(false);
   const [availableDraft, setAvailableDraft] = useState<ReturnType<typeof getStoryDraft>>(null);
+  const [isTeenDrama, setIsTeenDrama] = useState(() => (series?.ageGroup ?? ageGroup) === '13-18');
+  const [selectedTeenTemplate, setSelectedTeenTemplate] = useState<string | null>('fruit-kingdom-saga');
+
+  const handleSelectTeenTemplate = (tmpl: TeenDramaTemplate) => {
+    setSelectedTeenTemplate(tmpl.id);
+    setIdea(tmpl.defaultIdea[ar ? 'ar' : 'en']);
+    setAgeGroup('13-18');
+    setIsTeenDrama(true);
+    setArtStyle(tmpl.artStyle);
+    setStoryType(tmpl.storyType);
+    if (tmpl.dialect) setDialect(tmpl.dialect);
+  };
 
   // فحص وجود مسودة محفوظة سابقة
   useEffect(() => {
@@ -165,6 +254,7 @@ export default function StorySetupForm({ initialIdea, language, onSubmit, onLoad
       heroName: series?.heroName ?? hero?.name,
       heroPhotoId: series?.heroPhotoId ?? hero?.photoId,
       series: series ?? undefined,
+      coverFontStyle,
     };
     onSubmit(params, pageCount);
   };
@@ -231,6 +321,83 @@ export default function StorySetupForm({ initialIdea, language, onSubmit, onLoad
       {showTemplates && (
         <BookTemplateBrowser ar={ar} onSelectTemplate={handleApplyTemplate} onClose={() => setShowTemplates(false)} />
       )}
+
+      {/* مفتاح ونموذج دراما اليافعين (12-18 سنة) Teen Drama Toggle & Emotional World Cards */}
+      <div className="space-y-3 rounded-2xl border border-rose-500/35 bg-gradient-to-r from-rose-950/25 via-purple-950/20 to-slate-900/15 p-4 shadow-sm" dir={ar ? 'rtl' : 'ltr'}>
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5">
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-rose-500/20 text-xl">🎭</span>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="font-display text-xs sm:text-sm font-bold text-ink dark:text-moonlight">
+                  {ar ? 'وضع دراما اليافعين (12-18 سنة)' : 'Teen Drama Mode (12-18 yrs)'}
+                </h3>
+                <span className="rounded-full bg-rose-500/25 border border-rose-500/40 text-rose-300 dark:text-rose-200 px-2.5 py-0.5 text-[10px] font-bold">
+                  {ar ? 'عصري وملحمي' : 'YA Drama'}
+                </span>
+              </div>
+              <p className="text-[11px] text-ink/70 dark:text-moonlight/70">
+                {ar ? 'تفعيل 4 عوالم وجدانية وصراعات درامية عميقة تناسب الفئة العمرية 12-18' : 'Enable 4 distinct emotional world templates suitable for 12-18 year olds'}
+              </p>
+            </div>
+          </div>
+          <label className="relative inline-flex cursor-pointer items-center shrink-0">
+            <input
+              type="checkbox"
+              checked={isTeenDrama}
+              onChange={(e) => {
+                const checked = e.target.checked;
+                setIsTeenDrama(checked);
+                if (checked) {
+                  setAgeGroup('13-18');
+                  if (!selectedTeenTemplate) {
+                    handleSelectTeenTemplate(TEEN_DRAMA_TEMPLATES[0]);
+                  }
+                }
+              }}
+              className="peer sr-only"
+            />
+            <div className="peer h-6 w-11 rounded-full bg-slate-700/70 after:absolute after:start-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:bg-white after:transition-all after:content-[''] peer-checked:bg-rose-600 peer-checked:after:translate-x-full peer-checked:after:border-white peer-focus-visible:ring-2 peer-focus-visible:ring-rose-400" />
+          </label>
+        </div>
+
+        {/* بطاقات العوالم الوجدانية الأربعة عند تفعيل مفتاح دراما اليافعين */}
+        {isTeenDrama && (
+          <div className="pt-2 border-t border-rose-500/20 grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+            {TEEN_DRAMA_TEMPLATES.map((tmpl) => {
+              const active = selectedTeenTemplate === tmpl.id;
+              return (
+                <button
+                  key={tmpl.id}
+                  type="button"
+                  onClick={() => handleSelectTeenTemplate(tmpl)}
+                  className={`flex flex-col text-start p-3.5 rounded-xl border transition active:scale-[0.98] ${
+                    active
+                      ? 'border-rose-500 bg-rose-500/20 ring-2 ring-rose-500/50 shadow-md text-ink dark:text-moonlight'
+                      : 'border-rose-500/25 bg-black/25 hover:bg-black/40 text-ink/80 dark:text-moonlight/80'
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-2 mb-1">
+                    <span className="flex items-center gap-1.5 font-bold text-xs text-rose-300">
+                      <span className="text-base">{tmpl.icon}</span>
+                      <span>{ar ? tmpl.title.ar : tmpl.title.en}</span>
+                    </span>
+                    <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-rose-500/20 border border-rose-500/30 text-rose-200 shrink-0">
+                      {ar ? tmpl.badge.ar : tmpl.badge.en}
+                    </span>
+                  </div>
+                  <p className="text-[11px] font-semibold text-amber-300/90 dark:text-amber-200/90 mb-1">
+                    {ar ? `الجو الوجداني: ${tmpl.emotionalWorld.ar}` : `Emotional World: ${tmpl.emotionalWorld.en}`}
+                  </p>
+                  <p className="text-[11px] text-ink/70 dark:text-moonlight/70 leading-relaxed line-clamp-2">
+                    {ar ? tmpl.tagline.ar : tmpl.tagline.en}
+                  </p>
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
       {series && (
         <div className="flex items-center justify-between gap-3 rounded-2xl border border-lantern/40 bg-lantern/10 px-4 py-3 text-sm" dir={ar ? 'rtl' : 'ltr'}>
           <span className="font-display font-bold text-ink dark:text-moonlight">
@@ -339,7 +506,17 @@ export default function StorySetupForm({ initialIdea, language, onSubmit, onLoad
           <label className={labelCls} htmlFor="ageGroup">
             {ar ? 'الفئة العمرية' : 'Age group'}
           </label>
-          <select id="ageGroup" disabled={Boolean(series)} className={selectCls} value={ageGroup} onChange={(e) => setAgeGroup(e.target.value as AgeGroup)}>
+          <select
+            id="ageGroup"
+            disabled={Boolean(series)}
+            className={selectCls}
+            value={ageGroup}
+            onChange={(e) => {
+              const val = e.target.value as AgeGroup;
+              setAgeGroup(val);
+              setIsTeenDrama(val === '13-18');
+            }}
+          >
             {AGE_GROUPS.map((g) => (
               <option key={g.value} value={g.value}>
                 {g.label}
@@ -359,6 +536,18 @@ export default function StorySetupForm({ initialIdea, language, onSubmit, onLoad
                 {ar ? t.label.ar : t.label.en}
               </option>
             ))}
+          </select>
+        </div>
+
+        <div className="col-span-2 sm:col-span-1">
+          <label className={labelCls} htmlFor="coverFontStyle">
+            {ar ? 'خط عنوان الغلاف' : 'Cover Title Font'}
+          </label>
+          <select id="coverFontStyle" className={selectCls} value={coverFontStyle} onChange={(e) => setCoverFontStyle(e.target.value as CoverFontStyle)}>
+            <option value="kufi">{ar ? 'الكوفي الهندسي الحديث' : 'Modern Geometric Kufi'}</option>
+            <option value="diwani">{ar ? 'الديواني الملكي' : 'Royal Diwani'}</option>
+            <option value="naskh">{ar ? 'خط النسخ والقصص' : 'Story Naskh'}</option>
+            <option value="display3d">{ar ? 'ثلاثي الأبعاد 3D' : 'Embossed 3D'}</option>
           </select>
         </div>
 

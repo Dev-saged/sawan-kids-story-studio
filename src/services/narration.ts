@@ -1,6 +1,7 @@
 import { NarratorVoice, StoryData, StoryPage } from '../types';
 import { dbDelete, dbGet, dbPut, hashText } from './db';
 import { generateMusic, narrate } from './gemini';
+import { getClonedVoiceProfile } from './voiceClone';
 
 interface AudioRecord {
   id: string;
@@ -15,6 +16,7 @@ export const VOICE_OPTIONS: { value: NarratorVoice; label: { ar: string; en: str
   { value: 'Algieba', label: { ar: 'راوٍ حكواتي', en: 'Smooth narrator (M)' } },
   { value: 'Charon', label: { ar: 'راوٍ رزين', en: 'Deep narrator (M)' } },
   { value: 'Puck', label: { ar: 'راوٍ مرح', en: 'Playful narrator (M)' } },
+  { value: 'ClonedVoice', label: { ar: '🎙️ بصمتي الصوتية المستنسخة', en: '🎙️ Cloned Voice (AI)' } },
   { value: 'Family', label: { ar: 'صوت العائلة (تسجيلك)', en: 'Family voice (your recording)' } },
 ];
 
@@ -78,6 +80,11 @@ export const getPageAudio = async (storyId: string | undefined, page: StoryPage,
     const rec = await dbGet<AudioRecord>('audio', familyId(storyId, page.page)).catch(() => undefined);
     if (!rec?.blob) throw new FamilyVoiceMissing(page.page);
     return rec.blob;
+  }
+  if (voice === 'ClonedVoice') {
+    const profile = await getClonedVoiceProfile();
+    const effectiveVoice = profile?.matchedVoice || 'Sulafat';
+    return cached(audioId(page, 'ClonedVoice'), () => narrate(page.narration || page.text, effectiveVoice, signal));
   }
   return cached(audioId(page, voice), () => narrate(page.narration || page.text, voice, signal));
 };

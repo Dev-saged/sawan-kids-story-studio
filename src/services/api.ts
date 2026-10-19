@@ -72,19 +72,55 @@ let apiHistory: ApiRequestRecord[] = (() => {
   }
 })();
 
-const listeners = new Set<() => void>();
+const errorListeners = new Set<() => void>();
 const apiListeners = new Set<() => void>();
+
+let notifyScheduled = false;
+const scheduleApiNotify = () => {
+  if (notifyScheduled) return;
+  notifyScheduled = true;
+  queueMicrotask(() => {
+    notifyScheduled = false;
+    apiListeners.forEach((fn: () => void) => {
+      try {
+        fn();
+      } catch {
+        // ignore subscriber errors
+      }
+    });
+  });
+};
+
+let errorNotifyScheduled = false;
+const scheduleErrorNotify = () => {
+  if (errorNotifyScheduled) return;
+  errorNotifyScheduled = true;
+  queueMicrotask(() => {
+    errorNotifyScheduled = false;
+    errorListeners.forEach((fn: () => void) => {
+      try {
+        fn();
+      } catch {
+        // ignore subscriber errors
+      }
+    });
+  });
+};
 
 export const getErrorLog = (): ErrorRecord[] => errorLog;
 export const subscribeErrorLog = (fn: () => void) => {
-  listeners.add(fn);
-  return () => listeners.delete(fn);
+  errorListeners.add(fn);
+  return () => {
+    errorListeners.delete(fn);
+  };
 };
 
-export const getApiRequestHistory = (): ApiRequestRecord[] => [...apiHistory];
+export const getApiRequestHistory = (): ApiRequestRecord[] => apiHistory;
 export const subscribeApiHistory = (fn: () => void) => {
   apiListeners.add(fn);
-  return () => apiListeners.delete(fn);
+  return () => {
+    apiListeners.delete(fn);
+  };
 };
 
 export const clearApiRequestHistory = (): void => {
@@ -94,7 +130,7 @@ export const clearApiRequestHistory = (): void => {
   } catch {
     // ignore
   }
-  apiListeners.forEach((fn) => fn());
+  scheduleApiNotify();
 };
 
 const persistApiHistory = () => {
@@ -103,13 +139,15 @@ const persistApiHistory = () => {
   } catch {
     // ignore
   }
-  apiListeners.forEach((fn) => fn());
+  scheduleApiNotify();
 };
 
 export const recordApiRequest = (record: ApiRequestRecord): void => {
   const existingIdx = apiHistory.findIndex((r) => r.id === record.id);
   if (existingIdx >= 0) {
-    apiHistory[existingIdx] = record;
+    const next = [...apiHistory];
+    next[existingIdx] = record;
+    apiHistory = next;
   } else {
     apiHistory = [record, ...apiHistory].slice(0, API_HISTORY_LIMIT);
   }
@@ -143,7 +181,7 @@ export const trackApiCall = (endpoint: string, method = 'POST', summary?: string
 
 const record = (entry: ErrorRecord) => {
   errorLog = [entry, ...errorLog].slice(0, LOG_LIMIT);
-  listeners.forEach((fn) => fn());
+  scheduleErrorNotify();
 };
 
 export class ApiError extends Error {
@@ -160,7 +198,7 @@ export class ApiError extends Error {
     this.trail = [...items, ...(this.trail ?? [])];
     this.entry.trail = this.trail;
     errorLog = [...errorLog];
-    listeners.forEach((fn) => fn());
+    scheduleErrorNotify();
   }
 }
 

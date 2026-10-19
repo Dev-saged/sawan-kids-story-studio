@@ -1,4 +1,4 @@
-import { NarratorVoice, StoryData } from '../types';
+import { NarratorVoice, StoryData, VeoMotionMode } from '../types';
 import { srcToBlob } from './media';
 import { getPageAudio, getStoryMusic, isArabicStory } from './narration';
 import { bitrateFor, getFormat, maxQuality, videoSize, VIDEO_QUALITIES, type VideoFormatId, type VideoQualityId } from './videoFormats';
@@ -8,6 +8,7 @@ export interface VideoOptions {
   quality: VideoQualityId;
   withMusic: boolean;
   voice: NarratorVoice;
+  veoMotionMode?: VeoMotionMode;
   brand: string;
   tagline?: string;
 }
@@ -104,7 +105,8 @@ class Renderer {
     private rtl: boolean,
     private brand: string,
     private design: { w: number; h: number },
-    private tagline = ''
+    private tagline = '',
+    private veoMotionMode: VeoMotionMode = 'cinematic-pack'
   ) {
     this.ctx = canvas.getContext('2d', { alpha: false })!;
     this.buffers = [0, 1].map(() => {
@@ -137,7 +139,7 @@ class Renderer {
     return `${weight} ${size}px ${fam}, sans-serif`;
   }
 
-  // صورة بحركة كاميرا سينمائية (Ken Burns) مع تحريك الشخصيات ونبض حي
+  // صورة بحركة كاميرا Veo 3 مع اختيار المود السينمائي والموشن
   private drawImage(seg: Segment, local: number, extraScale = 1) {
     const { ctx, W, H } = this;
     if (!seg.image) {
@@ -151,23 +153,55 @@ class Renderer {
     const img = seg.image;
     const p = easeInOut(local / (seg.dur + TRANSITION));
     const zoomIn = seg.dir > 0;
-    const scale = (zoomIn ? 1.05 + 0.13 * p : 1.18 - 0.13 * p) * extraScale;
-    const base = Math.max(W / img.width, H / img.height);
-    const w = img.width * base * scale;
-    const h = img.height * base * scale;
 
-    // حركة حية للشخصيات: تنفس خفيف + تمايل ديناميكي وتدوير ميكروي
-    const breath = Math.sin(local * 2.3) * (H * 0.005);
-    const sway = Math.sin(local * 1.5) * (W * 0.004);
-    const tilt = Math.sin(local * 1.6) * 0.005;
-    const panX = seg.dir * (p - 0.5) * W * 0.05 + sway;
-    const panY = (zoomIn ? -1 : 1) * (p - 0.5) * H * 0.03 + breath;
+    if (this.veoMotionMode === 'parallax-script') {
+      // مود 2: حركة ديناميكية ثنائية الأبعاد ونصف مع تأثير المنظر ثلاثي الأبعاد (2.5D Parallax)
+      const scale = (zoomIn ? 1.08 + 0.18 * p : 1.25 - 0.18 * p) * extraScale;
+      const base = Math.max(W / img.width, H / img.height);
+      const w = img.width * base * scale;
+      const h = img.height * base * scale;
+      const panX = Math.sin(local * 1.8) * (W * 0.02) + (seg.dir * (p - 0.5) * W * 0.08);
+      const panY = Math.cos(local * 1.4) * (H * 0.02) + ((zoomIn ? -1 : 1) * (p - 0.5) * H * 0.05);
+      const tilt = Math.sin(local * 2.1) * 0.012;
 
-    ctx.save();
-    ctx.translate(W / 2, H / 2);
-    ctx.rotate(tilt);
-    ctx.drawImage(img, -w / 2 + panX, -h / 2 + panY, w, h);
-    ctx.restore();
+      ctx.save();
+      ctx.translate(W / 2, H / 2);
+      ctx.rotate(tilt);
+      ctx.drawImage(img, -w / 2 + panX, -h / 2 + panY, w, h);
+      ctx.restore();
+    } else if (this.veoMotionMode === 'sweeps-3d') {
+      // مود 3: مسح ثلاثي الأبعاد متعدد الزوايا للكاميرا (Multi-Angle 3D Sweeps)
+      const sweepAngle = Math.sin(p * Math.PI) * 0.025 * (seg.dir || 1);
+      const scale = (1.12 + 0.15 * Math.sin(p * Math.PI)) * extraScale;
+      const base = Math.max(W / img.width, H / img.height);
+      const w = img.width * base * scale;
+      const h = img.height * base * scale;
+      const panX = Math.cos(p * Math.PI) * (W * 0.06);
+      const panY = Math.sin(p * Math.PI * 0.5) * (H * 0.04);
+
+      ctx.save();
+      ctx.translate(W / 2, H / 2);
+      ctx.rotate(sweepAngle);
+      ctx.drawImage(img, -w / 2 + panX, -h / 2 + panY, w, h);
+      ctx.restore();
+    } else {
+      // مود 1 (مُستَحسَن): مجموعة كاملة من المؤثرات السينمائية مع تحريك الكاميرا وعمقها
+      const scale = (zoomIn ? 1.05 + 0.13 * p : 1.18 - 0.13 * p) * extraScale;
+      const base = Math.max(W / img.width, H / img.height);
+      const w = img.width * base * scale;
+      const h = img.height * base * scale;
+      const breath = Math.sin(local * 2.3) * (H * 0.005);
+      const sway = Math.sin(local * 1.5) * (W * 0.004);
+      const tilt = Math.sin(local * 1.6) * 0.005;
+      const panX = seg.dir * (p - 0.5) * W * 0.05 + sway;
+      const panY = (zoomIn ? -1 : 1) * (p - 0.5) * H * 0.03 + breath;
+
+      ctx.save();
+      ctx.translate(W / 2, H / 2);
+      ctx.rotate(tilt);
+      ctx.drawImage(img, -w / 2 + panX, -h / 2 + panY, w, h);
+      ctx.restore();
+    }
   }
 
   private overlay(strength: number) {
@@ -819,7 +853,7 @@ const render = async (story: StoryData, opts: VideoOptions, onProgress: Progress
   const canvas = document.createElement('canvas');
   canvas.width = W;
   canvas.height = H;
-  const renderer = new Renderer(canvas, segs, story, ar, opts.brand, design, opts.tagline);
+  const renderer = new Renderer(canvas, segs, story, ar, opts.brand, design, opts.tagline, opts.veoMotionMode);
 
   const codec = await canEncodeMp4(W, H, bitrate);
   let result: { blob: Blob; ext: 'mp4' | 'webm' };

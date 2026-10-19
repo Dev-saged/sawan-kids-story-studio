@@ -21,7 +21,11 @@ export type ArabicDialect =
   | 'Libyan'
   | 'Mauritanian';
 
-export type AgeGroup = '3-4' | '4-6' | '7-9' | '9-12';
+export type AgeGroup = '3-4' | '4-6' | '7-9' | '9-12' | '13-18';
+
+export type CoverFontStyle = 'kufi' | 'diwani' | 'naskh' | 'display3d';
+
+export type VeoMotionMode = 'cinematic-pack' | 'parallax-script' | 'sweeps-3d';
 
 export type StoryType = 'Bedtime' | 'Adventure' | 'Funny' | 'Educational' | 'Moral';
 
@@ -78,6 +82,7 @@ export interface StoryParams {
   heroName?: string;
   heroPhotoId?: string;
   series?: SeriesContext;
+  coverFontStyle?: CoverFontStyle;
 }
 
 export interface Character {
@@ -111,6 +116,7 @@ export interface StoryInfo {
   dialect?: string;
   lessons: string[];
   moral?: string;
+  coverFontStyle?: CoverFontStyle;
 }
 
 export interface QuizItem {
@@ -140,9 +146,10 @@ export interface StoryData {
   partNumber?: number;
   // العدد المستهدف لقصة طويلة تُكتب على دفعات؛ أقل من ذلك يعني قصة غير مكتملة تُستأنف
   plannedPages?: number;
+  coverFontStyle?: CoverFontStyle;
 }
 
-export type NarratorVoice = 'Sulafat' | 'Vindemiatrix' | 'Achernar' | 'Algieba' | 'Charon' | 'Puck' | 'Family';
+export type NarratorVoice = 'Sulafat' | 'Vindemiatrix' | 'Achernar' | 'Algieba' | 'Charon' | 'Puck' | 'Family' | 'ClonedVoice';
 
 export interface ChildProfile {
   id: string;

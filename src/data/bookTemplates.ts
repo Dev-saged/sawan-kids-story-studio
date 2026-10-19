@@ -5,7 +5,7 @@ export interface BookTemplate {
   title: { ar: string; en: string };
   tagline: { ar: string; en: string };
   category: { ar: string; en: string };
-  flavor: 'palestinian' | 'syrian' | 'egyptian' | 'bedouin' | 'fantasy' | 'space' | 'nature' | 'science' | 'bedtime' | 'values' | 'ocean' | 'food';
+  flavor: 'palestinian' | 'syrian' | 'egyptian' | 'bedouin' | 'fantasy' | 'space' | 'nature' | 'science' | 'bedtime' | 'values' | 'ocean' | 'food' | 'fruit-saga';
   icon: string;
   badge: { ar: string; en: string };
   ageGroup: AgeGroup;
@@ -271,5 +271,89 @@ export const BOOK_TEMPLATES: BookTemplate[] = [
     suggestedHeroName: { ar: 'عمر', en: 'Omar' },
     accentColor: '#fb8500',
     coverPromptTemplate: 'Adorable 3D Pixar style kitchen scene, smiling child in cute chef hat stirring a steaming pot with a wooden spoon, fresh bright vegetables flying gently around with sparkles.',
+  },
+  {
+    id: 'fruit-kingdom-saga',
+    title: { ar: 'مملكة الفواكه العتيقة وصراع بذور الخلود', en: 'The Ancient Fruit Kingdom & The Seeds of Eternity' },
+    tagline: { ar: 'ملحمة درامية مشوقة لليافعين: صراع العروش والولاء وسر إكسير الحياة', en: 'An epic high-stakes young adult saga of betrayal, honor, and the ancestral core' },
+    category: { ar: 'ملحمة فواكه درامية (12-18)', en: 'Epic Fruit Saga (12-18)' },
+    flavor: 'fruit-saga',
+    icon: '🍇',
+    badge: { ar: 'ملحمة يافعين', en: 'YA Fruit Saga' },
+    ageGroup: '13-18',
+    dialect: 'Modern Standard',
+    artStyle: 'Fantasy Fairy Tale',
+    storyType: 'Adventure',
+    aspectRatio: '4:3',
+    defaultIdea: {
+      ar: 'في عالم تنقسم فيه حضارات الفواكه إلى ممالك متناحرة، يكتشف فارس شاب من عشيرة الرمان سراً دفيناً عن بذور الخلود التي توشك أن تقع في أيدي أمراء الظل، فينطلق في رحلة مصيرية محفوفة بالمخاطر لتوحيد القبائل.',
+      en: 'In an epic realm where fruit civilizations rule fractured territories, a young warrior from the Pomegranate Dynasty uncovers a conspiracy to seize the mystical eternity seeds, embarking on a dangerous quest across ancient orchards.',
+    },
+    suggestedHeroName: { ar: 'جلنار', en: 'Julnar' },
+    accentColor: '#800f2f',
+    coverPromptTemplate: 'Breathtaking high fantasy epic children book cover, ancient stone fortress carved inside a giant ruby pomegranate, dramatic storm clouds, golden banners fluttering in the wind, cinematic rim lighting.',
+  },
+  {
+    id: 'cyber-fruit-2099',
+    title: { ar: 'سايبر فروت 2099: حرب الطاقة البيولوجية', en: 'CyberFruit 2099: The Bio-Energy War' },
+    tagline: { ar: 'أبراج النيون الشاهقة، أسرار الذكاء الحيوي، وسباق النجاة الأخير', en: 'Neon-lit mega-orchards, cyber-enhanced bio-energy, and high-tech rebellion' },
+    category: { ar: 'سايبربانك وغموض (12-18)', en: 'Cyberpunk Fruitverse (12-18)' },
+    flavor: 'fruit-saga',
+    icon: '⚡',
+    badge: { ar: 'سايبربانك فواكه', en: 'Cyber Fruitverse' },
+    ageGroup: '13-18',
+    dialect: 'Modern Standard',
+    artStyle: 'Comic Book',
+    storyType: 'Adventure',
+    aspectRatio: '4:3',
+    defaultIdea: {
+      ar: 'في مدينة مستقبلية عملاقة تضاء بالنيون، يكتشف فريق من ثوار الفواكه المعدلة جينياً أن مختبرات الطاقة المركزية تستنزف عصير الحياة من البساتين الطبيعية لتغذية الأبراج، فيخوضون معركة اختراق إلكتروني مثيرة.',
+      en: 'In a futuristic neon metropolis, a squad of cyber-enhanced fruit heroes discovers that corporate conglomerates are secretly siphoning the vital botanical grid, executing a high-stakes digital hack to liberate the city.',
+    },
+    suggestedHeroName: { ar: 'سنان', en: 'Sinan' },
+    accentColor: '#06d6a0',
+    coverPromptTemplate: 'Electrifying cyberpunk graphic novel book cover, glowing neon skyscrapers, futuristic flying vehicles, cool teen cyber hero with glowing citrus armor standing on a rain-slicked rooftop.',
+  },
+  {
+    id: 'survival-orchard',
+    title: { ar: 'بساتين المجهول: رحلة البقاء في الغابة المحرمة', en: 'Orchards of the Unknown: Survival in the Wild Forest' },
+    tagline: { ar: 'عواصف غادرة، نباتات عملاقة، واختبار الصداقة الحقيقية تحت وطأة الخطر', en: 'Raging storms, towering flora, and intense teamwork in an untamed wilderness' },
+    category: { ar: 'مغامرة بقاء وإثارة (12-18)', en: 'Survival Adventure (12-18)' },
+    flavor: 'fruit-saga',
+    icon: '🥭',
+    badge: { ar: 'مغامرة بقاء', en: 'Survival Adventure' },
+    ageGroup: '13-18',
+    dialect: 'Modern Standard',
+    artStyle: 'Classic Storybook',
+    storyType: 'Adventure',
+    aspectRatio: '4:3',
+    defaultIdea: {
+      ar: 'ينعزل ثلاثة مراهقين في وادي البساتين البرية بعد انهيار الجسر المعلق، ويضطرون للتعاون باستخدام معرفتهم بالثمار الطبيعية وفخاخ الطبيعة للنجاة من عاصفة شتوية مرعبة والعودة إلى ديارهم.',
+      en: 'Three resourceful teenagers stranded deep inside a treacherous wild valley must use their botanical survival skills and fierce friendship to endure harsh winter winds and navigate home.',
+    },
+    suggestedHeroName: { ar: 'طارق', en: 'Tariq' },
+    accentColor: '#d90429',
+    coverPromptTemplate: 'Dramatic survival adventure book cover, misty mountain pass, raging river canyon with wild exotic mango and berry trees, determined young adventurers trekking forward with lanterns.',
+  },
+  {
+    id: 'fruit-destiny-drama',
+    title: { ar: 'فلسفة الظل والنور: سر شجرة الحكمة والقدر', en: 'Philosophy of Light & Shadow: The Tree of Destiny' },
+    tagline: { ar: 'حوارات فكرية عميقة، قرارات حاسمة، واكتشاف المعنى الحقيقي للشجاعة', en: 'Deep character dilemmas, philosophical debates, and the courage of choosing truth' },
+    category: { ar: 'دراما فلسفية ملهمة (12-18)', en: 'Philosophical Drama (12-18)' },
+    flavor: 'fruit-saga',
+    icon: '🍎',
+    badge: { ar: 'دراما وفلسفة', en: 'Philosophical Drama' },
+    ageGroup: '13-18',
+    dialect: 'Modern Standard',
+    artStyle: 'Watercolor',
+    storyType: 'Moral',
+    aspectRatio: '4:3',
+    defaultIdea: {
+      ar: 'قصة درامية مؤثرة تدور حول شاب يافع يجد نفسه أمام مفترق طرق أخلاقي بين ولاء عائلته لبستان الأجداد أو الدفاع عن الحقيقة والعدالة لإنقاذ قرية المزارعين الفقراء، متعلماً أن القوة الحقيقية تنبع من الصدق.',
+      en: 'A profound character drama following a young protagonist torn between family heritage and standing up for truth, confronting hard moral dilemmas that reveal the authentic meaning of integrity.',
+    },
+    suggestedHeroName: { ar: 'باسم', en: 'Bassem' },
+    accentColor: '#4f772d',
+    coverPromptTemplate: 'Poetic evocative watercolor book cover, golden sunlight breaking through ancient apple orchard canopy, lone reflective teen silhouette looking toward a glowing valley horizon.',
   },
 ];

@@ -93,10 +93,11 @@ export const AGE_GROUPS: { value: AgeGroup; label: string; desc: { en: string; a
   { value: '4-6', label: '4-6', desc: { en: 'Fun, easy stories that spark imagination', ar: 'قصص ممتعة وسهلة تُنمّي الخيال' } },
   { value: '7-9', label: '7-9', desc: { en: 'Longer stories with adventures and clear characters', ar: 'قصص أطول بمغامرات وشخصيات واضحة' } },
   { value: '9-12', label: '9-12', desc: { en: 'Advanced stories with deeper plots', ar: 'قصص متقدمة بأحداث أعمق' } },
+  { value: '13-18', label: '13-18', desc: { en: 'Dramatic young adult sagas & mystery', ar: 'قصص درامية مشوقة لليافعين والشباب' } },
 ];
 
 // Minimum idea length (in words) per age group — a too-thin idea produces a generic story.
-export const PROMPT_LIMITS: Record<AgeGroup, number> = { '3-4': 5, '4-6': 8, '7-9': 10, '9-12': 15 };
+export const PROMPT_LIMITS: Record<AgeGroup, number> = { '3-4': 5, '4-6': 8, '7-9': 10, '9-12': 15, '13-18': 18 };
 
 // Seconds of reading/listening time budgeted per illustrated page.
 export const SECONDS_PER_PAGE = 25;
@@ -109,18 +110,19 @@ export const SURPRISE_PROMPTS: Record<Language, string[]> = {
     'A little friendly dinosaur looking for new friends in the prehistoric valley to play hide and seek with.',
     'A fun journey to space with a happy robot named Beep who loves to explore new planets and meet aliens.',
     'A magical fairy tale about a kind princess who loves sharing her toys and bringing joy to the kingdom.',
-    'A cozy bedtime story about a brave little star guarding children while they sleep and bringing them sweet dreams.',
-    'An exciting adventure in the deep green forest with cute animals working together to build a new playground.',
+    'An epic dramatic fruit kingdom saga for young adults: The high-stakes feud between the Ancient Pomegranate Citadel and the Citrus Enclave over the mystical core seed.',
+    'CyberFruit 2099: A squad of cyber-enhanced fruit rebels navigating a neon mega-orchard to solve the disappearance of the solar power grid.',
+    'A young adult mystery adventure in the uncharted orchards: Three brave teens unravel an ancient riddle carved on the legendary Whispering Tree.',
   ],
   Arabic: [
     'قصة أرنب صغير شجاع يدعى لوز يذهب في مغامرة كبيرة ليتعلم كيف يساعد أصدقاءه في الغابة.',
     'مغامرة قطة لطيفة وفضولية تكتشف عالمًا سحريًا مخفيًا خلف سور الحديقة حيث الأزهار تغني وترقص.',
     'طفل صغير يزور عالم الأحلام السحري قبل النوم ليطرد الكوابيس ويبحث عن أجمل النجوم اللامعة.',
     'ديناصور صغير ودود يبحث عن أصدقاء جدد في الوادي الكبير ليلعب معهم لعبة الغميضة والمطاردة.',
-    'رحلة ممتعة ومثيرة إلى الفضاء الخارجي مع روبوت مرح يحب استكشاف الكواكب الجديدة ومقابلة الفضائيين.',
-    'حكاية خيالية عن أميرة طيبة القلب تحب مشاركة ألعابها ونشر السعادة والفرح بين جميع سكان المملكة.',
-    'قصة دافئة قبل النوم عن نجمة صغيرة شجاعة تحرس الأطفال أثناء نومهم وتهديهم أحلامًا سعيدة وجميلة.',
-    'مغامرة شيقة في الغابة الخضراء مع مجموعة من الحيوانات اللطيفة التي تتعاون معًا لبناء ملعب جديد.',
+    'ملحمة فواكه درامية لليافعين (12-18 سنة): صراع العروش بين مملكة الرمان الذهبي وحلف بساتين الأوركيد لحماية سر البذور الملكية وإعادة التوازن للأرض.',
+    'سايبر فروت 2099: فريق من محاربي الفواكه في مدينة النيون المستقبلية يكتشفون مؤامرة سرية بمختبرات الطاقة البيولوجية ويسابقون الزمن لإنقاذ الشجرة الأم.',
+    'مغامرة بقاء وغموض لليافعين: ثلاثة أصدقاء شجعان يتوغلون في بساتين البرية المجهولة ويفكون طلاسم الباب الحجري المنقوش على شجرة الحكمة القديمة.',
+    'دراما فلسفية ملهمة لليافعين: بطل شاب يكتشف أن قوته الحقيقية ليست في أسلحته، بل في اختياراته وشجاعته عندما يواجه حقيقة ماضيه وتحديات مصيره.',
   ],
 };
 
@@ -130,12 +132,14 @@ export const SMART_TIPS: Record<Language, Record<AgeGroup, string>> = {
     '4-6': 'Choose a clear hero and a simple problem to solve.',
     '7-9': 'Add an exciting adventure with connected events.',
     '9-12': 'Think about a real challenge and a meaningful message.',
+    '13-18': 'Craft an intense, character-driven saga with dramatic stakes, mysteries, and moral choices.',
   },
   Arabic: {
     '3-4': 'اكتب قصة بسيطة عن حيوان لطيف أو لون جميل.',
     '4-6': 'اختَر بطلًا واضحًا ومشكلة بسيطة يحاول حلّها.',
     '7-9': 'أضف مغامرة ممتعة وأحداثًا مترابطة.',
     '9-12': 'فكّر في تحدٍّ حقيقي ورسالة مفيدة في القصة.',
+    '13-18': 'ابتكر حبكة درامية مشوقة ذات أبعاد عميقة وتحديات مصيرية لليافعين والشباب.',
   },
 };
 
@@ -162,33 +166,33 @@ export const NEXT_BATCH_PAGES = 6;
 
 // `prompt` is the expanded style description sent to the image model (see getArtStylePrompt).
 export const ART_STYLE_OPTIONS: { value: ArtStyle; labelAr: string; prompt: string }[] = [
-  { value: 'Cute Cartoon', labelAr: 'كرتون لطيف', prompt: 'cute cartoon style, rounded adorable characters, thick soft outlines, bright cheerful colors' },
+  { value: 'Cute Cartoon', labelAr: 'كرتون لطيف', prompt: 'masterpiece cute children cartoon, adorable expressive characters, smooth clean linework, vibrant cheerful color palette, high resolution digital artwork, award winning children illustration' },
   {
     value: 'Hand-drawn Cartoon',
     labelAr: 'كرتون مرسوم باليد',
     prompt:
       'hand-drawn cartoon characters, simple human figures, thin black outline, slightly imperfect hand-drawn lines, minimal facial features, dot eyes and simple mouth, educational explainer illustration style, looks drawn by a human illustrator, soft limited colors, simple clean shapes, NOT vector, NOT flat design. Negative prompt: vector, flat illustration, 3d, pixar, anime, realistic, photorealistic, clay, stop motion, smooth digital lines, gradients, glossy',
   },
-  { value: 'Watercolor', labelAr: 'ألوان مائية', prompt: 'storybook watercolor illustration, soft translucent washes, visible paper texture, gentle bleeding edges' },
-  { value: '3D Pixar Style', labelAr: 'ثلاثي الأبعاد (بيكسار)', prompt: 'Pixar-like 3D animated render, soft cinematic lighting, expressive big eyes, rounded friendly shapes, rich textures' },
-  { value: 'Pastel Dream', labelAr: 'باستيل حالم', prompt: 'soft pastel illustration, dreamy muted colors, gentle gradients, cozy atmosphere' },
-  { value: 'Doodle Sketch', labelAr: 'رسومات خربشية', prompt: 'sketchy doodle illustration, loose pen lines, playful scribbled shading, childlike charm' },
-  { value: 'Anime', labelAr: 'أنمي للأطفال', prompt: 'anime kids style, clean cel-shading, big expressive eyes, bright cheerful palette' },
-  { value: 'Paper Cutout', labelAr: 'قصاصات ورقية', prompt: 'layered paper cut-out collage, handmade craft paper textures, soft drop shadows between layers' },
+  { value: 'Watercolor', labelAr: 'ألوان مائية', prompt: 'masterpiece storybook watercolor illustration, soft translucent luminous washes, fine delicate ink line detail, rich paper grain texture, gentle bleeding edges, magical warm lighting' },
+  { value: '3D Pixar Style', labelAr: 'ثلاثي الأبعاد (بيكسار)', prompt: 'masterpiece Pixar Disney 3D animated render, soft cinematic volumetric lighting, expressive big eyes, subsurface scattering skin, rounded friendly shapes, rich detailed textures, 8k resolution' },
+  { value: 'Pastel Dream', labelAr: 'باستيل حالم', prompt: 'masterpiece soft pastel illustration, dreamy cozy atmosphere, luminous muted gradients, gentle magical lighting, high detail fairytale artwork' },
+  { value: 'Doodle Sketch', labelAr: 'رسومات خربشية', prompt: 'playful high quality sketchy doodle illustration, loose expressive pen lines, creative scribbled shading, charming hand-crafted storybook art' },
+  { value: 'Anime', labelAr: 'أنمي للأطفال', prompt: 'masterpiece studio anime kids illustration, Makoto Shinkai aesthetic, clean cel-shading, big expressive sparkling eyes, rich detailed backgrounds, vivid glowing lighting, sharp clean line art' },
+  { value: 'Paper Cutout', labelAr: 'قصاصات ورقية', prompt: 'masterpiece layered paper cut-out collage, intricate handmade craft paper textures, soft drop shadows between paper layers, rich depth' },
   {
     value: 'Educational Line Cartoon',
     labelAr: 'كرتون تعليمي خطي',
     prompt:
       'simple flat line illustration, white background, clean black outlines, minimal flat colors, educational cartoon style, whiteboard illustration, no 3D, no shadows, no textures, simple characters, expressive faces, child-friendly, vector-style drawing',
   },
-  { value: 'Claymation', labelAr: 'صلصال / ستوب موشن', prompt: 'clay stop-motion style, handmade plasticine characters, visible fingerprint texture, miniature set lighting' },
-  { value: 'Flat Vector', labelAr: 'فلات فيكتور', prompt: 'flat vector kids illustration, bold simple shapes, clean edges, limited bright palette, no gradients' },
-  { value: 'Fantasy Fairy Tale', labelAr: 'خيال قصصي', prompt: 'fantasy fairy-tale illustration, magical glowing details, enchanted forests and castles, luminous colors' },
-  { value: 'Bedtime Story', labelAr: 'قصة قبل النوم', prompt: 'cozy bedtime storybook illustration, moonlit night palette, warm lantern glow, soft calm lighting' },
-  { value: 'Classic Storybook', labelAr: 'كتاب قصص كلاسيكي', prompt: 'classic picture-book illustration, warm gouache and ink, timeless fairy-tale feel' },
-  { value: 'Pixel Art', labelAr: 'بكسل آرت', prompt: 'colorful pixel art, 16-bit game style, crisp pixels, cheerful palette' },
-  { value: 'Chalk Drawing', labelAr: 'رسم بالطباشير', prompt: 'chalk drawing on a dark chalkboard, textured chalk strokes, colorful pastel chalk' },
-  { value: 'Comic Book', labelAr: 'قصص مصورة', prompt: 'kids comic-book style, bold ink outlines, halftone shading, vivid flat colors' },
+  { value: 'Claymation', labelAr: 'صلصال / ستوب موشن', prompt: 'masterpiece clay stop-motion style, handmade plasticine characters, visible subtle fingerprint texture, warm miniature set cinematic lighting' },
+  { value: 'Flat Vector', labelAr: 'فلات فيكتور', prompt: 'masterpiece flat vector children illustration, bold elegant simple shapes, crisp clean edges, vibrant harmonious palette' },
+  { value: 'Fantasy Fairy Tale', labelAr: 'خيال قصصي', prompt: 'masterpiece epic fantasy fairy-tale illustration, enchanted glowing particles, lush magical environments and castles, dramatic luminous lighting, rich saturated colors, award winning storybook art' },
+  { value: 'Bedtime Story', labelAr: 'قصة قبل النوم', prompt: 'cozy bedtime storybook illustration, moonlit night palette, warm lantern glow, soft calm lighting, soothing fairytale mood' },
+  { value: 'Classic Storybook', labelAr: 'كتاب قصص كلاسيكي', prompt: 'masterpiece classic picture-book illustration, warm gouache and ink, timeless vintage fairy-tale feel, rich artistic details' },
+  { value: 'Pixel Art', labelAr: 'بكسل آرت', prompt: 'vibrant 16-bit pixel art illustration, crisp pixel perfection, colorful retro game aesthetic' },
+  { value: 'Chalk Drawing', labelAr: 'رسم بالطباشير', prompt: 'masterpiece chalk drawing on dark chalkboard, textured chalk strokes, vibrant pastel chalk art' },
+  { value: 'Comic Book', labelAr: 'قصص مصورة', prompt: 'masterpiece kids comic-book graphic novel style, bold expressive ink outlines, dynamic composition, halftone shading, vivid vibrant colors' },
   {
     value: 'Photorealistic',
     labelAr: 'واقعي',

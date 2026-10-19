@@ -16,22 +16,23 @@ export default function ErrorDetails({ ar }: { ar: boolean }) {
   const [testing, setTesting] = useState(false);
   if (!log.length && !diag && !apiHistory.length) return null;
 
-  const report = JSON.stringify(
-    {
-      app: APP_VERSION,
-      key: keyHint(),
-      remembered: isKeyRemembered(),
-      freeEngine: Boolean(getFreeCreds()),
-      lastImageEngine: getLastEngine() ?? undefined,
-      keys: diag?.keys,
-      imagePaths: diag?.tests,
-      errors: log,
-      recentApiRequests: apiHistory.slice(0, 12),
-      generatorLogs: getGeneratorLogs().slice(-10),
-    },
-    null,
-    2
-  );
+  const buildReport = () =>
+    JSON.stringify(
+      {
+        app: APP_VERSION,
+        key: keyHint(),
+        remembered: isKeyRemembered(),
+        freeEngine: Boolean(getFreeCreds()),
+        lastImageEngine: getLastEngine() ?? undefined,
+        keys: diag?.keys,
+        imagePaths: diag?.tests,
+        errors: log,
+        recentApiRequests: apiHistory.slice(0, 12),
+        generatorLogs: getGeneratorLogs().slice(-10),
+      },
+      null,
+      2
+    );
 
   const runTests = async () => {
     setTesting(true);
@@ -40,9 +41,10 @@ export default function ErrorDetails({ ar }: { ar: boolean }) {
   };
 
   const copy = async () => {
+    const reportText = buildReport();
     try {
       if (navigator.clipboard && navigator.clipboard.writeText) {
-        await navigator.clipboard.writeText(report);
+        await navigator.clipboard.writeText(reportText);
       } else {
         throw new Error('Clipboard API unavailable');
       }
@@ -51,7 +53,7 @@ export default function ErrorDetails({ ar }: { ar: boolean }) {
     } catch {
       try {
         const ta = document.createElement('textarea');
-        ta.value = report;
+        ta.value = reportText;
         ta.style.position = 'fixed';
         ta.style.opacity = '0';
         document.body.appendChild(ta);
@@ -80,7 +82,7 @@ export default function ErrorDetails({ ar }: { ar: boolean }) {
       </button>
       {open && (
         <div className="mt-1 space-y-2">
-          <pre className="max-h-64 select-all overflow-auto whitespace-pre-wrap break-words rounded-2xl bg-black/80 p-3 text-[11px] leading-relaxed text-green-200">{report}</pre>
+          <pre className="max-h-64 select-all overflow-auto whitespace-pre-wrap break-words rounded-2xl bg-black/80 p-3 text-[11px] leading-relaxed text-green-200">{buildReport()}</pre>
           <button type="button" onClick={runTests} disabled={testing} className="flex min-h-11 w-full items-center justify-center gap-2 rounded-2xl border border-dream/30 text-sm font-semibold text-ink active:scale-95 disabled:opacity-60 dark:text-moonlight">
             <ImageIcon size={16} aria-hidden />
             {testing ? (ar ? 'نختبر مسارات الصور...' : 'Testing image paths...') : ar ? 'فحص مسارات الصور' : 'Test image paths'}

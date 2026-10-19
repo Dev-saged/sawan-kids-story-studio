@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Clapperboard, Download, Loader2, Music2, Share2, X } from 'lucide-react';
 import { saveAs } from 'file-saver';
-import { NarratorVoice, StoryData } from '../../types';
+import { NarratorVoice, StoryData, VeoMotionMode } from '../../types';
 import { exportStoryVideo, type VideoResult } from '../../services/video';
 import { maxQuality, VIDEO_FORMATS, VIDEO_QUALITIES, type VideoFormatId, type VideoQualityId } from '../../services/videoFormats';
 import { safeFileName } from '../../services/export';
@@ -19,6 +19,7 @@ export default function VideoExportSheet({ storyData, ar, voice, onClose }: Prop
   const allowed = VIDEO_QUALITIES.findIndex((q) => q.id === maxQuality());
   const [format, setFormat] = useState<VideoFormatId>('landscape');
   const [quality, setQuality] = useState<VideoQualityId>(VIDEO_QUALITIES[Math.min(1, allowed)].id);
+  const [veoMotionMode, setVeoMotionMode] = useState<VeoMotionMode>('cinematic-pack');
   const [withMusic, setWithMusic] = useState(true);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -48,7 +49,7 @@ export default function VideoExportSheet({ storyData, ar, voice, onClose }: Prop
     try {
       const res = await exportStoryVideo(
         storyData,
-        { format, quality, withMusic, voice, brand: ar ? `${BRAND.name.ar} · ${BRAND.author.ar}` : `${BRAND.name.en} · ${BRAND.author.en}`, tagline: ar ? BRAND.madeIn.ar : BRAND.madeIn.en },
+        { format, quality, veoMotionMode, withMusic, voice, brand: ar ? `${BRAND.name.ar} · ${BRAND.author.ar}` : `${BRAND.name.en} · ${BRAND.author.en}`, tagline: ar ? BRAND.madeIn.ar : BRAND.madeIn.en },
         (p, m) => {
           setProgress(p);
           setMessage(m);
@@ -127,6 +128,47 @@ export default function VideoExportSheet({ storyData, ar, voice, onClose }: Prop
             {allowed < VIDEO_QUALITIES.length - 1 && (
               <p className="text-xs text-ink/60 dark:text-moonlight/60">{ar ? 'الجودات الأعلى معطّلة لحماية ذاكرة هذا الجهاز.' : 'Higher qualities are disabled to protect this device memory.'}</p>
             )}
+
+            {/* وضعيات حركة الكاميرا Veo 3 */}
+            <div className="space-y-1.5">
+              <label className="text-xs font-bold text-ink/80 dark:text-moonlight/80">
+                {ar ? 'نمط حركة كاميرا Veo 3:' : 'Veo 3 Camera Motion Mode:'}
+              </label>
+              <div role="radiogroup" aria-label={ar ? 'نمط حركة كاميرا Veo 3' : 'Veo 3 Camera Motion Mode'} className="flex flex-col gap-1.5">
+                {(
+                  [
+                    {
+                      id: 'cinematic-pack',
+                      title: { ar: '1 (مُستَحسَن): حزمة مؤثرات سينمائية كاملة', en: '1 (Recommended): Full Cinematic Effects Pack' },
+                      desc: { ar: 'تحريك كاميرا احترافي، زوم تدريجي وتفاعل عمق المشهد', en: 'Pro camera moves, smooth zoom, and dynamic scene depth' },
+                    },
+                    {
+                      id: 'parallax-script',
+                      title: { ar: '2: حركة 2.5D ديناميكية مع تأثير المنظر', en: '2: 2.5D Dynamic Motion with Parallax Effect' },
+                      desc: { ar: 'إحساس ثلاثي الأبعاد مع طبقات هواء وتحريك بارالاكس', en: '3D spatial feel with multi-layer depth & parallax' },
+                    },
+                    {
+                      id: 'sweeps-3d',
+                      title: { ar: '3: مسح ثلاثي الأبعاد متعدد الزوايا', en: '3: Multi-Angle 3D Camera Sweeps' },
+                      desc: { ar: 'مسح كاميرا واسع النطاق يحيط بالشخصيات بمرونة', en: 'Sweeping orbital camera angles around scene heroes' },
+                    },
+                  ] as const
+                ).map((m) => (
+                  <button
+                    key={m.id}
+                    type="button"
+                    role="radio"
+                    aria-checked={veoMotionMode === m.id}
+                    disabled={busy}
+                    onClick={() => setVeoMotionMode(m.id)}
+                    className={`${option(veoMotionMode === m.id)} flex-col !items-start gap-0.5 py-2 text-start`}
+                  >
+                    <span className="text-xs font-bold">{ar ? m.title.ar : m.title.en}</span>
+                    <span className="text-[11px] font-medium opacity-70">{ar ? m.desc.ar : m.desc.en}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
             <label className="flex min-h-12 cursor-pointer items-center justify-between rounded-2xl border border-dream/30 px-4 text-sm font-semibold text-ink dark:text-moonlight">
               <span className="flex items-center gap-2">
                 <Music2 size={18} className="text-dream" aria-hidden />

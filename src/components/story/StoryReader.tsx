@@ -49,7 +49,8 @@ import Book3DViewer from './Book3DViewer';
 import LivingCanvas from './LivingCanvas';
 import FullPageEditor from './FullPageEditor';
 import InteractiveBranches from './InteractiveBranches';
-import { Rotate3D, ShieldCheck } from 'lucide-react';
+import VoiceClonerModal from './VoiceClonerModal';
+import { Rotate3D, ShieldCheck, AudioWaveform } from 'lucide-react';
 
 const VideoExportSheet = lazy(() => import('./VideoExportSheet'));
 
@@ -75,6 +76,7 @@ export default function StoryReader({ storyData, language, printableContainerId 
   const [showVideo, setShowVideo] = useState(false);
   const [show3DViewer, setShow3DViewer] = useState(false);
   const [fullEditMode, setFullEditMode] = useState(false);
+  const [showVoiceCloner, setShowVoiceCloner] = useState(false);
 
   const illustrator = useIllustrator(storyData, onStoryChange, pageIndex);
   const goTo = useCallback((i: number) => setPageIndex(i), []);
@@ -176,7 +178,7 @@ export default function StoryReader({ storyData, language, printableContainerId 
 
   return (
     <div className="space-y-6">
-      {/* غلاف القصة */}
+      {/* غلاف القصة بتنسيقات خطوط الغلاف الفاخرة */}
       <div className="relative overflow-hidden rounded-3xl border border-dream/20 bg-dusk shadow-sm">
         {storyData.coverImage ? (
           <img src={storyData.coverImage} alt="" className="aspect-[16/9] w-full object-cover" />
@@ -185,32 +187,86 @@ export default function StoryReader({ storyData, language, printableContainerId 
             <Loader2 size={26} className="animate-spin text-star/80" aria-hidden />
           </div>
         )}
-        <div className="absolute inset-0 bg-gradient-to-t from-black/75 via-black/15 to-transparent" />
-        <div className="absolute inset-x-0 bottom-0 flex items-end justify-between gap-3 p-4" dir={ar ? 'rtl' : 'ltr'}>
-          <div className="min-w-0">
-            <h1 className="font-display text-xl font-bold leading-tight text-white drop-shadow sm:text-2xl">{storyData.story_info.title}</h1>
-            <p className="mt-1 text-xs font-medium text-white/75">
-              {illustrator.running ? (ar ? `نرسم الصور... ${illustratedCount}/${storyData.pages.length}` : `Painting... ${illustratedCount}/${storyData.pages.length}`) : `${storyData.story_info.art_style}`}
-            </p>
+        <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/25 to-transparent" />
+        <div className="absolute inset-x-0 bottom-0 flex flex-col gap-2 p-4" dir={ar ? 'rtl' : 'ltr'}>
+          <div className="flex items-end justify-between gap-3">
+            <div className="min-w-0">
+              {/* عنوان الغلاف بالخط المختار */}
+              <h1
+                className={
+                  storyData.coverFontStyle === 'kufi'
+                    ? 'font-serif text-xl sm:text-2xl font-black tracking-wide text-amber-200 drop-shadow-[0_2px_14px_rgba(255,200,50,0.5)]'
+                    : storyData.coverFontStyle === 'diwani'
+                      ? 'font-serif italic text-xl sm:text-2xl font-extrabold text-emerald-200 drop-shadow-[0_2px_14px_rgba(50,255,180,0.5)]'
+                      : storyData.coverFontStyle === 'display3d'
+                        ? 'font-display text-xl sm:text-2xl font-black uppercase text-transparent bg-clip-text bg-gradient-to-r from-amber-300 via-yellow-100 to-amber-500 drop-shadow-[0_4px_6px_rgba(0,0,0,0.9)]'
+                        : 'font-sans text-xl sm:text-2xl font-bold leading-tight text-white drop-shadow-[0_2px_8px_rgba(0,0,0,0.85)]'
+                }
+              >
+                {storyData.story_info.title}
+              </h1>
+              <p className="mt-1 text-xs font-medium text-white/75">
+                {illustrator.running ? (ar ? `نرسم الصور... ${illustratedCount}/${storyData.pages.length}` : `Painting... ${illustratedCount}/${storyData.pages.length}`) : `${storyData.story_info.art_style}`}
+              </p>
+            </div>
+            {storyData.coverImage && (
+              <button
+                type="button"
+                onClick={illustrator.repaintCover}
+                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-white/15 text-white backdrop-blur transition active:scale-95"
+                aria-label={ar ? 'أعد رسم الغلاف' : 'Repaint cover'}
+              >
+                <RefreshCw size={18} />
+              </button>
+            )}
           </div>
-          {storyData.coverImage && (
-            <button
-              type="button"
-              onClick={illustrator.repaintCover}
-              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-white/15 text-white backdrop-blur transition active:scale-95"
-              aria-label={ar ? 'أعد رسم الغلاف' : 'Repaint cover'}
-            >
-              <RefreshCw size={18} />
-            </button>
-          )}
+
+          {/* مبدّل أنماط خط الغلاف الملكية الأربعة */}
+          <div className="flex flex-wrap items-center gap-1.5 pt-1 border-t border-white/10">
+            <span className="text-[10px] font-medium text-white/60 me-1">{ar ? 'خط العنوان:' : 'Cover Font:'}</span>
+            {(
+              [
+                { id: 'kufi', label: { ar: 'كوفي هندسي', en: 'Geometric Kufi' } },
+                { id: 'diwani', label: { ar: 'ديواني ملكي', en: 'Royal Diwani' } },
+                { id: 'naskh', label: { ar: 'نسخ ورقعة', en: 'Story Naskh' } },
+                { id: 'display3d', label: { ar: 'ثلاثي أبعاد 3D', en: 'Embossed 3D' } },
+              ] as const
+            ).map((font) => {
+              const active = (storyData.coverFontStyle || 'kufi') === font.id;
+              return (
+                <button
+                  key={font.id}
+                  type="button"
+                  onClick={() => onStoryChange((s) => ({ ...s, coverFontStyle: font.id }))}
+                  className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold transition active:scale-95 ${
+                    active ? 'bg-lantern text-ink shadow-xs' : 'bg-black/35 text-white/75 hover:text-white hover:bg-black/50'
+                  }`}
+                >
+                  {ar ? font.label.ar : font.label.en}
+                </button>
+              );
+            })}
+          </div>
         </div>
       </div>
 
       {illustrator.error && (
-        <div role="alert" className="space-y-1 rounded-2xl border border-coral/30 bg-coral/5 px-4 py-3 text-sm text-coral" dir={ar ? 'rtl' : 'ltr'}>
+        <div
+          role="alert"
+          className={`space-y-1.5 rounded-2xl border px-4 py-3 text-sm ${
+            /حصة|quota|تلقائياً|دقائق|لحظات/i.test(illustrator.error)
+              ? 'border-lantern/40 bg-lantern/10 text-ink dark:text-moonlight'
+              : 'border-coral/30 bg-coral/5 text-coral'
+          }`}
+          dir={ar ? 'rtl' : 'ltr'}
+        >
           <div className="flex items-center justify-between gap-3">
-            <span>{illustrator.error}</span>
-            <button type="button" onClick={illustrator.retryAll} className="inline-flex min-h-11 shrink-0 items-center gap-1.5 rounded-full bg-coral/10 px-4 font-semibold">
+            <span className="font-medium">{illustrator.error}</span>
+            <button
+              type="button"
+              onClick={illustrator.retryAll}
+              className="inline-flex min-h-11 shrink-0 items-center gap-1.5 rounded-full bg-lantern/20 hover:bg-lantern/30 px-4 font-semibold text-ink dark:text-moonlight transition active:scale-95"
+            >
               <RefreshCw size={14} aria-hidden />
               {ar ? 'أعد المحاولة' : 'Retry'}
             </button>
@@ -392,21 +448,39 @@ export default function StoryReader({ storyData, language, printableContainerId 
             <div className="p-5" dir={ar ? 'rtl' : 'ltr'}>
               {/* شريط الراوي */}
               <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-dream/20 bg-dream/5 px-3 py-2 dark:bg-white/5">
-                <label className="flex items-center gap-1.5 font-display text-xs font-semibold text-ink/70 dark:text-moonlight/70">
-                  <Volume2 size={15} className={narration.status === 'playing' ? 'animate-pulse text-lantern' : 'text-dream'} aria-hidden />
-                  <span className="sr-only">{ar ? 'صوت الراوي' : 'Narrator voice'}</span>
-                  <select
-                    value={narration.voice}
-                    onChange={(e) => narration.setVoice(e.target.value as NarratorVoice)}
-                    className="min-h-11 rounded-xl bg-transparent px-1 text-xs font-semibold text-ink outline-none focus-visible:ring-2 focus-visible:ring-lantern/50 dark:text-moonlight"
+                <div className="flex flex-wrap items-center gap-2">
+                  <label className="flex items-center gap-1.5 font-display text-xs font-semibold text-ink/70 dark:text-moonlight/70">
+                    <Volume2 size={15} className={narration.status === 'playing' ? 'animate-pulse text-lantern' : 'text-dream'} aria-hidden />
+                    <span className="sr-only">{ar ? 'صوت الراوي' : 'Narrator voice'}</span>
+                    <select
+                      value={narration.voice}
+                      onChange={(e) => narration.setVoice(e.target.value as NarratorVoice)}
+                      className="min-h-11 rounded-xl bg-transparent px-1 text-xs font-semibold text-ink outline-none focus-visible:ring-2 focus-visible:ring-lantern/50 dark:text-moonlight"
+                    >
+                      {VOICE_OPTIONS.map((v) => (
+                        <option key={v.value} value={v.value}>
+                          {ar ? v.label.ar : v.label.en}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <button
+                    type="button"
+                    onClick={() => setShowVoiceCloner(true)}
+                    className="inline-flex min-h-11 items-center gap-1.5 rounded-full border border-lantern/40 bg-lantern/15 hover:bg-lantern/25 px-3.5 py-1 text-xs font-bold text-ink transition active:scale-95 dark:text-moonlight"
+                    title={ar ? 'استنسخ صوتك ليروي القصة آلياً دون قراءة يدوية' : 'Clone your voice to narrate automatically'}
                   >
-                    {VOICE_OPTIONS.map((v) => (
-                      <option key={v.value} value={v.value}>
-                        {ar ? v.label.ar : v.label.en}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                    <AudioWaveform size={14} className="text-lantern" />
+                    <span>{ar ? 'استنسخ صوتك' : 'Clone Voice'}</span>
+                  </button>
+
+                  {narration.voice === 'ClonedVoice' && (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 px-2.5 py-1 text-[11px] font-bold">
+                      ✨ {ar ? 'بصمتك الصوتية نشطة' : 'Cloned Voice Active'}
+                    </span>
+                  )}
+                </div>
 
                 <div className="flex items-center gap-1.5">
                   {narration.status === 'loading' ? (
@@ -734,6 +808,14 @@ export default function StoryReader({ storyData, language, printableContainerId 
           storyData={storyData}
           ar={ar}
           onClose={() => setShow3DViewer(false)}
+        />
+      )}
+
+      {showVoiceCloner && (
+        <VoiceClonerModal
+          language={language}
+          onVoiceSelected={(v) => narration.setVoice(v)}
+          onClose={() => setShowVoiceCloner(false)}
         />
       )}
 

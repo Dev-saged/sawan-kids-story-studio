@@ -132,9 +132,9 @@ const runDirect = async (eng: Engine, req: ImageRequest, signal?: AbortSignal): 
     .filter((r) => r.data.length > 200 && r.data.length < 5_000_000);
 
   const lead = cleanRefs.length
-    ? 'Use the attached reference image(s) as the exact character design: keep the same face, hairstyle, skin tone, outfit, colors and proportions. Do not copy their background or pose. '
+    ? '[STRICT CHARACTER REFERENCE ATTACHED]: Use the attached character reference sheet image(s) as the EXACT character model. Keep the identical face shape, hairstyle, hair color, skin tone, outfit design, color palette, and body proportions. '
     : '';
-  const text = `${lead}${req.prompt} Masterpiece children's book illustration, sharp focus, rich detail, professional composition, consistent character design. Absolutely no text, letters, captions, logos or watermark.`;
+  const text = `${lead}${req.prompt} Masterpiece children's book illustration, sharp focus, rich detail, professional composition, consistent character design. Negative prompt: extra fingers, mutated hands, missing limbs, distorted faces, asymmetrical eyes, blurry details, double heads, cloned characters, extra limbs, floating objects, unwanted text, letters, captions, logos, signature, watermark, bad anatomy, deformed bodies, cut off heads, low resolution, jpeg artifacts.`;
 
   for (const model of DIRECT_MODELS) {
     let currentRefs = cleanRefs;
@@ -149,7 +149,7 @@ const runDirect = async (eng: Engine, req: ImageRequest, signal?: AbortSignal): 
           ai.models.generateContent({
             model,
             contents: { parts },
-            config: { abortSignal: signal, imageConfig: { aspectRatio: req.aspectRatio } },
+            config: { abortSignal: signal, imageConfig: { aspectRatio: req.aspectRatio, imageSize: '1K' } },
           }),
           DIRECT_TIMEOUT
         );
@@ -171,16 +171,18 @@ const runDirect = async (eng: Engine, req: ImageRequest, signal?: AbortSignal): 
         const kind = classifyFailure(status, msg);
         trail.push({ model: `${eng.id}/${model}`, kind, status, message: msg.slice(0, 480) });
 
-        const isDaily = /daily limit|limit:\s*0\b|free_?tier/i.test(msg);
-        if (kind === 'quota' && isDaily) {
-          console.warn(`[runDirect] Model ${model} on key reached daily limit, immediately trying next model in chain...`);
-          break; // Don't retry same model on daily limit, try next model in DIRECT_MODELS
+        const isDaily = /daily limit|limit:\s*0\b|free_?tier|requests today|limit of requests|tomorrow/i.test(msg);
+        if (kind === 'quota') {
+          if (isDaily || attempt >= 1) {
+            console.warn(`[runDirect] Model ${model} reached quota limit ("${msg.slice(0, 80)}"), immediately trying next model in chain...`);
+            break; // Don't retry same model on daily limit or repeat quota, try next model in DIRECT_MODELS
+          }
         }
 
         // استراتيجية إعادة المحاولة بتأخير متصاعد أسي
-        if ((kind === 'quota' || kind === 'busy') && attempt < 2) {
-          const backoff = Math.min(1500 * Math.pow(2, attempt) + Math.random() * 600, 8000);
-          console.warn(`[runDirect] Rate-limit hit on ${model} (attempt ${attempt + 1}), retrying with exponential backoff in ${Math.round(backoff)}ms...`);
+        if ((kind === 'quota' || kind === 'busy') && attempt < 1) {
+          const backoff = Math.min(1000 + Math.random() * 500, 3000);
+          console.warn(`[runDirect] Transient busy or limit on ${model}, retrying with backoff in ${Math.round(backoff)}ms...`);
           await sleep(backoff);
           continue;
         }

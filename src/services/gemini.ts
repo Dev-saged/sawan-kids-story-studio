@@ -10,37 +10,66 @@ export const getArtStylePrompt = (style: string): string => {
   return option ? option.prompt : `${style} illustration style, high quality, children friendly`;
 };
 
+export const NEGATIVE_PROMPT_ARTIFACTS =
+  'Negative prompt: extra fingers, mutated hands, missing limbs, distorted faces, asymmetrical eyes, blurry details, double heads, cloned characters, extra limbs, floating objects, unwanted text, letters, captions, logos, signature, watermark, bad anatomy, deformed bodies, cut off heads, low resolution, jpeg artifacts.';
+
+export const CHARACTER_SHEET_BINDING =
+  '[STRICT CHARACTER SHEET BINDING]: Enforce 100% visual consistency with the character reference sheet. Maintain exact face shape, eye color, hairstyle, hair color, skin tone, clothing design, color palette, and body proportions across all scenes.';
+
 const characterSheetText = (story: StoryData): string =>
   story.characters
-    .map((c) => `${c.name} (${c.gender || 'character'}, ${c.age}): ${c.description}`)
+    .map((c) => `CHARACTER "${c.name.toUpperCase()}" (${c.gender || 'hero'}, ${c.age}): ${c.description}. Visual anchor: distinct hair style, face features, outfit colors, and proportions.`)
     .join(' | ');
 
 const styleLock = (story: StoryData): string =>
-  `Art style (identical on every image of this book): ${getArtStylePrompt(story.story_info.art_style)}.`;
+  `[STYLE LOCK: ${story.story_info.art_style.toUpperCase()}] Visual style guidelines: ${getArtStylePrompt(story.story_info.art_style)}. Maintain identical linework, color palette, and rendering model on every image of this book.`;
+
+const isFruitStory = (story: StoryData): boolean =>
+  /frui|فواكه|رمان|ليمون|برتقال|تفاح|بساتين|بذور الخلود|سايبر فروت/i.test(
+    `${story.story_info.title} ${(story.story_info.lessons || []).join(' ')} ${story.seriesTitle ?? ''}`
+  );
+
+const fruitThemeBoost = (story: StoryData): string =>
+  isFruitStory(story)
+    ? 'Vivid fruit fantasy design elements, organic fruit motifs, vibrant fruit armor and attire, lush fruit kingdom environment with giant exotic fruit trees.'
+    : '';
 
 export const buildPageImagePrompt = (story: StoryData, page: StoryPage): string =>
   [
     styleLock(story),
-    `Fixed characters, keep them visually identical: ${characterSheetText(story)}.`,
-    `Scene: ${page.image_prompt}`,
-  ].join(' ');
+    CHARACTER_SHEET_BINDING,
+    `CHARACTERS IN SCENE: ${characterSheetText(story)}.`,
+    `SCENE ACTION & COMPOSITION: ${page.image_prompt}.`,
+    fruitThemeBoost(story),
+    'Masterpiece illustration, sharp focus, rich vibrant colors, expressive faces, professional composition, award winning storybook art.',
+    NEGATIVE_PROMPT_ARTIFACTS,
+  ]
+    .filter(Boolean)
+    .join(' ');
 
 export const buildCoverPrompt = (story: StoryData): string =>
   [
     styleLock(story),
-    `Book cover illustration for the children's story titled "${story.story_info.title}".`,
-    `Fixed characters: ${characterSheetText(story)}.`,
-    `Composition: ${story.cover_image_prompt || story.pages[0]?.image_prompt || ''}`,
-    'Iconic, inviting hero shot, strong focal point, depth and atmosphere, generous calm space in the upper third.',
-  ].join(' ');
+    CHARACTER_SHEET_BINDING,
+    `BOOK COVER FOR: "${story.story_info.title}".`,
+    `HERO CHARACTERS: ${characterSheetText(story)}.`,
+    `COVER COMPOSITION: ${story.cover_image_prompt || story.pages[0]?.image_prompt || ''}.`,
+    fruitThemeBoost(story),
+    'Masterpiece iconic hero shot, strong focal point, depth and atmosphere, rich vibrant colors, generous calm space in the upper third, award winning artwork.',
+    NEGATIVE_PROMPT_ARTIFACTS,
+  ]
+    .filter(Boolean)
+    .join(' ');
 
 export const buildSheetPrompt = (story: StoryData, withPhoto: boolean): string =>
   [
     styleLock(story),
-    'Character reference sheet for a children picture book.',
-    withPhoto ? 'The main hero is the child in the attached photo, redrawn in this art style with a faithful likeness of the face and hair.' : '',
-    `Characters: ${characterSheetText(story)}.`,
-    'Each character shown full body, front view, friendly neutral pose, side by side, evenly lit, plain soft light background, clean readable design.',
+    '[CONSISTENT CHARACTER SHEET MODEL SHEET]: Official turnaround character reference sheet for picture book production.',
+    withPhoto ? 'The primary hero is the child in the attached photo, redrawn with faithful facial likeness, hair style, and joyful expression in this art style.' : '',
+    `CHARACTER MODELS: ${characterSheetText(story)}.`,
+    fruitThemeBoost(story),
+    'Layout: Full-body front view, side view, and neutral pose side by side for each character. Clean plain soft backdrop, studio lighting, sharp focus, masterwork character sheet model turnaround.',
+    NEGATIVE_PROMPT_ARTIFACTS,
   ]
     .filter(Boolean)
     .join(' ');
