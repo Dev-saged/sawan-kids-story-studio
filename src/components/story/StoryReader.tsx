@@ -45,6 +45,11 @@ import SleepMode from './SleepMode';
 import FamilyRecorder from './FamilyRecorder';
 import ShareMenu from './ShareMenu';
 import PageTools from './PageTools';
+import Book3DViewer from './Book3DViewer';
+import LivingCanvas from './LivingCanvas';
+import FullPageEditor from './FullPageEditor';
+import InteractiveBranches from './InteractiveBranches';
+import { Rotate3D, ShieldCheck } from 'lucide-react';
 
 const VideoExportSheet = lazy(() => import('./VideoExportSheet'));
 
@@ -68,6 +73,8 @@ export default function StoryReader({ storyData, language, printableContainerId 
   const [exportProgress, setExportProgress] = useState<string | null>(null);
   const [pdfSuccess, setPdfSuccess] = useState(false);
   const [showVideo, setShowVideo] = useState(false);
+  const [show3DViewer, setShow3DViewer] = useState(false);
+  const [fullEditMode, setFullEditMode] = useState(false);
 
   const illustrator = useIllustrator(storyData, onStoryChange, pageIndex);
   const goTo = useCallback((i: number) => setPageIndex(i), []);
@@ -78,6 +85,55 @@ export default function StoryReader({ storyData, language, printableContainerId 
   const imageSrc = toSrc(page?.generatedImage);
   const illustratedCount = storyData.pages.filter((p) => p.generatedImage).length;
   const allDrawn = illustratedCount === storyData.pages.length;
+
+  const handleUpdateCurrentPage = useCallback(
+    (patch: Partial<StoryPage>) => {
+      onStoryChange((s) => ({
+        ...s,
+        pages: s.pages.map((p, i) => (i === pageIndex ? { ...p, ...patch } : p)),
+      }));
+    },
+    [onStoryChange, pageIndex]
+  );
+
+  const handleAddBlankPage = useCallback(() => {
+    const newPageNo = pageIndex + 2;
+    const newPage: StoryPage = {
+      page: newPageNo,
+      text: ar ? 'اكتب نص الصفحة الجديدة هنا...' : 'Write your new page text here...',
+      narration: ar ? 'اكتب نص الصفحة الجديدة هنا...' : 'Write your new page text here...',
+      image_prompt: 'A wonderful colorful storybook illustration',
+    };
+    onStoryChange((s) => {
+      const next = [...s.pages];
+      next.splice(pageIndex + 1, 0, newPage);
+      return {
+        ...s,
+        pages: next.map((p, idx) => ({ ...p, page: idx + 1 })),
+      };
+    });
+    setPageIndex((prev) => prev + 1);
+  }, [ar, onStoryChange, pageIndex]);
+
+  const handleDeleteCurrentPage = useCallback(() => {
+    if (storyData.pages.length <= 1) return;
+    onStoryChange((s) => {
+      const next = s.pages.filter((_, idx) => idx !== pageIndex);
+      return {
+        ...s,
+        pages: next.map((p, idx) => ({ ...p, page: idx + 1 })),
+      };
+    });
+    setPageIndex((prev) => Math.max(0, prev - 1));
+  }, [onStoryChange, pageIndex, storyData.pages.length]);
+
+  const handleChooseBranch = useCallback(
+    async (choiceText: string) => {
+      await more.appendBranch(choiceText);
+      setPageIndex(storyData.pages.length);
+    },
+    [more, storyData.pages.length]
+  );
   const isLast = pageIndex === storyData.pages.length - 1;
   const words = useMemo(() => (page?.text ?? '').split(/\s+/).filter(Boolean), [page?.text]);
   const narrating = narration.status !== 'idle';
@@ -197,8 +253,8 @@ export default function StoryReader({ storyData, language, printableContainerId 
         </div>
       )}
 
-      {/* View Switcher */}
-      <div className="flex items-center justify-center">
+      {/* View Switcher & Action Bar */}
+      <div className="flex flex-wrap items-center justify-center gap-2">
         <div className="inline-flex rounded-2xl border border-dream/20 bg-white/75 p-1.5 shadow-xs dark:bg-white/10">
           {(['reader', 'gallery'] as const).map((mode) => (
             <button
@@ -219,6 +275,32 @@ export default function StoryReader({ storyData, language, printableContainerId 
             </button>
           ))}
         </div>
+
+        {/* 3D Book Experience Button */}
+        <button
+          type="button"
+          onClick={() => setShow3DViewer(true)}
+          className="inline-flex min-h-11 items-center gap-2 rounded-2xl border border-dream/30 bg-white/80 px-4 font-display text-xs font-bold text-ink transition hover:border-lantern hover:bg-lantern/10 active:scale-95 dark:bg-white/10 dark:text-moonlight shadow-xs"
+          title={ar ? 'معاينة الكتاب ثلاثي الأبعاد 3D وتنزيل فيديو' : '3D Book Experience & Video'}
+        >
+          <Rotate3D size={16} className="text-lantern" />
+          <span>{ar ? 'كتاب 3D' : '3D Book'}</span>
+        </button>
+
+        {/* Full Edit Mode Toggle Button */}
+        <button
+          type="button"
+          onClick={() => setFullEditMode(!fullEditMode)}
+          className={`inline-flex min-h-11 items-center gap-2 rounded-2xl border px-4 font-display text-xs font-bold transition active:scale-95 shadow-xs ${
+            fullEditMode
+              ? 'border-lantern bg-lantern text-ink shadow-md'
+              : 'border-dream/30 bg-white/80 text-ink/80 hover:border-lantern dark:bg-white/10 dark:text-moonlight'
+          }`}
+          title={ar ? 'تفعيل الصلاحية الكاملة لتعديل نص الصفحة والصورة والفقاعات' : 'Toggle Full Edit Mode for this page'}
+        >
+          <ShieldCheck size={16} />
+          <span>{ar ? 'صلاحية كاملة للتعديل' : 'Full Edit Mode'}</span>
+        </button>
       </div>
 
       {viewMode === 'gallery' ? (
@@ -234,15 +316,34 @@ export default function StoryReader({ storyData, language, printableContainerId 
         />
       ) : (
         <>
+          {fullEditMode && page && (
+            <FullPageEditor
+              ar={ar}
+              page={page}
+              pageIndex={pageIndex}
+              totalPages={storyData.pages.length}
+              onUpdatePage={handleUpdateCurrentPage}
+              onAddPage={handleAddBlankPage}
+              onDeletePage={handleDeleteCurrentPage}
+              onRedrawImage={(customPrompt) => illustrator.retryPage(page.page, true, customPrompt)}
+              isRedrawing={page.isGeneratingImage}
+            />
+          )}
+
           <div className="page-corner overflow-hidden rounded-3xl border border-dream/20 bg-white/70 shadow-sm dark:bg-white/5">
             {imageSrc ? (
               <div className="relative aspect-[4/3] w-full overflow-hidden bg-dream/10">
-                <img src={imageSrc} alt={page?.image_prompt || 'Story illustration'} className="h-full w-full object-cover transition-transform duration-500 hover:scale-105" />
+                <LivingCanvas
+                  src={imageSrc}
+                  alt={page?.image_prompt || 'Story illustration'}
+                  ar={ar}
+                  className="h-full w-full"
+                />
                 <div className="absolute top-3 end-3 flex items-center gap-1 rounded-full bg-black/40 px-3 py-1 text-xs font-medium text-white backdrop-blur-xs">
                   <Sparkles size={12} className="text-star" />
                   <span>{storyData.story_info.art_style || 'Illustrated'}</span>
                 </div>
-                <div className="absolute bottom-3 end-3 flex gap-2">
+                <div className="absolute bottom-3 end-3 flex gap-2 z-20">
                   <button
                     type="button"
                     onClick={() => illustrator.retryPage(page.page, true)}
@@ -420,6 +521,16 @@ export default function StoryReader({ storyData, language, printableContainerId 
           </div>
 
           {page && <PageTools story={storyData} page={page} index={pageIndex} ar={ar} onPaint={illustrator.retryPage} />}
+
+          {/* مسارات المغامرة والقصة التفاعلية */}
+          {isLast && !more.incomplete && (
+            <InteractiveBranches
+              ar={ar}
+              storyData={storyData}
+              onChooseBranch={handleChooseBranch}
+              disabled={more.running}
+            />
+          )}
 
           {isLast && !more.incomplete && <QuizCard key={storyData.id} storyData={storyData} ar={ar} onScore={(score) => {
             onStoryChange((s) => ({ ...s, quizScore: score }));
@@ -616,6 +727,14 @@ export default function StoryReader({ storyData, language, printableContainerId 
         <Suspense fallback={null}>
           <VideoExportSheet storyData={storyData} ar={ar} voice={narration.voice} onClose={() => setShowVideo(false)} />
         </Suspense>
+      )}
+
+      {show3DViewer && (
+        <Book3DViewer
+          storyData={storyData}
+          ar={ar}
+          onClose={() => setShow3DViewer(false)}
+        />
       )}
 
       <PrintableStory storyData={storyData} images={allImages} containerId={printableContainerId} />

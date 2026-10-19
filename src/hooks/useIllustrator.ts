@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { StoryData, StoryPage } from '../types';
 import { ApiError } from '../services/api';
 import { buildCoverPrompt, buildPageImagePrompt, buildSheetPrompt, generateIllustration } from '../services/gemini';
-import { findSimilarImage, getImage, reencode, saveImage, toReference, type ImageKind } from '../services/media';
+import { findSimilarImage, getImage, getNetworkAdaptation, reencode, saveImage, toReference, type ImageKind } from '../services/media';
 import { hashText } from '../services/db';
 
 type Updater = (fn: (s: StoryData) => StoryData) => void;
@@ -48,7 +48,9 @@ export function useIllustrator(story: StoryData, update: Updater, focusIndex: nu
       { prompt, aspectRatio: kind === 'sheet' ? '16:9' : s.story_info.aspect_ratio || '4:3', references: refs, kind, artStyle: s.story_info.art_style },
       signal
     );
-    return saveImage(await reencode(raw, 2048), kind, cacheStyle(s), matchText);
+    // تكيّف ذكي مع سرعة الإنترنت لتوفير الذاكرة وسرعة العرض الفورية
+    const net = getNetworkAdaptation();
+    return saveImage(await reencode(raw, net.maxImageSide, 'image/webp', net.compressionQuality), kind, cacheStyle(s), matchText);
   };
 
   const references = async (signal: AbortSignal): Promise<Ref[]> => {
@@ -56,18 +58,33 @@ export function useIllustrator(story: StoryData, update: Updater, focusIndex: nu
     const s = storyRef.current;
     const photo = await getImage(s.heroPhotoId);
     let sheet = await getImage(s.characterSheetId);
+
+    // إذا وُجدت صورة شخصية للطفل ولم يتم توليد ورقة الشخصيات الكرتونية بعد:
+    // نقوم بتوليد ورقة كرتونية متطابقة أولاً لتكون المرجع الثابت لجميع صفحات الكتاب
     if (!sheet) {
       try {
-        const made = await create(s, 'sheet', buildSheetPrompt(s, Boolean(photo)), s.characters.map((c) => c.description).join(' '), photo ? [await toReference(photo.blob)] : [], true, signal);
+        const photoRef = photo ? [await toReference(photo.blob)] : [];
+        const made = await create(
+          s,
+          'sheet',
+          buildSheetPrompt(s, Boolean(photo)),
+          s.characters.map((c) => c.description).join(' '),
+          photoRef,
+          true,
+          signal
+        );
         update((prev) => ({ ...prev, characterSheetId: made.id }));
         sheet = await getImage(made.id);
       } catch (err) {
         if (err instanceof ApiError && FATAL.has(err.code)) throw err;
       }
     }
+
     const refs: Ref[] = [];
+    // ورقة الشخصيات الكرتونية هي المرجع الأساسي لتفادي حظر الوجوه الحقيقية من الموديل
     if (sheet) refs.push(await toReference(sheet.blob));
-    if (photo) refs.push(await toReference(photo.blob));
+    else if (photo) refs.push(await toReference(photo.blob));
+
     refsCache.current = refs;
     return refs;
   };

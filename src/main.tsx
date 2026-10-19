@@ -4,6 +4,10 @@ import App from './App';
 import './index.css';
 import { hydrateApiKey } from './services/apiKey';
 import ErrorBoundary from './components/common/ErrorBoundary';
+import { initMobileAudioUnlock } from './services/mobileAudio';
+
+// تهيئة فك قفل الصوت التلقائي للهواتف الذكية
+initMobileAudioUnlock();
 
 const SelfTest = lazy(() => import('./components/SelfTest'));
 

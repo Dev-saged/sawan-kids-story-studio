@@ -162,8 +162,8 @@ const runDirect = async (eng: Engine, req: ImageRequest, signal?: AbortSignal): 
       } catch (err: any) {
         if (signal?.aborted || err?.name === 'AbortError') throw abortError();
         const msg = String(err?.message ?? err).replace(/\s+/g, ' ');
-        if (/could not be decoded|source image/i.test(msg) && currentRefs.length > 0) {
-          console.warn(`[runDirect] Reference decode failure on ${model}, retrying without reference...`);
+        if (currentRefs.length > 0 && (/could not be decoded|source image|invalid|safety|blocked|policy|filter|size|large|face|person/i.test(msg) || attempt === 0)) {
+          console.warn(`[runDirect] Reference error on ${model} ("${msg.slice(0, 80)}..."), immediately retrying cleanly with text-only character description...`);
           currentRefs = [];
           continue;
         }

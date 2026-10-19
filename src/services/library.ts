@@ -144,9 +144,14 @@ export const serializeStory = async (story: StoryData): Promise<string> => {
   );
 };
 
-// ملفات الأطفال: الصورة تُحفظ مصغّرة لإعادة الاستخدام في قصص لاحقة
+// ملفات الأطفال: الصورة تُحفظ مصغّرة (512px) لإعادة الاستخدام في قصص لاحقة دون إجهاد الذاكرة
 export const saveChild = async (name: string, file: Blob): Promise<ChildProfile & { photoUrl: string }> => {
-  const photo = await reencode(file, 1024, 'image/jpeg', 0.88);
+  let photo: Blob = file;
+  try {
+    photo = await reencode(file, 512, 'image/jpeg', 0.85);
+  } catch (err) {
+    console.warn('reencode photo failed, using original file:', err);
+  }
   const { id: photoId, url } = await saveImage(photo, 'photo', 'photo', name);
   const child: ChildProfile = { id: newId(), name: name.trim().slice(0, 40), photoId, createdAt: Date.now() };
   await dbPut('children', child);

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { NarratorVoice, StoryData } from '../types';
 import { activeWordIndex, dropPageAudio, getPageAudio, getVoice, setVoice as persistVoice, wordTimings, type WordTiming } from '../services/narration';
+import { safePlayAudio } from '../services/mobileAudio';
 
 export type NarrationStatus = 'idle' | 'loading' | 'playing' | 'paused';
 
@@ -75,7 +76,7 @@ export function useNarration(story: StoryData, pageIndex: number, onAdvance: (ne
             setStatus('idle');
           }
         };
-        await audio.play();
+        await safePlayAudio(audio);
         setStatus('playing');
         rafRef.current = requestAnimationFrame(tick);
         const next = s.pages[index + 1];

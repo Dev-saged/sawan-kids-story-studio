@@ -2,7 +2,7 @@ import { dbAll, dbByIndex, dbGet, dbPut, newId } from './db';
 
 export type ImageKind = 'page' | 'cover' | 'sheet' | 'photo';
 
-interface ImageRecord {
+export interface ImageRecord {
   id: string;
   blob: Blob;
   kind: ImageKind;
@@ -11,8 +11,6 @@ interface ImageRecord {
   tokens: string[];
   createdAt: number;
 }
-
-const urlCache = new Map<string, string>();
 
 const sniffMime = (b64: string): string =>
   b64.startsWith('/9j/') ? 'image/jpeg' : b64.startsWith('UklG') ? 'image/webp' : b64.startsWith('PHN2') || b64.startsWith('PD94') ? 'image/svg+xml' : 'image/png';
@@ -55,13 +53,24 @@ const loadBitmap = async (blob: Blob): Promise<ImageBitmap | HTMLImageElement> =
   }
   const url = URL.createObjectURL(blob);
   const img = new Image();
+  img.crossOrigin = 'anonymous';
   img.src = url;
   try {
     await img.decode();
   } catch {
     await new Promise((res, rej) => {
       img.onload = () => res(null);
-      img.onerror = rej;
+      img.onerror = () => {
+        // Try fallback via FileReader data URL
+        const reader = new FileReader();
+        reader.onload = () => {
+          img.src = reader.result as string;
+          img.onload = () => res(null);
+          img.onerror = rej;
+        };
+        reader.onerror = rej;
+        reader.readAsDataURL(blob);
+      };
     });
   } finally {
     URL.revokeObjectURL(url);
@@ -70,19 +79,27 @@ const loadBitmap = async (blob: Blob): Promise<ImageBitmap | HTMLImageElement> =
 };
 
 // إعادة ترميز بحجم أقصى وصيغة محددة (WebP افتراضياً)
-export const reencode = async (blob: Blob, maxSide: number, type = 'image/webp', quality = 0.9): Promise<Blob> => {
-  const bmp = await loadBitmap(blob);
-  const scale = Math.min(1, maxSide / Math.max(bmp.width, bmp.height));
-  const w = Math.round(bmp.width * scale);
-  const h = Math.round(bmp.height * scale);
-  const canvas = document.createElement('canvas');
-  canvas.width = w;
-  canvas.height = h;
-  canvas.getContext('2d')!.drawImage(bmp, 0, 0, w, h);
-  if ('close' in bmp) bmp.close();
-  const out = await new Promise<Blob | null>((res) => canvas.toBlob(res, type, quality));
-  if (out && out.type === type) return out;
-  return (await new Promise<Blob | null>((res) => canvas.toBlob(res, 'image/jpeg', quality))) ?? blob;
+export const reencode = async (blob: Blob, maxSide: number, type = 'image/webp', quality = 0.88): Promise<Blob> => {
+  try {
+    const bmp = await loadBitmap(blob);
+    const scale = Math.min(1, maxSide / Math.max(bmp.width || 1, bmp.height || 1));
+    const w = Math.max(32, Math.round((bmp.width || maxSide) * scale));
+    const h = Math.max(32, Math.round((bmp.height || maxSide) * scale));
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return blob;
+    ctx.drawImage(bmp, 0, 0, w, h);
+    if ('close' in bmp) (bmp as ImageBitmap).close();
+    const out = await new Promise<Blob | null>((res) => canvas.toBlob(res, type, quality));
+    if (out && out.size > 100) return out;
+    const jpegOut = await new Promise<Blob | null>((res) => canvas.toBlob(res, 'image/jpeg', quality));
+    return jpegOut ?? blob;
+  } catch (err) {
+    console.warn('reencode failed, using original blob:', err);
+    return blob;
+  }
 };
 
 // قص مركزي إلى نسبة العرض المطلوبة (المحرك المجاني يرسم مربعاً فقط)
@@ -108,12 +125,50 @@ export const cropToAspect = async (blob: Blob, aspect: string): Promise<Blob> =>
   return (await new Promise<Blob | null>((res) => canvas.toBlob(res, 'image/jpeg', 0.92))) ?? blob;
 };
 
-export const objectUrlFor =(id: string, blob: Blob): string => {
+const MAX_OBJECT_URLS = 48;
+const urlCache = new Map<string, string>();
+
+export const objectUrlFor = (id: string, blob: Blob): string => {
   const existing = urlCache.get(id);
-  if (existing) return existing;
+  if (existing) {
+    // Refresh LRU order
+    urlCache.delete(id);
+    urlCache.set(id, existing);
+    return existing;
+  }
+  // Enforce memory boundary: revoke oldest URLs
+  if (urlCache.size >= MAX_OBJECT_URLS) {
+    const oldestKey = urlCache.keys().next().value;
+    if (oldestKey) {
+      const oldUrl = urlCache.get(oldestKey);
+      if (oldUrl) URL.revokeObjectURL(oldUrl);
+      urlCache.delete(oldestKey);
+    }
+  }
   const url = URL.createObjectURL(blob);
   urlCache.set(id, url);
   return url;
+};
+
+// تفريغ الذاكرة فوراً لروابط الصور غير المستخدمة
+export const purgeUnusedObjectUrls = (keepIds?: Set<string>) => {
+  for (const [id, url] of urlCache.entries()) {
+    if (!keepIds || !keepIds.has(id)) {
+      URL.revokeObjectURL(url);
+      urlCache.delete(id);
+    }
+  }
+};
+
+// تكيّف ذكي مع سرعة الإنترنت لتسريع التحميل وتوفير البيانات
+export const getNetworkAdaptation = () => {
+  const conn = (navigator as unknown as { connection?: { effectiveType?: string; saveData?: boolean } }).connection;
+  const isSlow = conn?.effectiveType === 'slow-2g' || conn?.effectiveType === '2g' || conn?.effectiveType === '3g' || conn?.saveData;
+  return {
+    isSlow: Boolean(isSlow),
+    maxImageSide: isSlow ? 800 : 1280,
+    compressionQuality: isSlow ? 0.78 : 0.88,
+  };
 };
 
 const tokenize = (text: string): string[] =>
@@ -176,8 +231,8 @@ export const imageCount = async (): Promise<number> => {
   }
 };
 
-// مرجع مصغّر يُرسل للنموذج
+// مرجع مصغّر يُرسل للنموذج (512px لتفادي تجاوز سعة الطلب أو رفض الوجوه)
 export const toReference = async (blob: Blob): Promise<{ data: string; mimeType: string }> => {
-  const small = await reencode(blob, 1024, 'image/jpeg', 0.85);
+  const small = await reencode(blob, 512, 'image/jpeg', 0.82);
   return { data: await blobToBase64(small), mimeType: 'image/jpeg' };
 };

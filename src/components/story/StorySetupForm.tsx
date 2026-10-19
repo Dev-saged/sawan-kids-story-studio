@@ -1,6 +1,9 @@
-import { useState, type FormEvent } from 'react';
-import { Clock, FolderOpen, Lightbulb, Mic, Sparkles, Wand2 } from 'lucide-react';
+import { useState, useEffect, type FormEvent } from 'react';
+import { Clock, Compass, FileText, FolderOpen, Lightbulb, Mic, Sparkles, Wand2, X } from 'lucide-react';
 import VoiceDictationModal from './VoiceDictationModal';
+import BookTemplateBrowser from './BookTemplateBrowser';
+import { BookTemplate } from '../../data/bookTemplates';
+import { getStoryDraft, saveStoryDraft, clearStoryDraft } from '../../services/draftManager';
 import {
   AGE_GROUPS,
   ART_STYLE_OPTIONS,
@@ -58,6 +61,65 @@ export default function StorySetupForm({ initialIdea, language, onSubmit, onLoad
   const [hero, setHero] = useState<ChildProfile | null>(null);
   const [presetId, setPresetId] = useState<string>(() => readPreset().id);
   const [showVoiceModal, setShowVoiceModal] = useState(false);
+  const [showTemplates, setShowTemplates] = useState(false);
+  const [availableDraft, setAvailableDraft] = useState<ReturnType<typeof getStoryDraft>>(null);
+
+  // فحص وجود مسودة محفوظة سابقة
+  useEffect(() => {
+    if (!initialIdea && !series) {
+      const d = getStoryDraft();
+      if (d && d.params.idea && d.params.idea !== idea) {
+        setAvailableDraft(d);
+      }
+    }
+  }, []);
+
+  // حفظ المسودة تلقائياً عند الكتابة لتفادي فقدان التقدم عند انقطاع الاتصال
+  useEffect(() => {
+    if (idea.trim().length > 15 && !series) {
+      const timer = setTimeout(() => {
+        saveStoryDraft(
+          {
+            idea,
+            language,
+            dialect: ar ? dialect : undefined,
+            ageGroup,
+            storyType,
+            length: pageCount <= 8 ? 'Short' : pageCount <= 16 ? 'Medium' : pageCount <= 28 ? 'Long' : 'Epic',
+            artStyle,
+            aspectRatio,
+            heroName: hero?.name,
+            heroPhotoId: hero?.photoId,
+          },
+          pageCount
+        );
+      }, 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [idea, dialect, ageGroup, storyType, pageCount, artStyle, aspectRatio, hero]);
+
+  const handleRestoreDraft = () => {
+    if (!availableDraft) return;
+    const p = availableDraft.params;
+    setIdea(p.idea);
+    if (p.dialect) setDialect(p.dialect as ArabicDialect);
+    if (p.ageGroup) setAgeGroup(p.ageGroup);
+    if (p.storyType) setStoryType(p.storyType);
+    if (p.artStyle) setArtStyle(p.artStyle);
+    if (p.aspectRatio) setAspectRatio(p.aspectRatio);
+    if (availableDraft.pageCount) setPageCount(availableDraft.pageCount);
+    setAvailableDraft(null);
+  };
+
+  const handleApplyTemplate = (tmpl: BookTemplate) => {
+    setIdea(tmpl.defaultIdea[ar ? 'ar' : 'en']);
+    setDialect(tmpl.dialect);
+    setAgeGroup(tmpl.ageGroup);
+    setArtStyle(tmpl.artStyle);
+    setAspectRatio(tmpl.aspectRatio);
+    setStoryType(tmpl.storyType);
+    setShowTemplates(false);
+  };
 
   // الهوية تضبط الأسلوب الفني واللهجة وصوت الراوي معاً
   const applyPreset = (id: string) => {
@@ -90,6 +152,7 @@ export default function StorySetupForm({ initialIdea, language, onSubmit, onLoad
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
     if (!canSubmit) return;
+    clearStoryDraft();
     const params: StoryParams = {
       idea,
       language,
@@ -113,6 +176,61 @@ export default function StorySetupForm({ initialIdea, language, onSubmit, onLoad
 
   return (
     <form onSubmit={handleSubmit} className="space-y-5">
+      {/* استعادة المسودة السابقة المحفوظة بدون إنترنت */}
+      {availableDraft && (
+        <div className="flex items-center justify-between gap-3 rounded-2xl border border-dream/40 bg-dream/10 p-3 text-xs" dir={ar ? 'rtl' : 'ltr'}>
+          <div className="flex items-center gap-2">
+            <FileText size={16} className="text-lantern shrink-0" />
+            <span className="font-semibold text-ink dark:text-moonlight">
+              {ar ? 'لديك مسودة قصة سابقة محفوظة لم تُكملها بعد.' : 'You have an unsubmitted draft from your previous session.'}
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleRestoreDraft}
+              className="rounded-full bg-lantern px-3 py-1 font-bold text-ink shadow-xs transition hover:brightness-105 active:scale-95"
+            >
+              {ar ? 'استعادة المسودة' : 'Restore'}
+            </button>
+            <button
+              type="button"
+              onClick={() => { clearStoryDraft(); setAvailableDraft(null); }}
+              className="p-1 text-ink/50 hover:text-coral dark:text-moonlight/50"
+              title={ar ? 'تجاهل' : 'Dismiss'}
+            >
+              <X size={14} />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* زر تصفح القوالب الـ 12 الفخمة */}
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-lantern/35 bg-gradient-to-r from-lantern/15 via-dream/10 to-transparent p-3.5 shadow-xs" dir={ar ? 'rtl' : 'ltr'}>
+        <div className="flex items-center gap-2.5">
+          <span className="text-xl">✨</span>
+          <div>
+            <p className="font-display text-xs font-bold text-ink dark:text-moonlight">
+              {ar ? 'قوالب جاهزة: فلسطينية، شامية، مصرية، بدوية، فضاء، قبل النوم' : 'Ready Story Themes: Palestinian, Syrian, Space, Dino & Bedtime'}
+            </p>
+            <p className="text-[11px] text-ink/65 dark:text-moonlight/65">
+              {ar ? '12 قالباً فخماً للأطفال بلهجات وأساليب فنية متناسقة' : '12 rich cultural and educational story templates'}
+            </p>
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={() => setShowTemplates(!showTemplates)}
+          className="inline-flex min-h-9 items-center gap-1.5 rounded-full bg-lantern px-3.5 text-xs font-bold text-ink shadow-xs transition hover:brightness-105 active:scale-95 shrink-0"
+        >
+          <Compass size={14} />
+          <span>{showTemplates ? (ar ? 'إخفاء القوالب' : 'Hide templates') : (ar ? 'تصفح القوالب (12)' : 'Browse (12)')}</span>
+        </button>
+      </div>
+
+      {showTemplates && (
+        <BookTemplateBrowser ar={ar} onSelectTemplate={handleApplyTemplate} onClose={() => setShowTemplates(false)} />
+      )}
       {series && (
         <div className="flex items-center justify-between gap-3 rounded-2xl border border-lantern/40 bg-lantern/10 px-4 py-3 text-sm" dir={ar ? 'rtl' : 'ltr'}>
           <span className="font-display font-bold text-ink dark:text-moonlight">
