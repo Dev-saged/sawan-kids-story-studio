@@ -1,9 +1,9 @@
-// مخزن المتصفح المحلي (IndexedDB v3): قصص + صور + صوت + ملفات الأطفال + البصمات الصوتية + ألبوم الشخصيات (ب7) + الهويات المخصصة (ب3)
+// مخزن المتصفح المحلي (IndexedDB v4): قصص + صور + صوت (keyPath: 'id' مع ترحيل القواعد القديمة) + ملفات الأطفال + البصمات الصوتية + ألبوم الشخصيات (ب7) + الهويات المخصصة (ب3)
 import type { BrandPreset } from '../config';
 import type { SavedCharacter } from '../types';
 
 export const DB_NAME = 'sawan_studio';
-export const DB_VERSION = 3;
+export const DB_VERSION = 4;
 
 export type ImageKind = 'page' | 'cover' | 'sheet' | 'hero' | 'explain';
 
@@ -17,7 +17,7 @@ export interface StoredImage {
 }
 
 export interface StoredAudio {
-  key: string;
+  id: string;
   blob: Blob;
   createdAt: number;
 }
@@ -41,6 +41,65 @@ export interface VoiceProfile {
   createdAt: number;
 }
 
+export const newId = (): string =>
+  typeof crypto !== 'undefined' && crypto.randomUUID
+    ? crypto.randomUUID()
+    : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 9)}`;
+
+/**
+ * أ1: ترقية وترحيل مخطط IndexedDB.
+ * إن وُجد مخزن 'audio' بمفتاح مختلف عن 'id' (مثل 'key' في الإصدارات السابقة)،
+ * يُعاد إنشاؤه بـ keyPath: 'id' وتُنسخ جميع السجلات (id أو key -> id) دون فقدان.
+ */
+export const upgradeDbSchema = (db: IDBDatabase, tx: IDBTransaction | null): void => {
+  if (!db.objectStoreNames.contains('stories')) {
+    const s = db.createObjectStore('stories', { keyPath: 'id' });
+    s.createIndex('createdAt', 'createdAt');
+  }
+  if (!db.objectStoreNames.contains('images')) {
+    const i = db.createObjectStore('images', { keyPath: 'id' });
+    i.createIndex('kind', 'kind');
+  }
+  if (!db.objectStoreNames.contains('audio')) {
+    db.createObjectStore('audio', { keyPath: 'id' });
+  } else if (tx) {
+    const existingAudio = tx.objectStore('audio');
+    if (existingAudio.keyPath !== 'id') {
+      const getAllReq = existingAudio.getAll();
+      getAllReq.onsuccess = () => {
+        const legacyRecords = (getAllReq.result ?? []) as Array<Record<string, unknown>>;
+        db.deleteObjectStore('audio');
+        const recreatedAudio = db.createObjectStore('audio', { keyPath: 'id' });
+        for (const rec of legacyRecords) {
+          const resolvedId = String(rec.id ?? rec.key ?? newId());
+          const { key: _oldKey, ...rest } = rec;
+          recreatedAudio.put({
+            ...rest,
+            id: resolvedId,
+            createdAt: typeof rec.createdAt === 'number' ? rec.createdAt : Date.now(),
+          });
+        }
+      };
+    }
+  }
+  if (!db.objectStoreNames.contains('children')) {
+    db.createObjectStore('children', { keyPath: 'id' });
+  }
+  if (!db.objectStoreNames.contains('voice_profiles')) {
+    db.createObjectStore('voice_profiles', { keyPath: 'id' });
+  }
+  // ب7: مخزن ألبوم الشخصيات المحفوظة مع صورها المرجعية
+  if (!db.objectStoreNames.contains('characters')) {
+    const c = db.createObjectStore('characters', { keyPath: 'id' });
+    c.createIndex('createdAt', 'createdAt');
+  }
+  // ب3: مخزن الهويات السريعة المخصصة («احفظ هويتي»)
+  if (!db.objectStoreNames.contains('custom_presets')) {
+    const p = db.createObjectStore('custom_presets', { keyPath: 'id' });
+    p.createIndex('createdAt', 'createdAt');
+  }
+};
+
 let dbPromise: Promise<IDBDatabase> | null = null;
 
 export const openDb = (): Promise<IDBDatabase> => {
@@ -48,34 +107,7 @@ export const openDb = (): Promise<IDBDatabase> => {
   dbPromise = new Promise((resolve, reject) => {
     const req = indexedDB.open(DB_NAME, DB_VERSION);
     req.onupgradeneeded = () => {
-      const db = req.result;
-      if (!db.objectStoreNames.contains('stories')) {
-        const s = db.createObjectStore('stories', { keyPath: 'id' });
-        s.createIndex('createdAt', 'createdAt');
-      }
-      if (!db.objectStoreNames.contains('images')) {
-        const i = db.createObjectStore('images', { keyPath: 'id' });
-        i.createIndex('kind', 'kind');
-      }
-      if (!db.objectStoreNames.contains('audio')) {
-        db.createObjectStore('audio', { keyPath: 'key' });
-      }
-      if (!db.objectStoreNames.contains('children')) {
-        db.createObjectStore('children', { keyPath: 'id' });
-      }
-      if (!db.objectStoreNames.contains('voice_profiles')) {
-        db.createObjectStore('voice_profiles', { keyPath: 'id' });
-      }
-      // ب7: مخزن ألبوم الشخصيات المحفوظة مع صورها المرجعية
-      if (!db.objectStoreNames.contains('characters')) {
-        const c = db.createObjectStore('characters', { keyPath: 'id' });
-        c.createIndex('createdAt', 'createdAt');
-      }
-      // ب3: مخزن الهويات السريعة المخصصة («احفظ هويتي»)
-      if (!db.objectStoreNames.contains('custom_presets')) {
-        const p = db.createObjectStore('custom_presets', { keyPath: 'id' });
-        p.createIndex('createdAt', 'createdAt');
-      }
+      upgradeDbSchema(req.result, req.transaction);
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => {
@@ -103,11 +135,6 @@ export const dbByIndex = <T,>(store: string, index: string, key: IDBValidKey): P
   run(store, 'readonly', (s) => s.index(index).getAll(key));
 export const dbPut = <T,>(store: string, value: T): Promise<IDBValidKey> => run(store, 'readwrite', (s) => s.put(value));
 export const dbDelete = (store: string, key: IDBValidKey): Promise<undefined> => run(store, 'readwrite', (s) => s.delete(key));
-
-export const newId = (): string =>
-  typeof crypto !== 'undefined' && crypto.randomUUID
-    ? crypto.randomUUID()
-    : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 9)}`;
 
 export const hashText = (s: string): string => {
   let h = 2166136261;

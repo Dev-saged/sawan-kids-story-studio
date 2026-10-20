@@ -43,22 +43,23 @@ export default function NavBar({ active, onNavigate, language, onToggleLanguage,
     <>
       {updateInfo?.hasUpdate && !dismissedUpdate && (
         <div
-          dir={isAr ? 'rtl' : 'ltr'}
-          className="flex items-center justify-between gap-2 border-b border-lantern/30 bg-lantern/15 px-4 py-1.5 text-xs font-bold text-ink dark:text-amber-200"
+          dir="rtl"
+          role="status"
+          className="flex items-center justify-between gap-2 border-b border-lantern/30 bg-lantern/15 px-4 py-1 text-xs font-bold text-ink dark:text-amber-200"
         >
           <div className="flex items-center gap-2">
             <ArrowUpCircle size={15} className="text-lantern shrink-0" aria-hidden />
             <span>
               {isAr
-                ? `يتوفر إصدار أحدث (v${updateInfo.latestVersion})`
-                : `A newer version is available (v${updateInfo.latestVersion})`}
+                ? `يتوفر إصدار أحدث من ${BRAND.name.ar} (v${updateInfo.latestVersion})`
+                : `يتوفر إصدار أحدث (v${updateInfo.latestVersion})`}
             </span>
             {updateInfo.releaseUrl && (
               <a
                 href={updateInfo.releaseUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="underline decoration-lantern underline-offset-4 hover:text-lantern"
+                className="inline-flex min-h-11 items-center px-2 underline decoration-lantern underline-offset-4 hover:text-lantern"
               >
                 {isAr ? 'عرض التحديث' : 'View update'}
               </a>
@@ -67,10 +68,10 @@ export default function NavBar({ active, onNavigate, language, onToggleLanguage,
           <button
             type="button"
             onClick={() => setDismissedUpdate(true)}
-            className="rounded-lg p-1 text-ink/60 hover:text-ink dark:text-amber-200/70 dark:hover:text-amber-100"
+            className="flex min-h-11 min-w-11 items-center justify-center rounded-xl text-ink/70 hover:text-ink dark:text-amber-200/80 dark:hover:text-amber-100"
             aria-label={isAr ? 'إغلاق الإشعار' : 'Dismiss update notice'}
           >
-            <X size={14} aria-hidden />
+            <X size={15} aria-hidden />
           </button>
         </div>
       )}
@@ -81,9 +82,9 @@ export default function NavBar({ active, onNavigate, language, onToggleLanguage,
           <button
             type="button"
             onClick={() => onNavigate('studio')}
-            className="group flex items-center gap-2.5 text-start focus-visible:outline-none"
+            className="group flex min-h-11 items-center gap-2.5 text-start focus-visible:outline-none"
           >
-            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-lantern via-amber-400 to-amber-600 text-ink shadow-md shadow-lantern/25 transition-transform group-hover:scale-105">
+            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-lantern via-amber-400 to-amber-600 text-ink shadow-md shadow-lantern/25 transition-transform group-hover:scale-105">
               <LanternSvg className="w-6 h-6" />
             </span>
             <div className="min-w-0">
@@ -91,17 +92,17 @@ export default function NavBar({ active, onNavigate, language, onToggleLanguage,
                 <span className="font-display text-base sm:text-lg font-extrabold tracking-tight text-ink dark:text-moonlight truncate">
                   {isAr ? BRAND.name.ar : BRAND.name.en}
                 </span>
-                <span className="rounded-full border border-lantern/40 bg-lantern/15 px-2 py-0.5 font-mono text-[10px] font-bold text-lantern">
+                <span className="rounded-md border border-lantern/40 bg-lantern/15 px-1.5 py-0.5 font-mono text-[10px] font-bold text-ink dark:text-amber-200">
                   v{APP_VERSION}
                 </span>
               </div>
-              <span className="hidden sm:block text-[11px] font-medium text-ink/55 dark:text-moonlight/55 truncate">
-                {isAr ? 'استوديو القصص المصورة والذكية للأطفال واليافعين' : 'Interactive Illustrated Story Studio'}
+              <span className="hidden sm:block text-[11px] font-medium text-ink/60 dark:text-moonlight/60 truncate">
+                {isAr ? BRAND.fullName.ar : BRAND.fullName.en}
               </span>
             </div>
           </button>
 
-          {/* Desktop Navigation Pills (md and up) */}
+          {/* Desktop Navigation Tabs (md and up) */}
           <nav
             className="hidden md:flex items-center gap-1 rounded-2xl border border-dream/25 bg-white/60 p-1 shadow-xs dark:border-white/10 dark:bg-white/5"
             aria-label={isAr ? 'التنقل الرئيسي' : 'Primary navigation'}
@@ -114,10 +115,10 @@ export default function NavBar({ active, onNavigate, language, onToggleLanguage,
                   type="button"
                   onClick={() => onNavigate(id)}
                   aria-current={isActive ? 'page' : undefined}
-                  className={`flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-xs font-bold transition-all ${
+                  className={`flex min-h-11 items-center gap-1.5 rounded-xl px-3.5 py-2 text-xs font-bold transition-transform ${
                     isActive
                       ? 'bg-lantern text-ink shadow-sm'
-                      : 'text-ink/70 hover:bg-dream/15 hover:text-ink dark:text-moonlight/70 dark:hover:bg-white/10 dark:hover:text-moonlight'
+                      : 'text-ink/75 hover:bg-dream/15 hover:text-ink dark:text-moonlight/75 dark:hover:bg-white/10 dark:hover:text-moonlight'
                   }`}
                 >
                   <Icon size={15} strokeWidth={isActive ? 2.5 : 2} />
@@ -132,7 +133,7 @@ export default function NavBar({ active, onNavigate, language, onToggleLanguage,
             <button
               type="button"
               onClick={onToggleLanguage}
-              className="flex min-h-10 items-center gap-1.5 rounded-2xl border border-dream/30 bg-white/75 px-3 py-1.5 text-xs font-bold text-ink shadow-2xs transition hover:border-lantern active:scale-95 dark:border-white/15 dark:bg-white/10 dark:text-moonlight"
+              className="flex min-h-11 items-center gap-1.5 rounded-2xl border border-dream/30 bg-white/75 px-3.5 py-2 text-xs font-bold text-ink shadow-2xs transition hover:border-lantern active:scale-95 dark:border-white/15 dark:bg-white/10 dark:text-moonlight"
               aria-label={isAr ? 'تبديل اللغة' : 'Toggle language'}
             >
               <Languages size={15} className="text-lantern" aria-hidden />
@@ -141,7 +142,7 @@ export default function NavBar({ active, onNavigate, language, onToggleLanguage,
             <button
               type="button"
               onClick={onToggleTheme}
-              className="flex h-10 w-10 items-center justify-center rounded-2xl border border-dream/30 bg-white/75 text-ink shadow-2xs transition hover:border-lantern active:scale-95 dark:border-white/15 dark:bg-white/10 dark:text-moonlight"
+              className="flex min-h-11 min-w-11 items-center justify-center rounded-2xl border border-dream/30 bg-white/75 text-ink shadow-2xs transition hover:border-lantern active:scale-95 dark:border-white/15 dark:bg-white/10 dark:text-moonlight"
               aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
             >
               {theme === 'dark' ? <Sun size={17} className="text-amber-300" aria-hidden /> : <Moon size={17} className="text-ink/80" aria-hidden />}
@@ -163,10 +164,10 @@ export default function NavBar({ active, onNavigate, language, onToggleLanguage,
                 <button
                   type="button"
                   onClick={() => onNavigate(id)}
-                  className={`relative flex w-full flex-col items-center justify-center gap-1 rounded-2xl py-2 text-[11px] font-bold transition-all active:scale-95 ${
+                  className={`relative flex min-h-11 w-full flex-col items-center justify-center gap-1 rounded-2xl py-2 text-[11px] font-bold transition-transform active:scale-95 ${
                     isActive
                       ? 'text-ink dark:text-amber-300'
-                      : 'text-ink/55 hover:text-ink/80 dark:text-moonlight/55 dark:hover:text-moonlight/85'
+                      : 'text-ink/60 hover:text-ink/85 dark:text-moonlight/60 dark:hover:text-moonlight/85'
                   }`}
                   aria-current={isActive ? 'page' : undefined}
                 >

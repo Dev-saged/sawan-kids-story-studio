@@ -1,60 +1,49 @@
-import { APP_VERSION, SOCIAL_LINKS } from '../config';
+import { APP_VERSION, CONFIG } from '../config';
+import { CURRENT_VERSION, compareVersions, type VersionComparable } from '../version';
 
-// مقارنة نسختين بصيغة SemVer (مثلاً '2.11.0' > '2.10.0' ترجع 1)
-export const compareVersions = (a: string, b: string): number => {
-  const cleanA = a.replace(/^v/i, '').trim().split('.').map((n) => parseInt(n, 10) || 0);
-  const cleanB = b.replace(/^v/i, '').trim().split('.').map((n) => parseInt(n, 10) || 0);
-  const len = Math.max(cleanA.length, cleanB.length, 3);
-  for (let i = 0; i < len; i++) {
-    const va = cleanA[i] ?? 0;
-    const vb = cleanB[i] ?? 0;
-    if (va > vb) return 1;
-    if (va < vb) return -1;
-  }
-  return 0;
-};
+export { compareVersions, type VersionComparable };
 
 export interface UpdateCheckResult {
   hasUpdate: boolean;
   latestVersion: string;
+  buildNumber?: number;
+  releaseDate?: string;
   url?: string;
   releaseUrl?: string;
 }
 
-// فحص تحديث صامت عند فتح التطبيق: يقارن APP_VERSION مع آخر إصدار على GitHub أو version.json المنشور
+// أ2: فحص التحديث الصامت من raw.githubusercontent.com عبر المالك والمستودع في CONFIG فقط بمهلة 5 ثوانٍ
 export const checkSilentUpdate = async (): Promise<UpdateCheckResult> => {
   try {
     if (typeof navigator !== 'undefined' && navigator.onLine === false) {
       return { hasUpdate: false, latestVersion: APP_VERSION };
     }
     const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 4500);
+    const timer = setTimeout(() => ctrl.abort(), 5000);
     try {
-      // 1) فحص /version.json المحلي/الخادم عند نشر نسخة جديدة
-      const localRes = await fetch(`/version.json?t=${Date.now()}`, { signal: ctrl.signal, cache: 'no-store' }).catch(() => null);
-      if (localRes && localRes.ok) {
-        const data = await localRes.json().catch(() => null);
-        if (data?.version && compareVersions(String(data.version), APP_VERSION) > 0) {
-          return { hasUpdate: true, latestVersion: String(data.version) };
-        }
-      }
+      const remoteUrl = `https://raw.githubusercontent.com/${CONFIG.GITHUB_OWNER}/${CONFIG.GITHUB_REPO}/main/public/version.json`;
+      const res = await fetch(remoteUrl, {
+        signal: ctrl.signal,
+        cache: 'no-store',
+      }).catch(() => null);
 
-      // 2) فحص مستودع GitHub العام إن توفر في SOCIAL_LINKS
-      const ghUrl = SOCIAL_LINKS.github || '';
-      const ownerMatch = /github\.com\/([^/]+)(?:\/([^/]+))?/.exec(ghUrl);
-      if (ownerMatch) {
-        const owner = ownerMatch[1];
-        const repo = ownerMatch[2] || 'sajed-kids-story-studio';
-        const ghRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/releases/latest`, {
-          signal: ctrl.signal,
-          headers: { Accept: 'application/vnd.github+json' },
-        }).catch(() => null);
-        if (ghRes && ghRes.ok) {
-          const rel = await ghRes.json().catch(() => null);
-          const tag = String(rel?.tag_name || rel?.name || '').replace(/^v/i, '');
-          if (tag && /^\d+\.\d+\.\d+/.test(tag) && compareVersions(tag, APP_VERSION) > 0) {
-            const releaseUrl = rel?.html_url || ghUrl;
-            return { hasUpdate: true, latestVersion: tag, url: releaseUrl, releaseUrl };
+      if (res && res.ok) {
+        const data = await res.json().catch(() => null);
+        if (data && typeof data.version === 'string') {
+          const remoteInfo: VersionComparable = {
+            version: String(data.version).replace(/^v/i, '').trim(),
+            buildNumber: typeof data.buildNumber === 'number' ? data.buildNumber : undefined,
+          };
+          if (compareVersions(remoteInfo, CURRENT_VERSION) > 0) {
+            const releaseUrl = `https://github.com/${CONFIG.GITHUB_OWNER}/${CONFIG.GITHUB_REPO}`;
+            return {
+              hasUpdate: true,
+              latestVersion: remoteInfo.version,
+              buildNumber: remoteInfo.buildNumber,
+              releaseDate: typeof data.releaseDate === 'string' ? data.releaseDate : undefined,
+              url: releaseUrl,
+              releaseUrl,
+            };
           }
         }
       }
@@ -62,7 +51,7 @@ export const checkSilentUpdate = async (): Promise<UpdateCheckResult> => {
       clearTimeout(timer);
     }
   } catch {
-    // فحص صامت: لا نزعج المستخدم بأي خطأ شبكة
+    // فشل الشبكة يُتجاهل بصمت تام دون أي خطأ في الكونسول
   }
   return { hasUpdate: false, latestVersion: APP_VERSION };
 };

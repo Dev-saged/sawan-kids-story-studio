@@ -27,7 +27,7 @@ const LANGUAGE_STORAGE_KEY = 'sawan-language';
 
 const getInitialLanguage = (): Language => {
   const stored = localStorage.getItem(LANGUAGE_STORAGE_KEY);
-  return stored === 'Arabic' || stored === 'English' ? stored : 'English';
+  return stored === 'Arabic' || stored === 'English' ? stored : 'Arabic';
 };
 
 const SectionFallback = () => (

@@ -9,6 +9,8 @@ export const CONFIG = {
   WATERMARK_WIDTH_RATIO: 0.04,
   PREVIEW_GATE_DEFAULT: true,
   EXPORT_WATERMARK_DEFAULT: true,
+  GITHUB_OWNER: 'Dev-saged',
+  GITHUB_REPO: 'sawan-kids-story-studio',
 } as const;
 
 // الهوية وروابط التواصل — تعديل هذا الملف فقط يغيّر العلامة في كل التطبيق

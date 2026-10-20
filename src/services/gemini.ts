@@ -81,7 +81,7 @@ export const getCharactersForPage = (story: StoryData, page?: StoryPage): Charac
   return matched.length > 0 ? matched : [chars[0]];
 };
 
-// أ1: تجميع الطلب مع سقف صارم 120 كلمة؛ إن تجاوز نقصّ وصف الشخصيات أولاً ثم الأسلوب، ولا نقصّ المشهد أبداً
+// أ1 + أ3: تجميع الطلب مع سقف صارم 120 كلمة؛ إن تجاوز نقصّ وصف الشخصيات أولاً ثم الأسلوب، ولا نقصّ المشهد أبداً
 const assemblePromptWithWordCap = (
   sceneLine: string,
   charactersLine: string,
@@ -90,7 +90,7 @@ const assemblePromptWithWordCap = (
   maxTotalWords = 120
 ): string => {
   const scene = sceneLine.trim();
-  const directive = directiveLine.trim();
+  let directive = directiveLine.trim();
   let chars = charactersLine.trim();
   let style = styleLine.trim();
 
@@ -99,23 +99,23 @@ const assemblePromptWithWordCap = (
   if (total() > maxTotalWords) {
     // 1) قصّ وصف الشخصيات أولاً
     const fixedWithoutChars = countWords([scene, style, directive].filter(Boolean).join(' '));
-    const allowedForChars = Math.max(4, maxTotalWords - fixedWithoutChars);
+    const allowedForChars = Math.max(0, maxTotalWords - fixedWithoutChars);
     chars = capWords(chars, allowedForChars);
   }
 
   if (total() > maxTotalWords) {
     // 2) قصّ الأسلوب ثانياً
     const fixedWithoutStyle = countWords([scene, chars, directive].filter(Boolean).join(' '));
-    const allowedForStyle = Math.max(4, maxTotalWords - fixedWithoutStyle);
+    const allowedForStyle = Math.max(0, maxTotalWords - fixedWithoutStyle);
     style = capWords(style, allowedForStyle);
   }
 
   if (total() > maxTotalWords) {
-    // إذا كان المشهد نفسه طويلاً جداً، نقلص الشخصيات والأسلوب إلى الحد الأدنى دون المساس بالمشهد أبداً
-    const remaining = Math.max(0, maxTotalWords - countWords(scene) - countWords(directive));
-    const half = Math.floor(remaining / 2);
-    chars = capWords(chars, half);
-    style = capWords(style, Math.max(0, remaining - countWords(chars)));
+    // 3) إذا بقي المجموع أكبر من 120 بسبب طول المشهد، نقلص التوجيه الإيجابي دون المساس بالمشهد أبداً
+    chars = '';
+    style = '';
+    const allowedForDirective = Math.max(0, maxTotalWords - countWords(scene));
+    directive = capWords(directive, allowedForDirective);
   }
 
   return [scene, chars, style, directive].filter(Boolean).join('\n');

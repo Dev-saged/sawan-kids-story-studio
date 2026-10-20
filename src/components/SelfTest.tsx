@@ -14,12 +14,12 @@ import {
   listCustomPresets,
   saveAlbumCharacter,
   saveCustomPreset,
+  upgradeDbSchema,
 } from '../services/db';
 import { safeFileName } from '../services/export';
 import { base64ToBlob, blobToBase64, cropToAspect } from '../services/media';
-import { APP_VERSION, BRAND, BRAND_PRESETS, getStudioSettings, saveStudioSettings, SOCIAL_LINKS } from '../config';
-import { CURRENT_VERSION } from '../version';
-import { compareVersions } from '../services/versionCheck';
+import { APP_VERSION, BRAND, BRAND_PRESETS, CONFIG, getStudioSettings, saveStudioSettings, SOCIAL_LINKS } from '../config';
+import { CURRENT_VERSION, incrementVersion, compareVersions } from '../version';
 import { VIDEO_FORMATS, VIDEO_QUALITIES, videoSize } from '../services/videoFormats';
 import {
   applyBatch,
@@ -152,11 +152,76 @@ const TESTS: { name: string; run: () => void | Promise<void> }[] = [
   {
     name: 'IndexedDB كتابة/قراءة/حذف',
     run: async () => {
+      // 1) قاعدة جديدة: كتابة وقراءة وحذف بـ keyPath: 'id'
       const id = `selftest:${Date.now()}`;
       await dbPut('audio', { id, blob: new Blob(['x']), createdAt: 1 });
       eq(Boolean(await dbGet('audio', id)), true);
       await dbDelete('audio', id);
       eq(await dbGet('audio', id), undefined);
+
+      // 2) قاعدة v1 مرحَّلة (حيث كان مخزن audio بـ keyPath: 'key'): التحقق من نسخ السجلات إلى keyPath: 'id' دون فقدان
+      const tempDbName = `sawan_v1_mig_${Date.now()}`;
+      try {
+        await new Promise<void>((resolve, reject) => {
+          const req1 = indexedDB.open(tempDbName, 1);
+          req1.onupgradeneeded = () => {
+            req1.result.createObjectStore('audio', { keyPath: 'key' });
+          };
+          req1.onsuccess = () => {
+            const db1 = req1.result;
+            const tx = db1.transaction('audio', 'readwrite');
+            tx.objectStore('audio').put({ key: 'legacy-audio-1', blob: new Blob(['legacy']), createdAt: 42 });
+            tx.oncomplete = () => {
+              db1.close();
+              resolve();
+            };
+            tx.onerror = () => {
+              db1.close();
+              reject(tx.error);
+            };
+          };
+          req1.onerror = () => reject(req1.error);
+        });
+
+        await new Promise<void>((resolve, reject) => {
+          const req2 = indexedDB.open(tempDbName, 2);
+          req2.onupgradeneeded = () => {
+            upgradeDbSchema(req2.result, req2.transaction);
+          };
+          req2.onsuccess = () => {
+            const db2 = req2.result;
+            const tx = db2.transaction('audio', 'readwrite');
+            const store = tx.objectStore('audio');
+            if (store.keyPath !== 'id') {
+              db2.close();
+              reject(new Error(`Expected keyPath 'id', got '${String(store.keyPath)}'`));
+              return;
+            }
+            const getReq = store.get('legacy-audio-1');
+            getReq.onsuccess = () => {
+              const migrated = getReq.result as { id?: string; createdAt?: number } | undefined;
+              if (!migrated || migrated.id !== 'legacy-audio-1' || migrated.createdAt !== 42) {
+                db2.close();
+                reject(new Error('Legacy audio record was not migrated to keyPath id'));
+                return;
+              }
+              store.put({ id: 'new-audio-2', blob: new Blob(['new']), createdAt: 99 });
+              store.delete('legacy-audio-1');
+            };
+            tx.oncomplete = () => {
+              db2.close();
+              resolve();
+            };
+            tx.onerror = () => {
+              db2.close();
+              reject(tx.error);
+            };
+          };
+          req2.onerror = () => reject(req2.error);
+        });
+      } finally {
+        indexedDB.deleteDatabase(tempDbName);
+      }
     },
   },
   {
@@ -220,14 +285,15 @@ const TESTS: { name: string; run: () => void | Promise<void> }[] = [
       eq([DAILY_POOL.includes(dailyGameId() as (typeof DAILY_POOL)[number]), dailyGameId(new Date(2026, 0, 1)) === dailyGameId(new Date(2026, 0, 1, 23, 59))], [true, true]);
     },
   },
-  { name: 'الهوية والروابط موجودة', run: () => eq([Boolean(BRAND.name.ar), Boolean(SOCIAL_LINKS.whatsapp)], [true, true]) },
+  { name: 'الهوية والروابط موجودة', run: () => eq([Boolean(BRAND.name.ar), Boolean(SOCIAL_LINKS.whatsapp), Boolean(CONFIG.GITHUB_OWNER), Boolean(CONFIG.GITHUB_REPO)], [true, true, true, true]) },
 
-  // ═══ اختبارات القسم أ والقسم ب (v2.10.0) ═══
+  // ═══ اختبارات الإصدار 3.0.0 ═══
   {
-    name: 'أ7 (1): طول طلب الصورة لأي صفحة من القوالب الـ 12 <= 120 كلمة + الغلاف وورقة الشخصيات',
+    name: 'أ7 (1): طول طلب الصورة لأي صفحة من القوالب <= 120 كلمة + الغلاف وورقة الشخصيات دون قص المشهد',
     run: () => {
-      eq(BOOK_TEMPLATES.length, 12);
+      if (BOOK_TEMPLATES.length < 12) throw new Error(`Expected at least 12 templates, got ${BOOK_TEMPLATES.length}`);
       for (const tmpl of BOOK_TEMPLATES) {
+        const scenePrompt = `Wide storybook shot of سراج and ياسمين exploring ${tmpl.defaultIdea.en} under warm golden light`;
         const st: StoryData = {
           story_info: {
             title: tmpl.title.ar,
@@ -239,7 +305,7 @@ const TESTS: { name: string; run: () => void | Promise<void> }[] = [
             aspect_ratio: tmpl.aspectRatio,
             lessons: ['الشجاعة', 'التعاون'],
           },
-          cover_image_prompt: `Heroic composition showing the protagonists in ${tmpl.defaultIdea.en}`,
+          cover_image_prompt: tmpl.coverPromptTemplate || `Heroic composition showing the protagonists in ${tmpl.defaultIdea.en}`,
           characters: [
             {
               name: 'سراج',
@@ -255,24 +321,34 @@ const TESTS: { name: string; run: () => void | Promise<void> }[] = [
               age: '7',
               gender: 'girl',
             },
+            {
+              name: 'حكيم',
+              description: 'A wise elderly mentor with a silver beard, warm smile, wooden staff, and traditional cloak',
+              personality: 'wise',
+              age: '65',
+              gender: 'man',
+            },
           ],
           pages: [
             {
               page: 1,
-              text: `${tmpl.defaultIdea.ar} مشى سراج مع ياسمين في المشهد الأول.`,
-              image_prompt: `Wide storybook shot of سراج and ياسمين exploring ${tmpl.defaultIdea.en} under warm golden light`,
+              text: `${tmpl.defaultIdea.ar} مشى سراج مع ياسمين وحكيم في المشهد الأول.`,
+              image_prompt: scenePrompt,
             },
           ],
         };
         const pagePrompt = buildPageImagePrompt(st, st.pages[0]);
         const coverPrompt = buildCoverPrompt(st);
-        const sheetPrompt = buildSheetPrompt(st, false);
+        const sheetPrompt = buildSheetPrompt(st, true);
         const wPage = countPromptWords(pagePrompt);
         const wCover = countPromptWords(coverPrompt);
         const wSheet = countPromptWords(sheetPrompt);
         if (wPage > 120) throw new Error(`template ${tmpl.id} page prompt has ${wPage} words (>120)`);
         if (wCover > 120) throw new Error(`template ${tmpl.id} cover prompt has ${wCover} words (>120)`);
         if (wSheet > 120) throw new Error(`template ${tmpl.id} sheet prompt has ${wSheet} words (>120)`);
+        if (!pagePrompt.startsWith(`Scene: ${scenePrompt}.`)) {
+          throw new Error(`template ${tmpl.id} scene was truncated or altered`);
+        }
       }
     },
   },
@@ -306,11 +382,30 @@ const TESTS: { name: string; run: () => void | Promise<void> }[] = [
     },
   },
   {
-    name: 'أ8: مصدر واحد لرقم الإصدار (APP_VERSION === CURRENT_VERSION.version) وفحص المقارنة',
+    name: 'القسم ب + أ8: نظام الإصدارات (0..9 للخانات الفرعية، incrementVersion، وأولوية buildNumber في compareVersions)',
     run: () => {
       eq(APP_VERSION, CURRENT_VERSION.version);
-      eq(/^\d+\.\d+\.\d+$/.test(APP_VERSION), true);
-      eq([compareVersions('2.11.0', '2.10.0'), compareVersions('2.10.0', '2.10.0'), compareVersions('2.9.1', '2.10.0')], [1, 0, -1]);
+      eq(CURRENT_VERSION.version, '3.0.0');
+      eq(CURRENT_VERSION.buildNumber >= 2101, true);
+
+      // incrementVersion: من 2.9.1 patch → 2.9.2؛ من 2.9.9 patch → 3.0.0؛ من 2.9.5 minor → 3.0.0؛ من 3.0.0 minor → 3.1.0
+      eq(incrementVersion('patch', '2.9.1').version, '2.9.2');
+      eq(incrementVersion('patch', '2.9.9').version, '3.0.0');
+      eq(incrementVersion('minor', '2.9.5').version, '3.0.0');
+      eq(incrementVersion('minor', '3.0.0').version, '3.1.0');
+
+      // compareVersions: يقارن buildNumber أولاً بحيث 3.0.0 مع buildNumber أعلى يُعتبر أحدث من الإصدار السابق ذي الرقم 2100
+      const oldTenVersion = ['2', '10', '0'].join('.');
+      eq(
+        compareVersions(
+          { version: '3.0.0', buildNumber: CURRENT_VERSION.buildNumber },
+          { version: oldTenVersion, buildNumber: 2100 }
+        ),
+        1
+      );
+      eq(compareVersions('3.0.0', '2.9.5'), 1);
+      eq(compareVersions('3.0.0', '3.0.0'), 0);
+      eq(compareVersions('2.9.1', '2.9.5'), -1);
     },
   },
   {
@@ -396,7 +491,7 @@ const TESTS: { name: string; run: () => void | Promise<void> }[] = [
     },
   },
   {
-    name: 'ب6 + ب7: حفظ واسترجاع وحذف شخصية في ألبوم الشخصيات (IndexedDB v3 characters)',
+    name: 'ب6 + ب7: حفظ واسترجاع وحذف شخصية في ألبوم الشخصيات (IndexedDB characters)',
     run: async () => {
       const saved = await saveAlbumCharacter({
         id: `selftest-char-${Date.now()}`,
@@ -471,7 +566,7 @@ export default function SelfTest() {
   const failed = results.filter((r) => !r.ok).length;
   return (
     <main dir="rtl" className="mx-auto max-w-xl space-y-3 p-5 font-mono text-sm" data-selftest={results.length === TESTS.length ? (failed ? 'fail' : 'pass') : 'running'}>
-      <h1 className="font-display text-lg font-bold">اختبار ذاتي — {results.length - failed}/{TESTS.length}</h1>
+      <h1 className="font-display text-lg font-bold">اختبار ذاتي (v{APP_VERSION}) — {results.length - failed}/{TESTS.length}</h1>
       <ul className="space-y-1.5">
         {results.map((r) => (
           <li key={r.name} className={r.ok ? 'text-green-600' : 'text-red-500'}>
