@@ -4,6 +4,7 @@ import crypto from 'crypto';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { GoogleGenAI, Modality, Type, type Schema } from '@google/genai';
+import { NO_SIZE_IMAGE_MODELS, POSITIVE_ILLUSTRATION_DIRECTIVE } from './src/shared/modelRules';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -40,13 +41,6 @@ const MODELS = {
   ],
   music: ['lyria-3-clip-preview', 'lyria-3.5'],
 };
-// نماذج لا تقبل imageSize (ترفضه بخطأ 400): تأخذ نسبة الأبعاد فقط
-const NO_SIZE_IMAGE_MODELS = new Set([
-  'gemini-2.5-flash-image',
-  'gemini-3.1-flash-lite-image',
-  'gemini-3.1-flash-image',
-  'gemini-3.1-flash-image-preview',
-]);
 const VOICES = new Set(['Sulafat', 'Vindemiatrix', 'Achernar', 'Algieba', 'Charon', 'Puck', 'Kore', 'Leda']);
 const ASPECTS = new Set(['1:1', '16:9', '9:16', '4:3', '3:4']);
 // أي صيغة مفتاح (AIza… / AQ.… / مستقبلية): نمنع المسافات فقط، وجوجل تحكم بالصلاحية
@@ -175,18 +169,16 @@ async function runChain<T>(label: string, models: string[], attempt: (model: str
         console.warn(`[${label}] ${model} #${i + 1}: ${item.kind} ${item.status} — ${item.message.slice(0, 160)}`);
         if (item.kind === 'auth') throw Object.assign(err instanceof Error ? err : new Error(item.message), { code: 'AUTH', trail: [...trail, item] });
 
-        // إذا استنفد النموذج حده اليومي أو كوتا الدقيقة، ننتقل فوراً للنموذج التالي في السلسلة دون تأخير
-        if (item.kind === 'quota') {
-          if (isDailyQuota(item.message) || i >= 1) {
-            console.warn(`[${label}] Model ${model} reached quota limit (${item.message.slice(0, 100)}). Skipping immediately to next model in chain...`);
-            trail.push(item);
-            break;
-          }
+        // إذا استنفد النموذج حده اليومي أو كان خارج الخطة المجانية (limit: 0)، ننتقل فوراً للنموذج التالي في السلسلة
+        if (item.kind === 'quota' && isDailyQuota(item.message)) {
+          console.warn(`[${label}] Model ${model} reached daily/zero quota (${item.message.slice(0, 100)}). Skipping immediately to next model in chain...`);
+          trail.push(item);
+          break;
         }
 
-        // استراتيجية إعادة المحاولة بتأخير متصاعد أسي (Exponential Backoff with Jitter) لتخفيف الضغط
+        // استراتيجية إعادة المحاولة بتأخير متصاعد أسي (Exponential Backoff with Jitter) عند كوتا الدقيقة (429) أو الانشغال المؤقت
         if ((item.kind === 'quota' || item.kind === 'busy') && i < 2) {
-          const backoffMs = Math.min(1000 * Math.pow(2, i) + Math.random() * 500, 6000);
+          const backoffMs = Math.min(1200 * Math.pow(2, i) + Math.random() * 500, 6000);
           console.warn(`[${label}] Rate-limit or busy hit for ${model} (attempt ${i + 1}/3), retrying in ${Math.round(backoffMs)}ms...`);
           await sleep(backoffMs);
           continue;
@@ -199,28 +191,13 @@ async function runChain<T>(label: string, models: string[], attempt: (model: str
   throw failure(label, trail, lastError);
 }
 
-const humanizeErrorMessage = (raw: string, code: ErrorCode): string => {
-  if (/quota exceeded|limit of requests today|token limit per minute|requests today/i.test(raw)) {
-    return 'انتهت حصة النموذج المؤقتة. جاري تجربة نموذج بديل أو انتظر لحظات وسيعود للعمل.';
-  }
-  if (/API_KEY_INVALID|API key not valid|permission denied/i.test(raw)) {
-    return 'مفتاح Gemini غير صالح أو تنقصه الصلاحيات. تأكد من إدخال المفتاح بشكل صحيح.';
-  }
-  if (/Failed to call the Gemini API/i.test(raw)) {
-    return code === 'QUOTA'
-      ? 'انتهت حصة الاستخدام المؤقتة للنموذج. انتظر قليلاً ثم أعد المحاولة.'
-      : 'تعذّر الاتصال بخوادم الذكاء الاصطناعي مؤقتاً. يرجى إعادة المحاولة.';
-  }
-  return raw;
-};
-
 const errorInfo = (err: any, fallback: string): { status: number; body: { error: string; code: ErrorCode; trail?: TrailItem[] } } => {
   const kind = classify(err);
   const code: ErrorCode = err?.code && typeof err.code === 'string' ? err.code : kind === 'auth' ? 'AUTH' : kind === 'quota' ? 'QUOTA' : kind === 'busy' ? 'BUSY' : 'FAILED';
   const status = code === 'AUTH' || code === 'NOKEY' || code === 'FREE_AUTH' ? 401 : code === 'QUOTA' || code === 'BILLING' || code === 'FREE_QUOTA' ? 429 : code === 'BUSY' ? 503 : code === 'NOMODEL' ? 404 : 500;
-  const rawMsg = err?.message || fallback;
-  const friendlyError = humanizeErrorMessage(rawMsg, code);
-  return { status, body: { error: friendlyError, code, trail: Array.isArray(err?.trail) ? err.trail : undefined } };
+  // نحتفظ برسالة Google الأصلية كما هي في حقل error لتظهر بدقة في «تفاصيل تقنية»
+  const rawMsg = String(err?.message || fallback).trim();
+  return { status, body: { error: rawMsg, code, trail: Array.isArray(err?.trail) ? err.trail : undefined } };
 };
 
 const sendError = (res: Response, err: any, fallback: string) => {
@@ -641,7 +618,7 @@ const AI_IMAGE_SIZES: Record<string, [number, number]> = {
 
 const runAiFallback = async (prompt: string, aspectRatio: string): Promise<{ base64: string; mimeType: string; model: string }> => {
   const dims = AI_IMAGE_SIZES[aspectRatio] || [1024, 768];
-  const cleanPrompt = `${prompt.slice(0, 900)}. Masterpiece children picture book illustration, vibrant colors, expressive faces, sharp focus, consistent character design. Negative prompt: extra fingers, mutated hands, missing limbs, distorted faces, asymmetrical eyes, blurry details, double heads, cloned characters, extra limbs, floating objects, unwanted text, signature, watermark, bad anatomy, deformed bodies, cut off heads, low resolution, jpeg artifacts.`;
+  const cleanPrompt = `${prompt.slice(0, 900)}. ${POSITIVE_ILLUSTRATION_DIRECTIVE}`;
   const encodedPrompt = encodeURIComponent(cleanPrompt);
   const seed = Math.floor(Math.random() * 2 ** 31);
   
@@ -690,7 +667,7 @@ app.post('/api/generate-image', async (req: Request, res: Response) => {
     const lead = refs.length
       ? '[STRICT CHARACTER REFERENCE ATTACHED]: Use the attached character reference sheet image(s) as the EXACT character model. Keep the identical face shape, hairstyle, hair color, skin tone, outfit design, color palette, and body proportions. '
       : '';
-    const text = `${lead}${prompt} Masterpiece children's book illustration, sharp focus, rich detail, professional composition, consistent character design. Negative prompt: extra fingers, mutated hands, missing limbs, distorted faces, asymmetrical eyes, blurry details, double heads, cloned characters, extra limbs, floating objects, unwanted text, letters, captions, logos, signature, watermark, bad anatomy, deformed bodies, cut off heads, low resolution, jpeg artifacts.`;
+    const text = `${lead}${prompt} ${POSITIVE_ILLUSTRATION_DIRECTIVE}`;
 
     try {
       const { value, model } = await runChain('image', await chainFor(req, 'image'), async (m) => {

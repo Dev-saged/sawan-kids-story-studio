@@ -70,7 +70,19 @@ export default function ApiKeyGate({ language, onSaved, noKey }: Props) {
     onSaved();
   };
 
-  const handleContinueShared = () => {
+  const handleContinueShared = async () => {
+    setChecking(true);
+    setError(null);
+    const result = await preflight();
+    setChecking(false);
+    if (!result.ok && result.code === 'NOKEY') {
+      setError(
+        ar
+          ? 'الخادم لا يملك مفتاح Gemini حالياً. يرجى إدخال مفتاحك الخاص أعلاه للبدء.'
+          : 'The server currently has no Gemini key configured. Please enter your own key above.'
+      );
+      return;
+    }
     setSharedServerSession();
     onSaved();
   };

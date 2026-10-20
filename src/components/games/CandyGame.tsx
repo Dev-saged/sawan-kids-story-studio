@@ -3,6 +3,7 @@ import { ArrowRight, CheckCircle2, Shield, Trophy, XCircle } from 'lucide-react'
 import { feedback } from '../../services/feedback';
 import { GameShell, choiceBtn, pickRandom, primaryBtn, shuffle, type GameProps } from './gameKit';
 import { recordGame } from '../../services/progress';
+import { CandySvg } from '../common/BrandIcons';
 
 interface Answer {
   ar: string;
@@ -146,9 +147,9 @@ export default function CandyGame({ language, onBack }: GameProps) {
       <div className="page-corner flex min-h-[320px] flex-col justify-center rounded-3xl border border-dream/20 bg-white/70 p-5 dark:bg-white/5">
         {phase === 'start' && (
           <div className="text-center">
-            <p className="mb-4 text-5xl" aria-hidden>
-              🍬
-            </p>
+            <div className="mb-4 flex justify-center text-lantern" aria-hidden>
+              <CandySvg className="w-14 h-14" />
+            </div>
             <button type="button" onClick={restart} className={primaryBtn}>
               {ar ? 'ابدأ اللعبة' : 'Start game'}
             </button>

@@ -164,8 +164,8 @@ export default function VoiceDictationModal({ language, onApplyText, onClose }: 
         setMicState('denied');
         setError(
           ar
-            ? 'المتصفح حظر إذن الميكروفون ("اسمح بالإذن من إعدادات المتصفح"). انقر على أيقونة القفل 🔒 في شريط عنوان المتصفح وفعّل الميكروفون، أو استخدم زر مسجل الجهاز أدناه.'
-            : 'Browser blocked microphone permission. Click the lock icon 🔒 in the address bar and allow microphone, or use the device recorder below.'
+            ? 'المتصفح حظر إذن الميكروفون ("اسمح بالإذن من إعدادات المتصفح"). انقر على أيقونة القفل في شريط عنوان المتصفح وفعّل الميكروفون، أو استخدم زر مسجل الجهاز أدناه.'
+            : 'Browser blocked microphone permission. Click the lock icon in the address bar and allow microphone, or use the device recorder below.'
         );
         setShowPermHelp(true);
       } else {
@@ -391,10 +391,10 @@ export default function VoiceDictationModal({ language, onApplyText, onClose }: 
         {showPermHelp && (
           <div className="mt-3 rounded-2xl border border-lantern/30 bg-lantern/10 p-3.5 text-xs text-ink/80 dark:text-moonlight/80 space-y-2">
             <p className="font-bold text-ink dark:text-moonlight">
-              {ar ? '📌 طريقة حل مشكلة "اسمح بالإذن من إعدادات المتصفح":' : '📌 How to fix browser microphone permission:'}
+              {ar ? 'طريقة حل مشكلة "اسمح بالإذن من إعدادات المتصفح":' : 'How to fix browser microphone permission:'}
             </p>
             <ol className="list-decimal list-inside space-y-1 leading-relaxed">
-              <li>{ar ? 'انقر على أيقونة القفل 🔒 أو خيارات الموقع في شريط عنوان المتصفح بأعلى الصفحة.' : 'Click the lock icon 🔒 in the browser address bar at the top.'}</li>
+              <li>{ar ? 'انقر على أيقونة القفل أو خيارات الموقع في شريط عنوان المتصفح بأعلى الصفحة.' : 'Click the lock icon in the browser address bar at the top.'}</li>
               <li>{ar ? 'ابحث عن "الميكروفون" (Microphone) وحوله إلى "سماح" (Allow).' : 'Find "Microphone" and switch it to "Allow".'}</li>
               <li>{ar ? 'أو ببساطة اضغط على زر "مسجل الهاتف / رفع صوت" للتسجيل فوراً بدون أي أذونات متصفح!' : 'Or simply use the "Device recorder" button to record without browser permissions!'}</li>
             </ol>

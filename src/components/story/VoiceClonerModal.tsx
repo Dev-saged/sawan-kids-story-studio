@@ -212,7 +212,7 @@ export default function VoiceClonerModal({ language, onVoiceSelected, onClose }:
       setProfile(saved);
       onVoiceSelected('ClonedVoice');
     } catch (err) {
-      setError(ar ? 'حدث خطأ أثناء معالجة واستنساخ الصوت. حاول مرة أخرى.' : 'Error analyzing voice sample. Please retry.');
+      setError(ar ? 'حدث خطأ أثناء تحليل طبقة الصوت ومطابقتها. حاول مرة أخرى.' : 'Error analyzing voice pitch. Please retry.');
     } finally {
       setAnalyzing(false);
     }
@@ -253,8 +253,8 @@ export default function VoiceClonerModal({ language, onVoiceSelected, onClose }:
     setError(null);
     try {
       const testPhrase = ar
-        ? 'أهلاً بك يا بطلي الصغير! أنا أقرأ لك هذه القصة بصوتي المستنسخ بكل حب وسعادة.'
-        : 'Welcome, little hero! I am now reading this magical story to you with my cloned voice.';
+        ? 'أهلاً بك يا بطلي الصغير! هذا هو أقرب صوت راوٍ جاهز مطابق لطبقة صوتك الدافئة.'
+        : 'Welcome, little hero! This is the closest prebuilt studio narrator matched to your vocal pitch.';
       const blob = await synthesizeClonedVoiceNarration(testPhrase);
       const url = URL.createObjectURL(blob);
       const audio = new Audio(url);
@@ -266,7 +266,7 @@ export default function VoiceClonerModal({ language, onVoiceSelected, onClose }:
       await audio.play();
       setTestPlaying(true);
     } catch (err) {
-      setError(ar ? 'تعذّر تجربة الصوت المستنسخ الآن.' : 'Could not test cloned voice now.');
+      setError(ar ? 'تعذّر تجربة الراوي المطابق الآن.' : 'Could not test matched voice now.');
     } finally {
       setTestLoading(false);
     }
@@ -292,10 +292,10 @@ export default function VoiceClonerModal({ language, onVoiceSelected, onClose }:
             </span>
             <div>
               <h3 className="font-display text-base font-bold text-ink dark:text-moonlight">
-                {ar ? 'استنساخ الصوت الذكي (Smart Voice Cloning)' : 'Smart Voice Cloning'}
+                {ar ? 'مطابقة أقرب صوت جاهز لنبرتك (Voice Pitch Matcher)' : 'Match Closest Prebuilt Voice to Your Pitch'}
               </h3>
               <p className="text-xs text-ink/65 dark:text-moonlight/65">
-                {ar ? 'سجّل عينة واحدة ليروي الذكاء الاصطناعي القصة كاملة بصوتك' : 'Record once, AI narrates the entire story in your voice'}
+                {ar ? 'نحلل تردد صوتك لاختيار أقرب راوٍ جاهز يناسب طبقتك الصوتية' : 'Analyzes your vocal pitch (Hz) to pick the closest prebuilt studio narrator'}
               </p>
             </div>
           </div>
@@ -316,7 +316,7 @@ export default function VoiceClonerModal({ language, onVoiceSelected, onClose }:
               <div className="flex items-center gap-2">
                 <ShieldCheck className="text-emerald-500 shrink-0" size={20} />
                 <div>
-                  <h4 className="font-bold text-sm">{profile.name}</h4>
+                  <h4 className="font-bold text-sm">{profile.name} ({profile.matchedVoice})</h4>
                   <p className="text-xs opacity-80 mt-0.5">
                     {ar ? profile.timbreLabel.ar : profile.timbreLabel.en} · {profile.pitchAverageHz}Hz
                   </p>
@@ -326,7 +326,7 @@ export default function VoiceClonerModal({ language, onVoiceSelected, onClose }:
                 type="button"
                 onClick={handleDeleteProfile}
                 className="flex items-center gap-1 text-xs text-coral hover:underline"
-                title={ar ? 'حذف البصمة' : 'Delete profile'}
+                title={ar ? 'حذف الإعداد' : 'Delete profile'}
               >
                 <Trash2 size={13} />
                 {ar ? 'حذف' : 'Delete'}
@@ -343,7 +343,7 @@ export default function VoiceClonerModal({ language, onVoiceSelected, onClose }:
                 className="flex-1 flex min-h-11 items-center justify-center gap-2 rounded-xl bg-lantern font-display text-xs font-bold text-ink shadow-xs active:scale-95"
               >
                 <Check size={16} />
-                {ar ? 'اعتماد صوتي لقراءة القصة الآن' : 'Use this voice to narrate now'}
+                {ar ? 'اعتماد الراوي المطابق لقراءة القصة' : 'Use matched narrator now'}
               </button>
               <button
                 type="button"
@@ -352,7 +352,7 @@ export default function VoiceClonerModal({ language, onVoiceSelected, onClose }:
                 className="flex min-h-11 items-center justify-center gap-1.5 rounded-xl border border-dream/30 px-3 text-xs font-semibold hover:bg-dream/10 active:scale-95"
               >
                 {testLoading ? <Loader2 size={14} className="animate-spin" /> : testPlaying ? <Pause size={14} /> : <Play size={14} />}
-                {ar ? 'استمع لعيّنة الذكاء الاصطناعي' : 'Test AI Narration'}
+                {ar ? 'تجربة الراوي المختار' : 'Test Matched Narrator'}
               </button>
             </div>
           </div>
@@ -363,19 +363,19 @@ export default function VoiceClonerModal({ language, onVoiceSelected, onClose }:
           <div className="rounded-2xl border border-dream/20 bg-dream/5 p-3.5 text-xs text-ink/80 dark:text-moonlight/80">
             <p className="font-bold mb-1 flex items-center gap-1.5 text-ink dark:text-moonlight">
               <Sparkles size={14} className="text-lantern" />
-              {ar ? 'كيف يعمل استنساخ الصوت؟' : 'How does voice cloning work?'}
+              {ar ? 'كيف تعمل مطابقة نبرة الصوت؟' : 'How does vocal pitch matching work?'}
             </p>
             <p className="leading-relaxed">
               {ar
-                ? 'لا داعي لقراءة القصة صفحة بصفحة! اقرأ العبارة النموذجية بالأسفل بنبرتك الطبيعية لمدة 10 ثوانٍ، وسيقوم النظام بتحليل طبقة صوتك وإيقاعك وحفظها لتقرأ كل قصة لاحقة تلقائياً بصوتك.'
-                : 'No need to read page by page! Read the sample phrase below naturally for 10-15 seconds. The AI analyzes your timbre and pitch, and narrates every story automatically in your simulated voice.'}
+                ? 'سجّل قراءتك للعبارة بالأسفل لبضع ثوانٍ؛ يحسب المتصفح متوسط التردد الصوتي (Hz) لديك محلياً ويختار أقرب صوت راوٍ جاهز من أصوات الاستوديو ليروي القصص تلقائياً. لتسجيل صوتك الحقيقي كلمة بكلمة اختر «صوت العائلة».'
+                : 'Read the sample phrase below for a few seconds; your browser measures your fundamental pitch (Hz) locally and selects the closest prebuilt studio narrator. To record your actual voice page-by-page, choose "Family voice".'}
             </p>
           </div>
 
           {/* Sample sentence to read */}
           <div className="rounded-2xl border border-lantern/30 bg-lantern/10 p-3.5 text-center">
             <span className="text-[11px] font-bold uppercase tracking-wider text-ink/60 dark:text-moonlight/60 block mb-1">
-              {ar ? 'العبارة المقترحة للقراءة' : 'Sample phrase to read aloud'}
+              {ar ? 'العبارة المقترحة لقياس طبقة الصوت' : 'Sample phrase to measure pitch'}
             </span>
             <p className="font-display text-sm font-semibold text-ink dark:text-moonlight leading-relaxed">
               {SAMPLE_TEXT[language === 'Arabic' ? 'ar' : 'en']}
@@ -385,13 +385,13 @@ export default function VoiceClonerModal({ language, onVoiceSelected, onClose }:
           {/* Voice Profile Name Input */}
           <div>
             <label className="block text-xs font-semibold text-ink/75 dark:text-moonlight/75 mb-1">
-              {ar ? 'اسم البصمة الصوتية (مثل: صوت أبي، صوت ماما):' : 'Voice profile label:'}
+              {ar ? 'اسم الإعداد الصوتي:' : 'Pitch profile label:'}
             </label>
             <input
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder={ar ? 'صوت أبي ساجد' : 'Dad Voice'}
+              placeholder={ar ? 'نبرة أبي / أمي' : 'Parent Pitch'}
               className="w-full rounded-xl border border-dream/30 bg-white/50 px-3 py-2 text-sm text-ink outline-none focus:border-lantern dark:bg-white/5 dark:text-moonlight"
             />
           </div>
@@ -421,7 +421,7 @@ export default function VoiceClonerModal({ language, onVoiceSelected, onClose }:
                 className="flex min-h-12 w-full items-center justify-center gap-2 rounded-2xl bg-coral font-display text-sm font-bold text-white shadow-md transition active:scale-95"
               >
                 <Mic size={18} />
-                {profile ? (ar ? 'تسجيل عينة صوتية جديدة وتحديث البصمة' : 'Record New Sample') : ar ? 'بدء تسجيل عينة الصوت' : 'Start Recording Sample'}
+                {profile ? (ar ? 'تسجيل عينة جديدة لإعادة المطابقة' : 'Record New Sample') : ar ? 'بدء تسجيل عينة الصوت' : 'Start Recording Sample'}
               </button>
             ) : (
               <button
@@ -460,12 +460,12 @@ export default function VoiceClonerModal({ language, onVoiceSelected, onClose }:
                   {analyzing ? (
                     <>
                       <Loader2 size={16} className="animate-spin" />
-                      {ar ? 'جارٍ تحليل النبرة والترددات وحفظ البصمة...' : 'Analyzing pitch & saving profile...'}
+                      {ar ? 'جارٍ قياس طبقة الصوت واختيار أقرب راوٍ...' : 'Measuring pitch & matching narrator...'}
                     </>
                   ) : (
                     <>
                       <Sparkles size={16} />
-                      {ar ? 'تحليل واستنساخ الصوت وحفظ البصمة' : 'Analyze & Clone Voice'}
+                      {ar ? 'تحليل طبقة الصوت ومطابقة أقرب راوٍ جاهز' : 'Analyze Pitch & Match Closest Voice'}
                     </>
                   )}
                 </button>

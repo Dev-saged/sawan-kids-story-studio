@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { ArrowLeft } from 'lucide-react';
 import { Language } from '../../types';
 import { recordGame } from '../../services/progress';
+import { MagnetSvg, MagnetObjectSvg } from '../common/BrandIcons';
 
 interface Props {
   language: Language;
@@ -10,18 +11,17 @@ interface Props {
 
 interface TestObject {
   id: string;
-  emoji: string;
   label: { en: string; ar: string };
   magnetic: boolean;
 }
 
 const OBJECTS: TestObject[] = [
-  { id: 'nail', emoji: '🔩', label: { en: 'Nail', ar: 'مسمار' }, magnetic: true },
-  { id: 'paperclip', emoji: '📎', label: { en: 'Paperclip', ar: 'مشبك ورق' }, magnetic: true },
-  { id: 'feather', emoji: '🪶', label: { en: 'Feather', ar: 'ريشة' }, magnetic: false },
-  { id: 'leaf', emoji: '🍃', label: { en: 'Leaf', ar: 'ورقة شجر' }, magnetic: false },
-  { id: 'key', emoji: '🔑', label: { en: 'Key', ar: 'مفتاح' }, magnetic: true },
-  { id: 'balloon', emoji: '🎈', label: { en: 'Balloon', ar: 'بالون' }, magnetic: false },
+  { id: 'nail', label: { en: 'Nail', ar: 'مسمار' }, magnetic: true },
+  { id: 'paperclip', label: { en: 'Paperclip', ar: 'مشبك ورق' }, magnetic: true },
+  { id: 'feather', label: { en: 'Feather', ar: 'ريشة' }, magnetic: false },
+  { id: 'leaf', label: { en: 'Leaf', ar: 'ورقة شجر' }, magnetic: false },
+  { id: 'key', label: { en: 'Key', ar: 'مفتاح' }, magnetic: true },
+  { id: 'balloon', label: { en: 'Balloon', ar: 'بالون' }, magnetic: false },
 ];
 
 export default function MagnetGame({ language, onBack }: Props) {
@@ -53,12 +53,12 @@ export default function MagnetGame({ language, onBack }: Props) {
 
       <div className="relative flex h-40 items-center justify-center rounded-3xl border border-dream/20 bg-gradient-to-b from-dream/10 to-lantern/10 dark:from-dusk dark:to-ink">
         <div
-          className={`text-6xl transition-transform duration-500 ${
+          className={`text-ink dark:text-moonlight transition-transform duration-500 ${
             result === 'attract' ? 'scale-125' : result === 'reject' ? '-translate-y-1 rotate-6' : ''
           }`}
           aria-hidden
         >
-          🧲
+          <MagnetSvg className="w-16 h-16" />
         </div>
       </div>
 
@@ -77,8 +77,8 @@ export default function MagnetGame({ language, onBack }: Props) {
                 : 'border-dream/30 bg-white/60 dark:bg-white/5'
             }`}
           >
-            <span className="text-3xl" aria-hidden>
-              {obj.emoji}
+            <span className="text-lantern" aria-hidden>
+              <MagnetObjectSvg id={obj.id} className="w-8 h-8" />
             </span>
             <span className="text-ink dark:text-moonlight">{ar ? obj.label.ar : obj.label.en}</span>
           </button>

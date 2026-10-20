@@ -19,24 +19,24 @@ export default function InteractiveBranches({ ar, storyData, onChooseBranch, dis
     ? [
         {
           id: 'branch_explore',
-          title: `استكشاف المسار السري المجهول 🗝️`,
+          title: 'استكشاف المسار السري المجهول',
           desc: `يقرر ${hero} خوض المغامرة واكتشاف السر الكامن وراء الباب القديم.`,
         },
         {
           id: 'branch_friend',
-          title: `طلب مساعدة الأصدقاء والتعاون 🤝`,
+          title: 'طلب مساعدة الأصدقاء والتعاون',
           desc: `يستشير ${hero} أصدقاءه الحكماء ليتعاونوا معاً في حل اللغز بروح الفريق.`,
         },
       ]
     : [
         {
           id: 'branch_explore',
-          title: `Explore the Secret Path 🗝️`,
+          title: 'Explore the Secret Path',
           desc: `${hero} ventures forward to uncover the mystery behind the ancient gate.`,
         },
         {
           id: 'branch_friend',
-          title: `Team Up with Friends 🤝`,
+          title: 'Team Up with Friends',
           desc: `${hero} calls upon wise animal companions to solve the riddle together.`,
         },
       ];

@@ -7,13 +7,13 @@ export interface AmbientInfo {
 }
 
 export const AMBIENT_PRESETS: Record<AmbientType, AmbientInfo> = {
-  forest: { type: 'forest', label: { ar: '🌲 حفيف أوراق الشجر والربيع', en: '🌲 Rustling Forest Leaves' }, icon: '🌲' },
-  ocean: { type: 'ocean', label: { ar: '🌊 أمواج البحر الهادئة', en: '🌊 Gentle Ocean Waves' }, icon: '🌊' },
-  rain: { type: 'rain', label: { ar: '🌧️ قطرات المطر الناعمة', en: '🌧️ Soft Raindrops' }, icon: '🌧️' },
-  night: { type: 'night', label: { ar: '🌙 حشرات الليل والنجوم', en: '🌙 Night Crickets & Stars' }, icon: '🌙' },
-  cozy_fire: { type: 'cozy_fire', label: { ar: '🔥 دفء الموقد والقلعة', en: '🔥 Cozy Fireplace Crackle' }, icon: '🔥' },
-  cyber: { type: 'cyber', label: { ar: '⚡ أثير النيون المستقبلي', en: '⚡ Futuristic Cyber Hum' }, icon: '⚡' },
-  dream: { type: 'dream', label: { ar: '✨ ألحان الأحلام السحرية', en: '✨ Magical Dream Pads' }, icon: '✨' },
+  forest: { type: 'forest', label: { ar: 'حفيف أوراق الشجر والربيع', en: 'Rustling Forest Leaves' }, icon: 'forest' },
+  ocean: { type: 'ocean', label: { ar: 'أمواج البحر الهادئة', en: 'Gentle Ocean Waves' }, icon: 'ocean' },
+  rain: { type: 'rain', label: { ar: 'قطرات المطر الناعمة', en: 'Soft Raindrops' }, icon: 'rain' },
+  night: { type: 'night', label: { ar: 'حشرات الليل والنجوم', en: 'Night Crickets & Stars' }, icon: 'night' },
+  cozy_fire: { type: 'cozy_fire', label: { ar: 'دفء الموقد والقلعة', en: 'Cozy Fireplace Crackle' }, icon: 'cozy_fire' },
+  cyber: { type: 'cyber', label: { ar: 'أثير النيون المستقبلي', en: 'Futuristic Cyber Hum' }, icon: 'cyber' },
+  dream: { type: 'dream', label: { ar: 'ألحان الأحلام السحرية', en: 'Magical Dream Pads' }, icon: 'dream' },
 };
 
 export const detectAmbientEnvironment = (text: string, prompt: string): AmbientType => {
@@ -30,20 +30,27 @@ export const detectAmbientEnvironment = (text: string, prompt: string): AmbientT
 class AmbientEngine {
   private ctx: AudioContext | null = null;
   private currentType: AmbientType | null = null;
+  private desiredType: AmbientType | null = null;
   private masterGain: GainNode | null = null;
   private activeNodes: (AudioNode | { stop: () => void })[] = [];
   private volume = 0.25; // 25% default background mix
+  private ducked = false;
   private muted = false;
+
+  private effectiveGain(): number {
+    if (this.muted) return 0;
+    return this.ducked ? this.volume * 0.22 : this.volume;
+  }
 
   private initCtx() {
     if (!this.ctx) {
       const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
       this.ctx = new AudioCtx();
       this.masterGain = this.ctx.createGain();
-      this.masterGain.gain.setValueAtTime(this.muted ? 0 : this.volume, this.ctx.currentTime);
+      this.masterGain.gain.setValueAtTime(this.effectiveGain(), this.ctx.currentTime);
       this.masterGain.connect(this.ctx.destination);
     }
-    if (this.ctx.state === 'suspended') {
+    if (!this.muted && this.ctx.state === 'suspended') {
       this.ctx.resume().catch(() => undefined);
     }
   }
@@ -51,7 +58,14 @@ class AmbientEngine {
   public setVolume(vol: number) {
     this.volume = Math.max(0, Math.min(1, vol));
     if (this.masterGain && this.ctx) {
-      this.masterGain.gain.setValueAtTime(this.muted ? 0 : this.volume, this.ctx.currentTime);
+      this.masterGain.gain.setTargetAtTime(this.effectiveGain(), this.ctx.currentTime, 0.08);
+    }
+  }
+
+  public setDucking(duck: boolean) {
+    this.ducked = duck;
+    if (this.masterGain && this.ctx) {
+      this.masterGain.gain.setTargetAtTime(this.effectiveGain(), this.ctx.currentTime, 0.12);
     }
   }
 
@@ -65,8 +79,14 @@ class AmbientEngine {
 
   public toggleMute(): boolean {
     this.muted = !this.muted;
-    if (this.masterGain && this.ctx) {
-      this.masterGain.gain.setValueAtTime(this.muted ? 0 : this.volume, this.ctx.currentTime);
+    if (this.muted) {
+      this.stopNodesOnly();
+      if (this.ctx && this.ctx.state === 'running') {
+        this.ctx.suspend().catch(() => undefined);
+      }
+    } else if (this.desiredType) {
+      this.currentType = null;
+      this.playAmbient(this.desiredType);
     }
     return this.muted;
   }
@@ -75,8 +95,7 @@ class AmbientEngine {
     return this.currentType;
   }
 
-  public stopAmbient() {
-    if (!this.ctx) return;
+  private stopNodesOnly() {
     for (const node of this.activeNodes) {
       try {
         if ('stop' in node && typeof node.stop === 'function') {
@@ -92,13 +111,21 @@ class AmbientEngine {
     this.currentType = null;
   }
 
+  public stopAmbient() {
+    this.desiredType = null;
+    this.stopNodesOnly();
+  }
+
   public playAmbient(type: AmbientType) {
+    this.desiredType = type;
+    if (this.muted) return; // لا ننشئ مذبذبات حين يكون الصوت مكتوماً
     this.initCtx();
     if (!this.ctx || !this.masterGain) return;
-    if (this.currentType === type) return; // already playing this ambient sound
+    if (this.currentType === type && this.activeNodes.length > 0) return;
 
-    this.stopAmbient();
+    this.stopNodesOnly();
     this.currentType = type;
+    this.masterGain.gain.setTargetAtTime(this.effectiveGain(), this.ctx.currentTime, 0.08);
 
     const ctx = this.ctx;
     const now = ctx.currentTime;

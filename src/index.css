@@ -14,11 +14,15 @@
   --color-star: #ffe9a8;
   --color-meadow: #3fae7a;
 
-  --font-display-en: 'Fredoka', 'Baloo Bhaijaan 2', sans-serif;
-  --font-display-ar: 'Baloo Bhaijaan 2', 'Fredoka', sans-serif;
-  --font-body-en: 'Nunito', 'Cairo', sans-serif;
-  --font-body-ar: 'Cairo', 'Nunito', sans-serif;
+  --font-display-en: 'Plus Jakarta Sans', 'Fredoka', 'Baloo Bhaijaan 2', sans-serif;
+  --font-display-ar: 'Baloo Bhaijaan 2', 'Cairo', 'Tajawal', sans-serif;
+  --font-body-en: 'Plus Jakarta Sans', 'Nunito', 'Cairo', sans-serif;
+  --font-body-ar: 'Cairo', 'Tajawal', 'Nunito', sans-serif;
   --font-serif-ar: 'Amiri', 'Reem Kufi', serif;
+  --font-kufi: 'Reem Kufi', 'Baloo Bhaijaan 2', sans-serif;
+  --font-diwani: 'Aref Ruqaa', 'Amiri', serif;
+  --font-naskh: 'Amiri', 'Cairo', serif;
+  --font-3d: 'Marhey', 'Baloo Bhaijaan 2', sans-serif;
 }
 
 /* Global Typography Scale */
@@ -44,6 +48,64 @@
   font-weight: 500;
 }
 
+/* Authentic Calligraphic Cover Font Classes */
+.font-cover-kufi {
+  font-family: var(--font-kufi);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.font-cover-diwani {
+  font-family: var(--font-diwani);
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.font-cover-naskh {
+  font-family: var(--font-naskh);
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.font-cover-3d {
+  font-family: var(--font-3d);
+  font-weight: 800;
+  text-shadow: 0 2px 0 #b45309, 0 4px 12px rgba(0, 0, 0, 0.75);
+}
+
+/* Luxury Glassmorphic Card & Scrollbar Utilities */
+.luxury-card {
+  border-radius: 1.5rem;
+  border: 1px solid color-mix(in srgb, var(--color-dream) 28%, transparent);
+  background: color-mix(in srgb, #ffffff 82%, transparent);
+  backdrop-filter: blur(16px);
+  box-shadow: 0 12px 32px -12px rgba(36, 27, 47, 0.08);
+}
+
+.dark .luxury-card {
+  border-color: rgba(255, 255, 255, 0.11);
+  background: linear-gradient(145deg, rgba(38, 29, 68, 0.78), rgba(22, 16, 42, 0.88));
+  box-shadow: 0 16px 40px -12px rgba(0, 0, 0, 0.45);
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(169, 155, 224, 0.35);
+  border-radius: 9999px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(240, 162, 2, 0.65);
+}
+
 /* Dynamic Text Wrapping & 3D Anti-Mirroring Safeguards */
 .text-balance-wrap {
   text-wrap: balance;
@@ -65,13 +127,23 @@ body,
 
 body {
   background-color: var(--color-moonlight);
+  background-image:
+    radial-gradient(circle at 15% 10%, rgba(240, 162, 2, 0.08), transparent 35%),
+    radial-gradient(circle at 85% 25%, rgba(169, 155, 224, 0.14), transparent 40%);
+  background-attachment: fixed;
   color: var(--color-ink);
   font-family: var(--font-body-en);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
   -webkit-tap-highlight-color: transparent;
 }
 
 .dark body {
   background-color: var(--color-dusk);
+  background-image:
+    radial-gradient(circle at 15% 10%, rgba(240, 162, 2, 0.11), transparent 38%),
+    radial-gradient(circle at 85% 20%, rgba(169, 155, 224, 0.12), transparent 42%),
+    radial-gradient(circle at 50% 90%, rgba(63, 174, 122, 0.06), transparent 45%);
   color: var(--color-moonlight);
 }
 

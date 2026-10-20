@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ChevronLeft, ChevronRight, BookOpen, Download, Volume2, Sparkles, X, RotateCcw, Layers, Play, Pause } from 'lucide-react';
+import { ChevronLeft, ChevronRight, BookOpen, Download, Sparkles, X, Layers } from 'lucide-react';
 import { StoryData } from '../../types';
 import { toSrc } from '../../services/media';
 import { BRAND } from '../../config';
@@ -14,7 +14,6 @@ interface Props {
 export default function InteractiveFlipbook({ storyData, ar, onClose, onDownloadPDF }: Props) {
   const [currentPage, setCurrentPage] = useState(0); // 0 = Cover, 1..N = Pages, N+1 = Back Cover
   const [isFlipping, setIsFlipping] = useState(false);
-  const [flipDirection, setFlipDirection] = useState<'next' | 'prev'>('next');
   const [viewMode, setViewMode] = useState<'spread' | 'single'>('spread');
 
   const totalStoryPages = storyData.pages.length;
@@ -22,7 +21,6 @@ export default function InteractiveFlipbook({ storyData, ar, onClose, onDownload
 
   const handleNext = () => {
     if (currentPage >= totalPagesCount - 1 || isFlipping) return;
-    setFlipDirection('next');
     setIsFlipping(true);
     setTimeout(() => {
       setCurrentPage((prev) => Math.min(totalPagesCount - 1, prev + (viewMode === 'spread' && prev > 0 && prev < totalStoryPages ? 2 : 1)));
@@ -32,7 +30,6 @@ export default function InteractiveFlipbook({ storyData, ar, onClose, onDownload
 
   const handlePrev = () => {
     if (currentPage <= 0 || isFlipping) return;
-    setFlipDirection('prev');
     setIsFlipping(true);
     setTimeout(() => {
       setCurrentPage((prev) => Math.max(0, prev - (viewMode === 'spread' && prev > 1 ? 2 : 1)));
@@ -150,7 +147,7 @@ export default function InteractiveFlipbook({ storyData, ar, onClose, onDownload
 
                     {leftPageData.generatedImage ? (
                       <div className="relative flex-1 min-h-[200px] rounded-xl overflow-hidden border border-white/10 shadow-md">
-                        <img src={toSrc(leftPageData.generatedImage)} alt="" className="h-full w-full object-cover" />
+                        <img src={toSrc(leftPageData.generatedImage) ?? undefined} alt="" className="h-full w-full object-cover" />
                       </div>
                     ) : null}
 
@@ -177,7 +174,7 @@ export default function InteractiveFlipbook({ storyData, ar, onClose, onDownload
 
                       {rightPageData.generatedImage ? (
                         <div className="relative flex-1 min-h-[200px] rounded-xl overflow-hidden border border-white/10 shadow-md">
-                          <img src={toSrc(rightPageData.generatedImage)} alt="" className="h-full w-full object-cover" />
+                          <img src={toSrc(rightPageData.generatedImage) ?? undefined} alt="" className="h-full w-full object-cover" />
                         </div>
                       ) : null}
 

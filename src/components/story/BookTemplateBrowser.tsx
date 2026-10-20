@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { ChevronRight, Filter, Compass } from 'lucide-react';
 import { BOOK_TEMPLATES, BookTemplate } from '../../data/bookTemplates';
+import { TemplateIconSvg } from '../common/BrandIcons';
 
 interface Props {
   ar: boolean;
@@ -13,7 +14,7 @@ export default function BookTemplateBrowser({ ar, onSelectTemplate, onClose }: P
 
   const filters = [
     { id: 'all', label: ar ? 'الكل (16 قالباً)' : 'All (16 Templates)' },
-    { id: 'fruit-saga', label: ar ? '🍇 ملحمة الفواكه (12-18 سنة)' : '🍇 YA Fruit Saga (12-18)' },
+    { id: 'fruit-saga', label: ar ? 'ملحمة الفواكه (12-18 سنة)' : 'YA Fruit Saga (12-18)' },
     { id: 'cultural', label: ar ? 'نكهات عربية وتراثية' : 'Arab & Cultural' },
     { id: 'science', label: ar ? 'علوم وفضاء (STEM)' : 'Science & Space' },
     { id: 'bedtime', label: ar ? 'قبل النوم وهادئة' : 'Bedtime & Calm' },
@@ -86,8 +87,8 @@ export default function BookTemplateBrowser({ ar, onSelectTemplate, onClose }: P
           >
             <div className="space-y-2">
               <div className="flex items-start justify-between gap-2">
-                <span className="text-2xl" role="img" aria-label={tmpl.badge.en}>
-                  {tmpl.icon}
+                <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-lantern/15 text-lantern" role="img" aria-label={tmpl.badge.en}>
+                  <TemplateIconSvg name={tmpl.icon} className="w-5 h-5" />
                 </span>
                 <span
                   className="rounded-full px-2.5 py-0.5 text-[11px] font-bold"

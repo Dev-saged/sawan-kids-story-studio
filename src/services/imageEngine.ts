@@ -2,6 +2,7 @@ import { ApiError, postJson, preflight, type ApiErrorCode, type TrailItem } from
 import { getUserApiKey, keyShape } from './apiKey';
 import { hashText } from './db';
 import { base64ToBlob, cropToAspect } from './media';
+import { NO_SIZE_IMAGE_MODELS, POSITIVE_ILLUSTRATION_DIRECTIVE } from '../shared/modelRules';
 import type { AspectRatio } from '../types';
 
 // طبقة الصور الموحدة: كل رسم في التطبيق يمر من هنا عبر نماذج Gemini الحقيقية فقط.
@@ -134,10 +135,12 @@ const runDirect = async (eng: Engine, req: ImageRequest, signal?: AbortSignal): 
   const lead = cleanRefs.length
     ? '[STRICT CHARACTER REFERENCE ATTACHED]: Use the attached character reference sheet image(s) as the EXACT character model. Keep the identical face shape, hairstyle, hair color, skin tone, outfit design, color palette, and body proportions. '
     : '';
-  const text = `${lead}${req.prompt} Masterpiece children's book illustration, sharp focus, rich detail, professional composition, consistent character design. Negative prompt: extra fingers, mutated hands, missing limbs, distorted faces, asymmetrical eyes, blurry details, double heads, cloned characters, extra limbs, floating objects, unwanted text, letters, captions, logos, signature, watermark, bad anatomy, deformed bodies, cut off heads, low resolution, jpeg artifacts.`;
+  const text = `${lead}${req.prompt} ${POSITIVE_ILLUSTRATION_DIRECTIVE}`;
 
   for (const model of DIRECT_MODELS) {
+    const isNoSize = NO_SIZE_IMAGE_MODELS.has(model);
     let currentRefs = cleanRefs;
+    let retriedWithoutRef = false;
     for (let attempt = 0; attempt < 2; attempt++) {
       if (signal?.aborted) throw abortError();
       try {
@@ -149,7 +152,10 @@ const runDirect = async (eng: Engine, req: ImageRequest, signal?: AbortSignal): 
           ai.models.generateContent({
             model,
             contents: { parts },
-            config: { abortSignal: signal, imageConfig: { aspectRatio: req.aspectRatio, imageSize: '1K' } },
+            config: {
+              abortSignal: signal,
+              imageConfig: isNoSize ? { aspectRatio: req.aspectRatio } : { aspectRatio: req.aspectRatio, imageSize: '1K' },
+            },
           }),
           DIRECT_TIMEOUT
         );
@@ -157,32 +163,46 @@ const runDirect = async (eng: Engine, req: ImageRequest, signal?: AbortSignal): 
         const part = (cand?.content?.parts ?? []).find((p) => p.inlineData?.data);
         if (part?.inlineData?.data) return base64ToBlob(part.inlineData.data, part.inlineData.mimeType || 'image/png');
         const why = [response.promptFeedback?.blockReason, cand?.finishReason, cand?.content?.parts?.find((p) => p.text)?.text?.slice(0, 120)].filter(Boolean).join(' · ');
-        trail.push({ model: `${eng.id}/${model}`, kind: 'skip', status: 0, message: `No image returned${why ? `: ${why}` : '.'}` });
+        trail.push({ model: `${eng.id}/${model}`, kind: 'skip', status: 0, message: `No image returned${retriedWithoutRef ? ' [no-ref]' : ''}${why ? `: ${why}` : '.'}` });
         break;
       } catch (err: any) {
         if (signal?.aborted || err?.name === 'AbortError') throw abortError();
         const msg = String(err?.message ?? err).replace(/\s+/g, ' ');
-        if (currentRefs.length > 0 && (/could not be decoded|source image|invalid|safety|blocked|policy|filter|size|large|face|person/i.test(msg) || attempt === 0)) {
-          console.warn(`[runDirect] Reference error on ${model} ("${msg.slice(0, 80)}..."), immediately retrying cleanly with text-only character description...`);
+        const status = Number(err?.status ?? err?.code ?? 0) || 0;
+
+        // إعادة المحاولة بدون الصورة المرجعية تقتصر حصراً على أخطاء فك تشفير الصورة أو السلامة والفلاتر (وليس الشبكة أو الحصة)
+        const isRefOrSafetyError = /decode|could not be decoded|source image|safety|blocked|policy|filter|face|person/i.test(msg);
+        if (currentRefs.length > 0 && isRefOrSafetyError) {
+          console.warn(`[runDirect] Image/safety reference error on ${model} ("${msg.slice(0, 80)}..."), retrying without reference...`);
+          trail.push({
+            model: `${eng.id}/${model}`,
+            kind: 'skip',
+            status,
+            message: `[retried without reference] ${msg.slice(0, 420)}`,
+          });
           currentRefs = [];
+          retriedWithoutRef = true;
           continue;
         }
-        const status = Number(err?.status ?? err?.code ?? 0) || 0;
+
         const kind = classifyFailure(status, msg);
-        trail.push({ model: `${eng.id}/${model}`, kind, status, message: msg.slice(0, 480) });
+        trail.push({
+          model: `${eng.id}/${model}`,
+          kind,
+          status,
+          message: `${retriedWithoutRef ? '[no-ref] ' : ''}${msg.slice(0, 460)}`,
+        });
 
         const isDaily = /daily limit|limit:\s*0\b|free_?tier|requests today|limit of requests|tomorrow/i.test(msg);
-        if (kind === 'quota') {
-          if (isDaily || attempt >= 1) {
-            console.warn(`[runDirect] Model ${model} reached quota limit ("${msg.slice(0, 80)}"), immediately trying next model in chain...`);
-            break; // Don't retry same model on daily limit or repeat quota, try next model in DIRECT_MODELS
-          }
+        if (kind === 'quota' && isDaily) {
+          console.warn(`[runDirect] Model ${model} reached daily/zero quota ("${msg.slice(0, 80)}"), skipping immediately to next model...`);
+          break;
         }
 
-        // استراتيجية إعادة المحاولة بتأخير متصاعد أسي
+        // استراتيجية إعادة المحاولة بتأخير متصاعد أسي عند كوتا الدقيقة (429) أو الانشغال المؤقت قبل الانتقال للنموذج التالي
         if ((kind === 'quota' || kind === 'busy') && attempt < 1) {
-          const backoff = Math.min(1000 + Math.random() * 500, 3000);
-          console.warn(`[runDirect] Transient busy or limit on ${model}, retrying with backoff in ${Math.round(backoff)}ms...`);
+          const backoff = Math.min(1200 + Math.random() * 600, 3000);
+          console.warn(`[runDirect] Per-minute rate limit or busy on ${model}, backing off for ${Math.round(backoff)}ms before retry...`);
           await sleep(backoff);
           continue;
         }

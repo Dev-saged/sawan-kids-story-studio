@@ -117,7 +117,7 @@ export default function Credits({ language }: { language: Language }) {
       </div>
 
       <p className="relative mt-5 text-[11px] text-moonlight/45">
-        © {new Date().getFullYear()} {ar ? BRAND.fullName.ar : BRAND.fullName.en} — {ar ? 'جميع الحقوق محفوظة' : 'All rights reserved'}
+        © {new Date().getFullYear()} {ar ? BRAND.fullName.ar : BRAND.fullName.en} — {ar ? 'جميع الحقوق محفوظة' : 'All rights reserved'} · <span className="font-mono text-lantern/80">v2.9.0</span>
       </p>
     </footer>
   );

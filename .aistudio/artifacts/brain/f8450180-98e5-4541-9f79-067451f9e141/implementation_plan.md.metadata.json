@@ -1,6 +1,0 @@
-{
-  "summary": "Updated implementation plan to include automated Veo 3 video motion generation per scene, incorporating all three motion modes (Cinematic sweeps, 2.5D depth parallax, and Multi-angle kinetic camera scans) automatically.",
-  "updatedAt": "2026-10-19T10:19:46.683188038Z",
-  "requestFeedback": true,
-  "userFacing": true
-}

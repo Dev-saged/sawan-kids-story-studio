@@ -6,10 +6,10 @@ export interface VersionInfo {
 }
 
 export const CURRENT_VERSION: VersionInfo = {
-  version: '2.8.0',
-  buildNumber: 280,
+  version: '2.9.1',
+  buildNumber: 291,
   releaseDate: '2026-10-19',
-  commitTag: 'v2.8.0-release',
+  commitTag: 'v2.9.1-audit-remediation',
 };
 
 export const incrementVersion = (type: 'patch' | 'minor' | 'major' = 'patch'): VersionInfo => {

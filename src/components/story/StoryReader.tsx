@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useMemo, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ChevronLeft,
   ChevronRight,
@@ -27,8 +27,8 @@ import {
   Film,
   BookPlus,
 } from 'lucide-react';
-import { Language, NarratorVoice, PageImage, StoryData, StoryPage } from '../../types';
-import { exportImagesAsZip, exportPrintBook, exportStoryAsPDF, saveStoryAsJSON } from '../../services/export';
+import { Language, NarratorVoice, PageImage, PDFPreset, StoryData, StoryPage } from '../../types';
+import { exportImagesAsZip, exportPrintBook, saveStoryAsJSON } from '../../services/export';
 import { exportBundle } from '../../services/storyBundle';
 import { recordGame } from '../../services/progress';
 import { toSrc } from '../../services/media';
@@ -41,6 +41,7 @@ import StoryGallery from './StoryGallery';
 import QuizCard from './QuizCard';
 import ErrorDetails from '../common/ErrorDetails';
 import FreeEngineCard from '../apiKey/FreeEngineCard';
+import LuxurySelect, { type LuxuryOption } from '../common/LuxurySelect';
 import SleepMode from './SleepMode';
 import FamilyRecorder from './FamilyRecorder';
 import ShareMenu from './ShareMenu';
@@ -76,9 +77,11 @@ export default function StoryReader({ storyData, language, printableContainerId 
   const [actionError, setActionError] = useState<string | null>(null);
   const [exportProgress, setExportProgress] = useState<string | null>(null);
   const [pdfSuccess, setPdfSuccess] = useState(false);
+  const [pdfPreset, setPdfPreset] = useState<PDFPreset>('storybook');
   const [showVideo, setShowVideo] = useState(false);
   const [show3DViewer, setShow3DViewer] = useState(false);
   const [showFlipbook, setShowFlipbook] = useState(false);
+  const [showClassicFlipbook, setShowClassicFlipbook] = useState(false);
   const [fullEditMode, setFullEditMode] = useState(false);
   const [showVoiceCloner, setShowVoiceCloner] = useState(false);
 
@@ -102,6 +105,16 @@ export default function StoryReader({ storyData, language, printableContainerId 
       ambientEngine.playAmbient(env);
     }
   }, [pageIndex, page?.text, page?.image_prompt]);
+
+  useEffect(() => {
+    ambientEngine.setDucking(narration.status === 'playing');
+  }, [narration.status]);
+
+  useEffect(() => {
+    return () => {
+      ambientEngine.stopAmbient();
+    };
+  }, []);
 
   const handleUpdateCurrentPage = useCallback(
     (patch: Partial<StoryPage>) => {
@@ -161,7 +174,7 @@ export default function StoryReader({ storyData, language, printableContainerId 
   );
 
   const handleExportPDF = async () => {
-    handleExportPDFWithPreset('storybook');
+    handleExportPDFWithPreset(pdfPreset);
   };
 
   const handleExportPDFWithPreset = async (preset: PDFPreset = 'storybook') => {
@@ -217,13 +230,13 @@ export default function StoryReader({ storyData, language, printableContainerId 
               {/* عنوان الغلاف بالخط المختار */}
               <h1
                 className={
-                  storyData.coverFontStyle === 'kufi'
-                    ? 'font-serif text-xl sm:text-2xl font-black tracking-wide text-amber-200 drop-shadow-[0_2px_14px_rgba(255,200,50,0.5)]'
+                  (storyData.coverFontStyle || 'kufi') === 'kufi'
+                    ? 'font-cover-kufi text-xl sm:text-3xl text-amber-200 drop-shadow-[0_2px_14px_rgba(255,200,50,0.5)]'
                     : storyData.coverFontStyle === 'diwani'
-                      ? 'font-serif italic text-xl sm:text-2xl font-extrabold text-emerald-200 drop-shadow-[0_2px_14px_rgba(50,255,180,0.5)]'
+                      ? 'font-cover-diwani text-2xl sm:text-3xl text-emerald-200 drop-shadow-[0_2px_14px_rgba(50,255,180,0.5)]'
                       : storyData.coverFontStyle === 'display3d'
-                        ? 'font-display text-xl sm:text-2xl font-black uppercase text-transparent bg-clip-text bg-gradient-to-r from-amber-300 via-yellow-100 to-amber-500 drop-shadow-[0_4px_6px_rgba(0,0,0,0.9)]'
-                        : 'font-sans text-xl sm:text-2xl font-bold leading-tight text-white drop-shadow-[0_2px_8px_rgba(0,0,0,0.85)]'
+                        ? 'font-cover-3d text-xl sm:text-3xl text-amber-300'
+                        : 'font-cover-naskh text-xl sm:text-3xl text-white drop-shadow-[0_2px_8px_rgba(0,0,0,0.85)]'
                 }
               >
                 {storyData.story_info.title}
@@ -249,10 +262,10 @@ export default function StoryReader({ storyData, language, printableContainerId 
             <span className="text-[10px] font-medium text-white/60 me-1">{ar ? 'خط العنوان:' : 'Cover Font:'}</span>
             {(
               [
-                { id: 'kufi', label: { ar: 'كوفي هندسي', en: 'Geometric Kufi' } },
-                { id: 'diwani', label: { ar: 'ديواني ملكي', en: 'Royal Diwani' } },
-                { id: 'naskh', label: { ar: 'نسخ ورقعة', en: 'Story Naskh' } },
-                { id: 'display3d', label: { ar: 'ثلاثي أبعاد 3D', en: 'Embossed 3D' } },
+                { id: 'kufi', cls: 'font-cover-kufi', label: { ar: 'كوفي هندسي', en: 'Geometric Kufi' } },
+                { id: 'diwani', cls: 'font-cover-diwani', label: { ar: 'ديواني ملكي', en: 'Royal Diwani' } },
+                { id: 'naskh', cls: 'font-cover-naskh', label: { ar: 'نسخ أميري', en: 'Story Naskh' } },
+                { id: 'display3d', cls: 'font-cover-3d', label: { ar: 'ثلاثي أبعاد 3D', en: 'Embossed 3D' } },
               ] as const
             ).map((font) => {
               const active = (storyData.coverFontStyle || 'kufi') === font.id;
@@ -261,8 +274,8 @@ export default function StoryReader({ storyData, language, printableContainerId 
                   key={font.id}
                   type="button"
                   onClick={() => onStoryChange((s) => ({ ...s, coverFontStyle: font.id }))}
-                  className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold transition active:scale-95 ${
-                    active ? 'bg-lantern text-ink shadow-xs' : 'bg-black/35 text-white/75 hover:text-white hover:bg-black/50'
+                  className={`rounded-full px-3 py-1 text-[11px] font-bold transition active:scale-95 ${font.cls} ${
+                    active ? 'bg-lantern text-ink shadow-xs' : 'bg-black/45 text-white/85 hover:text-white hover:bg-black/65'
                   }`}
                 >
                   {ar ? font.label.ar : font.label.en}
@@ -384,10 +397,20 @@ export default function StoryReader({ storyData, language, printableContainerId 
           type="button"
           onClick={() => setShowFlipbook(true)}
           className="inline-flex min-h-11 items-center gap-2 rounded-2xl border border-amber-500/40 bg-amber-500/15 px-4 font-display text-xs font-bold text-amber-300 transition hover:bg-amber-500/25 active:scale-95 shadow-xs"
-          title={ar ? 'الكتاب التفاعلي بخصائص تقليب الصفحات' : 'Interactive Flipbook Reader'}
+          title={ar ? 'الكتاب التفاعلي بخصائص السحب وتقليب الصفحات' : 'Interactive Spread Book Reader'}
         >
           <BookOpen size={16} className="text-amber-400" />
-          <span>{ar ? 'الكتاب التفاعلي (Flipbook)' : 'Flipbook Reader'}</span>
+          <span>{ar ? 'الكتاب التفاعلي (Spread)' : 'Interactive Book'}</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setShowClassicFlipbook(true)}
+          className="inline-flex min-h-11 items-center gap-2 rounded-2xl border border-dream/30 bg-white/80 px-4 font-display text-xs font-bold text-ink transition hover:border-lantern active:scale-95 dark:bg-white/10 dark:text-moonlight shadow-xs"
+          title={ar ? 'الدفتر التفاعلي الكلاسيكي' : 'Classic Flipbook Reader'}
+        >
+          <Layers size={16} className="text-lantern" />
+          <span>{ar ? 'دفتر التصفح الكلاسيكي' : 'Classic Flipbook'}</span>
         </button>
 
         {/* Full Edit Mode Toggle Button */}
@@ -496,35 +519,34 @@ export default function StoryReader({ storyData, language, printableContainerId 
               {/* شريط الراوي */}
               <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-dream/20 bg-dream/5 px-3 py-2 dark:bg-white/5">
                 <div className="flex flex-wrap items-center gap-2">
-                  <label className="flex items-center gap-1.5 font-display text-xs font-semibold text-ink/70 dark:text-moonlight/70">
-                    <Volume2 size={15} className={narration.status === 'playing' ? 'animate-pulse text-lantern' : 'text-dream'} aria-hidden />
-                    <span className="sr-only">{ar ? 'صوت الراوي' : 'Narrator voice'}</span>
-                    <select
+                  <div className="w-56 sm:w-64">
+                    <LuxurySelect<NarratorVoice>
+                      ar={ar}
                       value={narration.voice}
-                      onChange={(e) => narration.setVoice(e.target.value as NarratorVoice)}
-                      className="min-h-11 rounded-xl bg-transparent px-1 text-xs font-semibold text-ink outline-none focus-visible:ring-2 focus-visible:ring-lantern/50 dark:text-moonlight"
-                    >
-                      {VOICE_OPTIONS.map((v) => (
-                        <option key={v.value} value={v.value}>
-                          {ar ? v.label.ar : v.label.en}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
+                      onChange={narration.setVoice}
+                      searchable={false}
+                      options={VOICE_OPTIONS.map((v): LuxuryOption<NarratorVoice> => ({
+                        value: v.value,
+                        label: ar ? v.label.ar : v.label.en,
+                        icon: <Volume2 size={15} className={narration.status === 'playing' ? 'animate-pulse text-lantern' : 'text-lantern'} />,
+                      }))}
+                    />
+                  </div>
 
                   <button
                     type="button"
                     onClick={() => setShowVoiceCloner(true)}
                     className="inline-flex min-h-11 items-center gap-1.5 rounded-full border border-lantern/40 bg-lantern/15 hover:bg-lantern/25 px-3.5 py-1 text-xs font-bold text-ink transition active:scale-95 dark:text-moonlight"
-                    title={ar ? 'استنسخ صوتك ليروي القصة آلياً دون قراءة يدوية' : 'Clone your voice to narrate automatically'}
+                    title={ar ? 'مطابقة أقرب صوت راوٍ جاهز لطبقة صوتك' : 'Match closest prebuilt AI voice to your vocal pitch'}
                   >
                     <AudioWaveform size={14} className="text-lantern" />
-                    <span>{ar ? 'استنسخ صوتك' : 'Clone Voice'}</span>
+                    <span>{ar ? 'مطابقة نبرة صوتك' : 'Match Voice Pitch'}</span>
                   </button>
 
                   {narration.voice === 'ClonedVoice' && (
                     <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 px-2.5 py-1 text-[11px] font-bold">
-                      ✨ {ar ? 'بصمتك الصوتية نشطة' : 'Cloned Voice Active'}
+                      <Sparkles size={12} />
+                      <span>{ar ? 'الراوي المطابق لنبرتك نشط' : 'Pitch-Matched Voice Active'}</span>
                     </span>
                   )}
                 </div>
@@ -713,7 +735,7 @@ export default function StoryReader({ storyData, language, printableContainerId 
           <ShareMenu story={storyData} ar={ar} />
 
           {/* PDF */}
-          <div className="rounded-3xl border border-dream/20 bg-gradient-to-br from-white/90 to-dream/10 p-4 shadow-xs dark:from-white/10 dark:to-dusk/60">
+          <div className="luxury-card p-4 sm:p-5 space-y-3.5">
             <div className="flex flex-col items-stretch justify-between gap-3 sm:flex-row sm:items-center">
               <div className="flex items-center gap-3">
                 <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-lantern/20 text-lantern">
@@ -721,7 +743,7 @@ export default function StoryReader({ storyData, language, printableContainerId 
                 </div>
                 <div>
                   <h3 className="font-display text-sm font-semibold text-ink dark:text-moonlight">{ar ? 'كتاب القصة الكامل (PDF)' : 'Storybook Edition (PDF)'}</h3>
-                  <p className="text-xs text-ink/60 dark:text-moonlight/60">{ar ? 'تنسيق طباعة أنيق يشمل الغلاف وجميع الصفحات والرسومات' : 'Printable layout with cover, illustrations & story pages'}</p>
+                  <p className="text-xs text-ink/60 dark:text-moonlight/60">{ar ? 'اختر القالب الملكي لتصدير القصة بجودة طباعة فاخرة' : 'Choose your luxury template for print-ready PDF export'}</p>
                 </div>
               </div>
 
@@ -759,6 +781,39 @@ export default function StoryReader({ storyData, language, printableContainerId 
                   <Printer size={18} />
                 </button>
               </div>
+            </div>
+
+            <div className="pt-2 border-t border-dream/20 dark:border-white/10">
+              <LuxurySelect<PDFPreset>
+                ar={ar}
+                label={ar ? 'قالب وتصميم كتاب PDF (.pdf-classic / .pdf-modern / .pdf-minimal)' : 'PDF Book Layout Template'}
+                value={pdfPreset}
+                onChange={setPdfPreset}
+                searchable={false}
+                options={[
+                  {
+                    value: 'storybook',
+                    label: ar ? 'القالب الكلاسيكي الفاخر (.pdf-classic)' : 'Classic Royal Storybook (.pdf-classic)',
+                    sublabel: ar ? 'إطار ذهبي مزدوج وخط أميري أصيل مع غلاف كامل' : 'Double gold frame, serif typography & full cover',
+                    badge: ar ? 'موصى به' : 'Classic',
+                    icon: <BookOpen size={15} className="text-lantern" />,
+                  },
+                  {
+                    value: 'minimalist',
+                    label: ar ? 'القالب العصري الحديث (.pdf-modern)' : 'Modern Editorial Picture Book (.pdf-modern)',
+                    sublabel: ar ? 'مساحات بيضاء أنيقة وتركيز بصري واسع على اللوحات' : 'Clean modern layout with large visual focus',
+                    badge: 'Modern',
+                    icon: <Sparkles size={15} className="text-lantern" />,
+                  },
+                  {
+                    value: 'collector',
+                    label: ar ? 'نسخة المقتنين البسيطة والشاملة (.pdf-minimal)' : 'Minimal Collector Edition (.pdf-minimal)',
+                    sublabel: ar ? 'تصميم هادئ يشمل بطاقة الشخصيات الكاملة' : 'Refined minimal design with character showcase page',
+                    badge: 'Collector',
+                    icon: <FileText size={15} className="text-lantern" />,
+                  },
+                ]}
+              />
             </div>
           </div>
 
@@ -864,6 +919,15 @@ export default function StoryReader({ storyData, language, printableContainerId 
           language={language}
           onClose={() => setShowFlipbook(false)}
           onDownloadPDFWithPreset={handleExportPDFWithPreset}
+        />
+      )}
+
+      {showClassicFlipbook && (
+        <InteractiveFlipbook
+          storyData={storyData}
+          ar={ar}
+          onClose={() => setShowClassicFlipbook(false)}
+          onDownloadPDF={handleExportPDF}
         />
       )}
 

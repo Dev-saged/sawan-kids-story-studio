@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Volume2 as VolumeIcon, VolumeX, ChevronLeft, ChevronRight, BookOpen, Download, X, Layers, Sparkles, SlidersHorizontal, Check } from 'lucide-react';
 import { PDFPreset, StoryData, Language } from '../../types';
@@ -50,11 +50,12 @@ export default function InteractiveBookReader({ storyData, language, onClose, on
   const activeAmbientInfo = AMBIENT_PRESETS[activeAmbientType];
   const [ambientMuted, setAmbientMuted] = useState(() => ambientEngine.isMuted());
 
-  // Trigger ambient sound on page flip
-  if (activePageForAmbient) {
-    const env = detectAmbientEnvironment(activePageForAmbient.text, activePageForAmbient.image_prompt);
-    ambientEngine.playAmbient(env);
-  }
+  useEffect(() => {
+    if (activePageForAmbient) {
+      const env = detectAmbientEnvironment(activePageForAmbient.text, activePageForAmbient.image_prompt);
+      ambientEngine.playAmbient(env);
+    }
+  }, [activePageForAmbient?.page, activePageForAmbient?.text, activePageForAmbient?.image_prompt]);
 
   const pageVariants = {
     initial: (direction: number) => ({
@@ -68,7 +69,7 @@ export default function InteractiveBookReader({ storyData, language, onClose, on
       scale: 1,
       transition: {
         duration: 0.45,
-        ease: [0.16, 1, 0.3, 1],
+        ease: [0.22, 1, 0.36, 1] as const,
       },
     },
     exit: (direction: number) => ({
@@ -77,7 +78,7 @@ export default function InteractiveBookReader({ storyData, language, onClose, on
       scale: 0.95,
       transition: {
         duration: 0.35,
-        ease: 'easeIn',
+        ease: 'easeIn' as const,
       },
     }),
   };
@@ -258,7 +259,7 @@ export default function InteractiveBookReader({ storyData, language, onClose, on
 
                         {leftPageData.generatedImage && (
                           <div className="relative flex-1 min-h-[200px] rounded-xl overflow-hidden border border-white/10 shadow-md">
-                            <img src={toSrc(leftPageData.generatedImage)} alt="" className="h-full w-full object-cover" />
+                            <img src={toSrc(leftPageData.generatedImage) ?? undefined} alt="" className="h-full w-full object-cover" />
                           </div>
                         )}
 
@@ -285,7 +286,7 @@ export default function InteractiveBookReader({ storyData, language, onClose, on
 
                           {rightPageData.generatedImage && (
                             <div className="relative flex-1 min-h-[200px] rounded-xl overflow-hidden border border-white/10 shadow-md">
-                              <img src={toSrc(rightPageData.generatedImage)} alt="" className="h-full w-full object-cover" />
+                              <img src={toSrc(rightPageData.generatedImage) ?? undefined} alt="" className="h-full w-full object-cover" />
                             </div>
                           )}
 

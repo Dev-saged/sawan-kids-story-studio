@@ -3,6 +3,10 @@ import { CURRENT_VERSION } from './version';
 
 export const APP_VERSION = CURRENT_VERSION.version;
 
+export const CONFIG = {
+  IMAGE_MAX_DIM: 2048,
+} as const;
+
 // الهوية وروابط التواصل — تعديل هذا الملف فقط يغيّر العلامة في كل التطبيق
 export const BRAND = {
   name: { ar: 'استوديو ساجد', en: 'Sajed Studio' },

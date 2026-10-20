@@ -473,7 +473,7 @@ class Renderer {
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.direction = this.rtl ? 'rtl' : 'ltr';
-        ctx.fillText(`${this.tagline} ♥`, W / 2, H - (portrait ? 120 : 56));
+        ctx.fillText(this.tagline, W / 2, H - (portrait ? 120 : 56));
         ctx.restore();
       }
     }
@@ -577,7 +577,7 @@ const buildSegments = async (story: StoryData, voice: NarratorVoice, actx: BaseA
   for (let i = 0; i < story.pages.length; i++) {
     if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
     const page = story.pages[i];
-    onProgress(0.05 + (i / story.pages.length) * 0.4, `🎙️ ${i + 1}/${story.pages.length}`);
+    onProgress(0.05 + (i / story.pages.length) * 0.4, `${i + 1}/${story.pages.length}`);
     const audio = await decode(actx, await getPageAudio(story.id, page, voice, signal));
     const image = (await loadBitmap(page.generatedImage, size.w, size.h)) ?? lastImage;
     lastImage = image;
@@ -740,7 +740,7 @@ const encodeMp4 = async (renderer: Renderer, canvas: HTMLCanvasElement, audio: A
     vf.close();
     while (ve.encodeQueueSize > 8) await new Promise((r) => setTimeout(r, 4));
     if (i % 15 === 0) {
-      onProgress(0.55 + (i / frames) * 0.43, ar ? `🎬 تصيير ${Math.round((i / frames) * 100)}%` : `🎬 Rendering ${Math.round((i / frames) * 100)}%`);
+      onProgress(0.55 + (i / frames) * 0.43, ar ? `تصيير ${Math.round((i / frames) * 100)}%` : `Rendering ${Math.round((i / frames) * 100)}%`);
       await new Promise((r) => setTimeout(r, 0));
     }
   }
@@ -774,7 +774,7 @@ const recordRealtime = async (renderer: Renderer, canvas: HTMLCanvasElement, aud
       const t = actx.currentTime - t0;
       if (signal.aborted || t >= duration) return resolve();
       renderer.frame(Math.max(0, t));
-      onProgress(0.55 + (t / duration) * 0.43, ar ? `🎬 تسجيل ${Math.round((t / duration) * 100)}%` : `🎬 Recording ${Math.round((t / duration) * 100)}%`);
+      onProgress(0.55 + (t / duration) * 0.43, ar ? `تسجيل ${Math.round((t / duration) * 100)}%` : `Recording ${Math.round((t / duration) * 100)}%`);
       requestAnimationFrame(loop);
     };
     loop();
@@ -830,13 +830,13 @@ const render = async (story: StoryData, opts: VideoOptions, onProgress: Progress
   let music: AudioBuffer | null = null;
   let musicFailed = false;
   if (opts.withMusic) {
-    onProgress(0.45, ar ? '🎵 نؤلّف الموسيقى التصويرية للقصة (45%)...' : '🎵 Composing story soundtrack (45%)...');
+    onProgress(0.45, ar ? 'نؤلّف الموسيقى التصويرية للقصة (45%)...' : 'Composing story soundtrack (45%)...');
     try {
       const musicPromise = getStoryMusic(story, signal);
       const timeoutPromise = new Promise<null>((r) => setTimeout(() => r(null), 7000));
       const res = await Promise.race([musicPromise, timeoutPromise]);
       if (res instanceof Blob) {
-        onProgress(0.49, ar ? '🎶 معالجة وضبط صوت الموسيقى (49%)...' : '🎶 Processing soundtrack (49%)...');
+        onProgress(0.49, ar ? 'معالجة وضبط صوت الموسيقى (49%)...' : 'Processing soundtrack (49%)...');
         music = await decode(decoder, res);
       }
     } catch (err) {
@@ -844,13 +844,13 @@ const render = async (story: StoryData, opts: VideoOptions, onProgress: Progress
     }
     // في حال عدم توفر أو تأخر موسيقى السيرفر: يتم التوليد التلقائي لموسيقى هادئة بالـ WebAudio
     if (!music) {
-      onProgress(0.49, ar ? '🎶 توليد لحن موسيقي هادئ ومؤثرات صوتية (49%)...' : '🎶 Generating gentle lullaby score & effects (49%)...');
+      onProgress(0.49, ar ? 'توليد لحن موسيقي هادئ ومؤثرات صوتية (49%)...' : 'Generating gentle lullaby score & effects (49%)...');
       const totalDur = segs[segs.length - 1].start + segs[segs.length - 1].dur + 2;
       music = await createProceduralLullaby(totalDur, SR);
     }
   }
 
-  onProgress(0.53, ar ? '🎚️ مزج أصوات الراوي مع الموسيقى التصويرية (53%)...' : '🎚️ Mixing narration with soundtrack (53%)...');
+  onProgress(0.53, ar ? 'مزج أصوات الراوي مع الموسيقى التصويرية (53%)...' : 'Mixing narration with soundtrack (53%)...');
   const mixed = await mixAudio(segs, music);
   const last = segs[segs.length - 1];
   const duration = last.start + last.dur;

@@ -441,7 +441,13 @@ export default function Book3DViewer({ storyData, ar, onClose }: Props) {
           >
             {/* Front Cover */}
             <div
-              className="absolute inset-0 rounded-r-xl overflow-hidden shadow-2xl backface-hidden border-2 border-lantern/40 bg-dusk"
+              className={`absolute inset-0 rounded-r-xl overflow-hidden shadow-2xl backface-hidden bg-dusk ${
+                theme === 'hardcover'
+                  ? 'border-4 border-amber-400/75 ring-1 ring-amber-200/40'
+                  : theme === 'grimoire'
+                    ? 'border-4 border-amber-700/80 ring-2 ring-amber-900/60'
+                    : 'border border-white/30 rounded-2xl'
+              }`}
               style={{
                 transform: 'translateZ(14px)',
               }}
@@ -453,11 +459,21 @@ export default function Book3DViewer({ storyData, ar, onClose }: Props) {
                   <BookOpen size={48} className="text-lantern" />
                 </div>
               )}
-              <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/20 to-transparent flex flex-col justify-end p-4">
-                <span className="text-[10px] uppercase font-bold text-lantern tracking-wider">
+              <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/30 to-transparent flex flex-col justify-end p-4">
+                <span className="text-[10px] uppercase font-bold text-lantern tracking-wider mb-0.5">
                   {ar ? 'استوديو ساجد لقصص الأطفال' : 'Sajed Story Studio'}
                 </span>
-                <h4 className="font-display text-base font-bold text-white drop-shadow leading-snug">
+                <h4
+                  className={`text-base sm:text-lg text-white drop-shadow leading-snug text-balance-wrap ${
+                    (storyData.coverFontStyle || 'kufi') === 'kufi'
+                      ? 'font-cover-kufi text-amber-200'
+                      : storyData.coverFontStyle === 'diwani'
+                        ? 'font-cover-diwani text-emerald-200'
+                        : storyData.coverFontStyle === 'display3d'
+                          ? 'font-cover-3d text-amber-300'
+                          : 'font-cover-naskh text-white'
+                  }`}
+                >
                   {title}
                 </h4>
               </div>

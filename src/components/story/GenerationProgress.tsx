@@ -1,5 +1,6 @@
 import { Pause, Play } from 'lucide-react';
 import { Language } from '../../types';
+import { LanternSvg } from '../common/BrandIcons';
 
 interface Props {
   progress: number;
@@ -16,8 +17,8 @@ export default function GenerationProgress({ progress, message, preview, isPause
 
   return (
     <div className="space-y-4 rounded-3xl border border-dream/20 bg-white/60 p-6 text-center dark:bg-white/5">
-      <div className="text-4xl" aria-hidden>
-        🏮
+      <div className="flex justify-center text-lantern" aria-hidden>
+        <LanternSvg className="w-10 h-10" />
       </div>
       <p className="font-display text-lg font-medium text-ink dark:text-moonlight">{message}</p>
 

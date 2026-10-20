@@ -67,25 +67,25 @@ Return ONLY the structured JSON matching the provided response schema. No prose,
 no markdown fences, no commentary outside the JSON.`;
 
 export const DIALECT_OPTIONS: { value: ArabicDialect; label: string; flag: string }[] = [
-  { value: 'Modern Standard', label: 'الفصحى المبسطة', flag: '📚' },
-  { value: 'Egyptian', label: 'المصرية', flag: '🇪🇬' },
-  { value: 'Saudi', label: 'السعودية', flag: '🇸🇦' },
-  { value: 'Gulf', label: 'الخليجية', flag: '🌊' },
-  { value: 'Palestinian', label: 'الفلسطينية', flag: '🇵🇸' },
-  { value: 'Levantine', label: 'الشامية', flag: '🌿' },
-  { value: 'Syrian', label: 'السورية', flag: '🇸🇾' },
-  { value: 'Lebanese', label: 'اللبنانية', flag: '🇱🇧' },
-  { value: 'Jordanian', label: 'الأردنية', flag: '🇯🇴' },
-  { value: 'Iraqi', label: 'العراقية', flag: '🇮🇶' },
-  { value: 'Emirati', label: 'الإماراتية', flag: '🇦🇪' },
-  { value: 'Kuwaiti', label: 'الكويتية', flag: '🇰🇼' },
-  { value: 'Moroccan', label: 'المغربية', flag: '🇲🇦' },
-  { value: 'Algerian', label: 'الجزائرية', flag: '🇩🇿' },
-  { value: 'Tunisian', label: 'التونسية', flag: '🇹🇳' },
-  { value: 'Libyan', label: 'الليبية', flag: '🇱🇾' },
-  { value: 'Sudanese', label: 'السودانية', flag: '🇸🇩' },
-  { value: 'Yemeni', label: 'اليمنية', flag: '🇾🇪' },
-  { value: 'Mauritanian', label: 'الموريتانية', flag: '🇲🇷' },
+  { value: 'Modern Standard', label: 'الفصحى المبسطة', flag: 'MSA' },
+  { value: 'Egyptian', label: 'المصرية', flag: 'EG' },
+  { value: 'Saudi', label: 'السعودية', flag: 'SA' },
+  { value: 'Gulf', label: 'الخليجية', flag: 'GF' },
+  { value: 'Palestinian', label: 'الفلسطينية', flag: 'PS' },
+  { value: 'Levantine', label: 'الشامية', flag: 'LV' },
+  { value: 'Syrian', label: 'السورية', flag: 'SY' },
+  { value: 'Lebanese', label: 'اللبنانية', flag: 'LB' },
+  { value: 'Jordanian', label: 'الأردنية', flag: 'JO' },
+  { value: 'Iraqi', label: 'العراقية', flag: 'IQ' },
+  { value: 'Emirati', label: 'الإماراتية', flag: 'AE' },
+  { value: 'Kuwaiti', label: 'الكويتية', flag: 'KW' },
+  { value: 'Moroccan', label: 'المغربية', flag: 'MA' },
+  { value: 'Algerian', label: 'الجزائرية', flag: 'DZ' },
+  { value: 'Tunisian', label: 'التونسية', flag: 'TN' },
+  { value: 'Libyan', label: 'الليبية', flag: 'LY' },
+  { value: 'Sudanese', label: 'السودانية', flag: 'SD' },
+  { value: 'Yemeni', label: 'اليمنية', flag: 'YE' },
+  { value: 'Mauritanian', label: 'الموريتانية', flag: 'MR' },
 ];
 
 export const AGE_GROUPS: { value: AgeGroup; label: string; desc: { en: string; ar: string } }[] = [
@@ -209,7 +209,7 @@ export const ASPECT_RATIO_OPTIONS: { value: AspectRatio; label: { en: string; ar
 export const READ_LEARN_ARTICLES: ReadLearnArticle[] = [
   {
     id: 'why-sky-blue',
-    emoji: '🌤️',
+    emoji: 'sun',
     title: { en: 'Why Is the Sky Blue?', ar: 'لماذا السماء زرقاء؟' },
     summary: {
       en: 'Sunlight is made of many colors, and the sky loves blue the most.',
@@ -222,7 +222,7 @@ export const READ_LEARN_ARTICLES: ReadLearnArticle[] = [
   },
   {
     id: 'why-magnets-stick',
-    emoji: '🧲',
+    emoji: 'magnet',
     title: { en: 'Why Do Magnets Stick to Some Things?', ar: 'لماذا يلتصق المغناطيس ببعض الأشياء؟' },
     summary: {
       en: 'Magnets are picky friends — they only pull on iron, nickel, and cobalt.',
@@ -235,7 +235,7 @@ export const READ_LEARN_ARTICLES: ReadLearnArticle[] = [
   },
   {
     id: 'how-volcanoes-erupt',
-    emoji: '🌋',
+    emoji: 'volcano',
     title: { en: 'How Does a Volcano Erupt?', ar: 'كيف يثور البركان؟' },
     summary: {
       en: 'Deep under a mountain, melted rock builds up pressure until it bursts out.',
@@ -248,7 +248,7 @@ export const READ_LEARN_ARTICLES: ReadLearnArticle[] = [
   },
   {
     id: 'why-we-see-lightning-before-thunder',
-    emoji: '⚡',
+    emoji: 'bolt',
     title: { en: 'Why Do We See Lightning Before We Hear Thunder?', ar: 'لماذا نرى البرق قبل أن نسمع الرعد؟' },
     summary: {
       en: 'Light zips to your eyes almost instantly, but sound takes its time.',
@@ -261,7 +261,7 @@ export const READ_LEARN_ARTICLES: ReadLearnArticle[] = [
   },
   {
     id: 'why-do-we-yawn',
-    emoji: '🥱',
+    emoji: 'yawn',
     title: { en: 'Why Do We Yawn?', ar: 'لماذا نتثاءب؟' },
     summary: {
       en: 'A big yawn helps cool down your busy brain and wake it back up.',
@@ -274,7 +274,7 @@ export const READ_LEARN_ARTICLES: ReadLearnArticle[] = [
   },
   {
     id: 'how-do-plants-eat',
-    emoji: '🌱',
+    emoji: 'sprout',
     title: { en: 'How Do Plants Eat Without a Mouth?', ar: 'كيف تأكل النباتات بلا فم؟' },
     summary: {
       en: 'Plants cook their own food from sunlight, air, and water.',
@@ -290,63 +290,63 @@ export const READ_LEARN_ARTICLES: ReadLearnArticle[] = [
 export const GAMES_ROSTER: GameDefinition[] = [
   {
     id: 'volcano',
-    emoji: '🌋',
+    emoji: 'volcano',
     title: { en: 'Volcano Lab', ar: 'مختبر البركان' },
     description: { en: 'Trigger an eruption and learn why it happens.', ar: 'فجّر البركان وتعلّم لماذا يحدث ذلك.' },
     available: true,
   },
   {
     id: 'magnet',
-    emoji: '🧲',
+    emoji: 'magnet',
     title: { en: 'Magnet Test', ar: 'اختبار المغناطيس' },
     description: { en: 'Guess which objects a magnet will pull.', ar: 'خمّن أي الأشياء يجذبها المغناطيس.' },
     available: true,
   },
   {
     id: 'transformer',
-    emoji: '🔌',
+    emoji: 'plug',
     title: { en: 'Transformer', ar: 'المحوّل الكهربائي' },
     description: { en: 'Step-up or step-down? Read the coil turns.', ar: 'رافع أم خافض؟ اقرأ عدد اللفات.' },
     available: true,
   },
   {
     id: 'generator-motor',
-    emoji: '⚙️',
+    emoji: 'gear',
     title: { en: 'Generator & Motor', ar: 'المولد والمحرك' },
     description: { en: 'Pick the right parts for each machine.', ar: 'اختر الأجزاء الصحيحة لكل جهاز.' },
     available: true,
   },
   {
     id: 'magnetic-resonance',
-    emoji: '🧠',
+    emoji: 'brain',
     title: { en: 'Magnetic Resonance', ar: 'الرنين المغناطيسي' },
     description: { en: 'Align protons and read the MRI signal.', ar: 'رتّب البروتونات واقرأ إشارة الرنين.' },
     available: true,
   },
   {
     id: 'chemistry-lab',
-    emoji: '🧪',
+    emoji: 'flask',
     title: { en: 'Chemistry Lab', ar: 'مختبر الكيمياء' },
     description: { en: 'Match each element with its symbol.', ar: 'طابق كل عنصر مع رمزه الكيميائي.' },
     available: true,
   },
   {
     id: 'candy-catch',
-    emoji: '🍬',
+    emoji: 'candy',
     title: { en: 'Element Catch', ar: 'التقاط العناصر' },
     description: { en: 'Tap the falling symbol before time runs out.', ar: 'اضغط الرمز الصحيح قبل انتهاء الوقت.' },
     available: true,
   },
   {
     id: 'candy-ladder',
-    emoji: '🏆',
+    emoji: 'trophy',
     title: { en: 'Candy Ladder', ar: 'من سيربح البونبون' },
     description: { en: 'Answer questions and climb 25 levels.', ar: 'أجب عن الأسئلة واصعد 25 مستوى.' },
     available: true,
   },
   {
     id: 'fault-types',
-    emoji: '📐',
+    emoji: 'ruler',
     title: { en: 'Fault Types', ar: 'أنواع الصدوع' },
     description: { en: 'Match each fault with the force behind it.', ar: 'اربط كل صدع بالقوة المسببة له.' },
     available: true,
@@ -358,7 +358,7 @@ export const GAMES_ROSTER: GameDefinition[] = [
     description: { en: 'Any topic, adaptive difficulty, questions read aloud.', ar: 'أي موضوع، صعوبة تتكيّف معك، وأسئلة مسموعة.' },
     available: true,
   },
-  { id: 'speed-challenge', emoji: '🏎️', title: { en: 'Speed Challenge', ar: 'تحدي السرعة' }, description: { en: 'Coming soon.', ar: 'قريبًا.' }, available: false },
-  { id: 'circuit-builder', emoji: '💡', title: { en: 'Circuit Builder', ar: 'بناء الدائرة الكهربائية' }, description: { en: 'Coming soon.', ar: 'قريبًا.' }, available: false },
-  { id: 'color-mixing', emoji: '🎨', title: { en: 'Color Mixing Lab', ar: 'مختبر مزج الألوان' }, description: { en: 'Coming soon.', ar: 'قريبًا.' }, available: false },
+  { id: 'speed-challenge', emoji: 'speed', title: { en: 'Speed Challenge', ar: 'تحدي السرعة' }, description: { en: 'Coming soon.', ar: 'قريبًا.' }, available: false },
+  { id: 'circuit-builder', emoji: 'bulb', title: { en: 'Circuit Builder', ar: 'بناء الدائرة الكهربائية' }, description: { en: 'Coming soon.', ar: 'قريبًا.' }, available: false },
+  { id: 'color-mixing', emoji: 'palette', title: { en: 'Color Mixing Lab', ar: 'مختبر مزج الألوان' }, description: { en: 'Coming soon.', ar: 'قريبًا.' }, available: false },
 ];

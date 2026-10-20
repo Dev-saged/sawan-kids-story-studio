@@ -1,6 +1,7 @@
 import { BookOpen, BookMarked, Gamepad2, Library, Sparkles, Moon, Sun, Languages } from 'lucide-react';
 import { Language } from '../../types';
-import { BRAND } from '../../config';
+import { APP_VERSION, BRAND } from '../../config';
+import { LanternSvg } from '../common/BrandIcons';
 
 export type Section = 'studio' | 'library' | 'games' | 'learn' | 'names';
 
@@ -26,39 +27,88 @@ export default function NavBar({ active, onNavigate, language, onToggleLanguage,
 
   return (
     <>
-      {/* Top utility bar: brand + theme + language */}
-      <header className="sticky top-0 z-40 flex items-center justify-between border-b border-dream/20 bg-moonlight/90 px-4 py-3 backdrop-blur dark:bg-dusk/90">
-        <div className="font-display flex items-center gap-2 text-lg font-semibold text-ink dark:text-moonlight">
-          <span aria-hidden>🏮</span>
-          <span>{isAr ? BRAND.name.ar : BRAND.name.en}</span>
-        </div>
-        <div className="flex items-center gap-2">
+      {/* Top luxury header bar: brand + desktop nav + theme + language */}
+      <header className="sticky top-0 z-40 border-b border-dream/20 bg-moonlight/85 px-3.5 py-2.5 backdrop-blur-xl transition-colors dark:border-white/10 dark:bg-dusk/85 sm:px-6">
+        <div className="mx-auto flex max-w-4xl items-center justify-between gap-3">
+          {/* Brand Emblem */}
           <button
             type="button"
-            onClick={onToggleLanguage}
-            className="flex items-center gap-1 rounded-full border border-dream/30 px-3 py-1.5 text-sm font-medium text-ink transition hover:border-lantern focus-visible:outline focus-visible:outline-2 focus-visible:outline-lantern dark:text-moonlight"
-            aria-label={isAr ? 'تبديل اللغة' : 'Toggle language'}
+            onClick={() => onNavigate('studio')}
+            className="group flex items-center gap-2.5 text-start focus-visible:outline-none"
           >
-            <Languages size={16} aria-hidden />
-            {isAr ? 'EN' : 'ع'}
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-lantern via-amber-400 to-amber-600 text-ink shadow-md shadow-lantern/25 transition-transform group-hover:scale-105">
+              <LanternSvg className="w-6 h-6" />
+            </span>
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <span className="font-display text-base sm:text-lg font-extrabold tracking-tight text-ink dark:text-moonlight truncate">
+                  {isAr ? BRAND.name.ar : BRAND.name.en}
+                </span>
+                <span className="rounded-full border border-lantern/40 bg-lantern/15 px-2 py-0.5 font-mono text-[10px] font-bold text-lantern">
+                  v{APP_VERSION}
+                </span>
+              </div>
+              <span className="hidden sm:block text-[11px] font-medium text-ink/55 dark:text-moonlight/55 truncate">
+                {isAr ? 'استوديو القصص المصورة والذكية للأطفال واليافعين' : 'Interactive Illustrated Story Studio'}
+              </span>
+            </div>
           </button>
-          <button
-            type="button"
-            onClick={onToggleTheme}
-            className="rounded-full border border-dream/30 p-1.5 text-ink transition hover:border-lantern focus-visible:outline focus-visible:outline-2 focus-visible:outline-lantern dark:text-moonlight"
-            aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+
+          {/* Desktop Navigation Pills (md and up) */}
+          <nav
+            className="hidden md:flex items-center gap-1 rounded-2xl border border-dream/25 bg-white/60 p-1 shadow-xs dark:border-white/10 dark:bg-white/5"
+            aria-label={isAr ? 'التنقل الرئيسي' : 'Primary navigation'}
           >
-            {theme === 'dark' ? <Sun size={18} aria-hidden /> : <Moon size={18} aria-hidden />}
-          </button>
+            {ITEMS.map(({ id, icon: Icon, label }) => {
+              const isActive = active === id;
+              return (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => onNavigate(id)}
+                  aria-current={isActive ? 'page' : undefined}
+                  className={`flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-xs font-bold transition-all ${
+                    isActive
+                      ? 'bg-lantern text-ink shadow-sm'
+                      : 'text-ink/70 hover:bg-dream/15 hover:text-ink dark:text-moonlight/70 dark:hover:bg-white/10 dark:hover:text-moonlight'
+                  }`}
+                >
+                  <Icon size={15} strokeWidth={isActive ? 2.5 : 2} />
+                  <span>{isAr ? label.ar : label.en}</span>
+                </button>
+              );
+            })}
+          </nav>
+
+          {/* Language & Theme Controls */}
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={onToggleLanguage}
+              className="flex min-h-10 items-center gap-1.5 rounded-2xl border border-dream/30 bg-white/75 px-3 py-1.5 text-xs font-bold text-ink shadow-2xs transition hover:border-lantern active:scale-95 dark:border-white/15 dark:bg-white/10 dark:text-moonlight"
+              aria-label={isAr ? 'تبديل اللغة' : 'Toggle language'}
+            >
+              <Languages size={15} className="text-lantern" aria-hidden />
+              <span>{isAr ? 'English' : 'العربية'}</span>
+            </button>
+            <button
+              type="button"
+              onClick={onToggleTheme}
+              className="flex h-10 w-10 items-center justify-center rounded-2xl border border-dream/30 bg-white/75 text-ink shadow-2xs transition hover:border-lantern active:scale-95 dark:border-white/15 dark:bg-white/10 dark:text-moonlight"
+              aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+            >
+              {theme === 'dark' ? <Sun size={17} className="text-amber-300" aria-hidden /> : <Moon size={17} className="text-ink/80" aria-hidden />}
+            </button>
+          </div>
         </div>
       </header>
 
-      {/* Bottom tab bar: thumb-reachable primary navigation */}
+      {/* Mobile Bottom Dock: floating glassmorphic navigation for phones */}
       <nav
-        className="fixed inset-x-0 bottom-0 z-40 border-t border-dream/20 bg-moonlight/95 pb-[env(safe-area-inset-bottom)] backdrop-blur dark:bg-dusk/95"
-        aria-label={isAr ? 'التنقل الرئيسي' : 'Primary navigation'}
+        className="fixed inset-x-0 bottom-0 z-40 border-t border-dream/25 bg-moonlight/92 pb-[env(safe-area-inset-bottom)] backdrop-blur-xl md:hidden dark:border-white/10 dark:bg-[#161129]/94 shadow-[0_-8px_30px_rgba(0,0,0,0.18)]"
+        aria-label={isAr ? 'التنقل الرئيسي للهاتف' : 'Mobile navigation'}
       >
-        <ul className="mx-auto flex max-w-2xl items-stretch justify-between px-2">
+        <ul className="mx-auto flex max-w-md items-stretch justify-around px-1.5 py-1">
           {ITEMS.map(({ id, icon: Icon, label }) => {
             const isActive = active === id;
             return (
@@ -66,13 +116,23 @@ export default function NavBar({ active, onNavigate, language, onToggleLanguage,
                 <button
                   type="button"
                   onClick={() => onNavigate(id)}
-                  className={`flex w-full flex-col items-center gap-1 py-2.5 text-xs font-medium transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-lantern ${
-                    isActive ? 'text-lantern' : 'text-ink/60 dark:text-moonlight/60'
+                  className={`relative flex w-full flex-col items-center justify-center gap-1 rounded-2xl py-2 text-[11px] font-bold transition-all active:scale-95 ${
+                    isActive
+                      ? 'text-ink dark:text-amber-300'
+                      : 'text-ink/55 hover:text-ink/80 dark:text-moonlight/55 dark:hover:text-moonlight/85'
                   }`}
                   aria-current={isActive ? 'page' : undefined}
                 >
-                  <Icon size={22} aria-hidden strokeWidth={isActive ? 2.4 : 2} />
-                  {isAr ? label.ar : label.en}
+                  {isActive && (
+                    <span className="absolute inset-x-2 top-1 h-7 rounded-xl bg-lantern/20 dark:bg-lantern/20 -z-10" />
+                  )}
+                  <Icon
+                    size={20}
+                    aria-hidden
+                    strokeWidth={isActive ? 2.5 : 1.9}
+                    className={isActive ? 'text-lantern' : ''}
+                  />
+                  <span className="truncate max-w-[4.5rem]">{isAr ? label.ar : label.en}</span>
                 </button>
               </li>
             );

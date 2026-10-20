@@ -11,21 +11,23 @@ const readSession = (): string | null => {
   try {
     const key = sessionStorage.getItem(KEY_STORAGE);
     if (key === 'server-proxy') return 'server-proxy';
-    return key && KEY_PATTERN.test(key) ? key : 'server-proxy';
+    return key && KEY_PATTERN.test(key) ? key : null;
   } catch {
-    return 'server-proxy';
+    return null;
   }
 };
 
 let memKey: string | null = readSession();
+let serverKeyVerified = memKey === 'server-proxy';
 
-export const getApiKey = (): string | null => memKey ?? 'server-proxy';
+export const getApiKey = (): string | null => memKey ?? (serverKeyVerified ? 'server-proxy' : null);
 
 // المفتاح الحقيقي للزائر فقط (يُستخدم مباشرة من المتصفح نحو Google، ويُرسل للسيرفر لتوليد النص)
 export const getUserApiKey = (): string | null =>
   memKey && memKey !== 'server-proxy' && KEY_PATTERN.test(memKey) ? memKey : null;
 
 export const setSharedServerSession = (): void => {
+  serverKeyVerified = true;
   memKey = 'server-proxy';
   try {
     sessionStorage.setItem(KEY_STORAGE, 'server-proxy');
@@ -107,22 +109,45 @@ const dropKey = async (): Promise<void> => {
   }
 };
 
-// يُستدعى قبل أول عرض: يسترجع المفتاح المحفوظ إن وُجد (لا يُبطئ التشغيل أكثر من مهلة قصيرة)
+// يُستدعى قبل أول عرض: يسترجع المفتاح المحفوظ إن وُجد، أو يتحقق من /api/preflight إن كان الخادم يملك مفتاحاً
 export const hydrateApiKey = async (): Promise<void> => {
-  if (memKey || !isKeyRemembered()) return;
-  try {
-    await Promise.race([
-      (async () => {
-        const [blob, wrap] = await Promise.all([vaultGet<{ iv: Uint8Array<ArrayBuffer>; data: ArrayBuffer }>('key'), vaultGet<CryptoKey>('wrap')]);
-        if (!blob || !wrap) return;
-        const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: blob.iv }, wrap, blob.data);
-        const value = new TextDecoder().decode(plain);
-        if (KEY_PATTERN.test(value)) memKey = value;
-      })(),
-      new Promise<void>((resolve) => setTimeout(resolve, 1500)),
-    ]);
-  } catch {
-    // مفتاح تالف أو خزنة غير متاحة: نكمل بلا مفتاح محفوظ
+  if (!memKey && isKeyRemembered()) {
+    try {
+      await Promise.race([
+        (async () => {
+          const [blob, wrap] = await Promise.all([vaultGet<{ iv: Uint8Array<ArrayBuffer>; data: ArrayBuffer }>('key'), vaultGet<CryptoKey>('wrap')]);
+          if (!blob || !wrap) return;
+          const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: blob.iv }, wrap, blob.data);
+          const value = new TextDecoder().decode(plain);
+          if (KEY_PATTERN.test(value)) memKey = value;
+        })(),
+        new Promise<void>((resolve) => setTimeout(resolve, 1500)),
+      ]);
+    } catch {
+      // مفتاح تالف أو خزنة غير متاحة: نكمل لفحص الخادم
+    }
+  }
+
+  if (!memKey || memKey === 'server-proxy') {
+    try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 2500);
+      const res = await fetch('/api/preflight', { signal: ctrl.signal });
+      clearTimeout(timer);
+      if (res.ok) {
+        const data = await res.json();
+        if (data?.ok) {
+          serverKeyVerified = true;
+          memKey = 'server-proxy';
+          return;
+        }
+      }
+      serverKeyVerified = false;
+      if (memKey === 'server-proxy') memKey = null;
+    } catch {
+      serverKeyVerified = false;
+      if (memKey === 'server-proxy') memKey = null;
+    }
   }
 };
 
@@ -139,6 +164,7 @@ export const saveApiKey = async (key: string, remember = false): Promise<void> =
 
 export const clearApiKey = (): void => {
   memKey = null;
+  serverKeyVerified = false;
   try {
     sessionStorage.removeItem(KEY_STORAGE);
   } catch {

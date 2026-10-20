@@ -72,12 +72,12 @@ export const analyzeVoiceAudio = async (blob: Blob): Promise<{ pitchHz: number; 
   }
 };
 
-// حفظ واسترجاع البصمة الصوتية المستنسخة
+// حفظ واسترجاع إعداد مطابقة أقرب صوت جاهز لنبرة المستخدم
 export const saveClonedVoiceProfile = async (name: string, audioBlob: Blob): Promise<ClonedVoiceProfile> => {
   const analysis = await analyzeVoiceAudio(audioBlob);
   const profile: ClonedVoiceProfile = {
     id: CLONED_VOICE_ID,
-    name: name.trim() || 'صوتي المستنسخ',
+    name: name.trim() || 'نبرتي المطابقة',
     sampleAudio: audioBlob,
     pitchAverageHz: analysis.pitchHz,
     matchedVoice: analysis.matchedVoice,

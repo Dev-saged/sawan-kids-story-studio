@@ -66,8 +66,8 @@ export default function FamilyRecorder({ ar, storyId, pageNo, onSaved }: Props) 
       if (err?.name === 'NotAllowedError' || err?.name === 'PermissionDeniedError') {
         setError(
           ar
-            ? 'المتصفح حظر إذن الميكروفون ("اسمح بالإذن من إعدادات المتصفح"). اضغط على أيقونة القفل 🔒 في شريط عنوان المتصفح وفعّل الميكروفون، أو استخدم زر مسجل الجهاز أدناه للتسجيل فوراً.'
-            : 'Microphone permission blocked ("allow in browser settings"). Click the lock icon 🔒 in the address bar to allow microphone, or use the device recorder button below.'
+            ? 'المتصفح حظر إذن الميكروفون ("اسمح بالإذن من إعدادات المتصفح"). اضغط على أيقونة القفل في شريط عنوان المتصفح وفعّل الميكروفون، أو استخدم زر مسجل الجهاز أدناه للتسجيل فوراً.'
+            : 'Microphone permission blocked ("allow in browser settings"). Click the lock icon in the address bar to allow microphone, or use the device recorder button below.'
         );
       } else {
         setError(

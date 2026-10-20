@@ -204,7 +204,7 @@ export default function SelfTest() {
       <ul className="space-y-1.5">
         {results.map((r) => (
           <li key={r.name} className={r.ok ? 'text-green-600' : 'text-red-500'}>
-            {r.ok ? '✓' : '✗'} {r.name}
+            [{r.ok ? 'PASS' : 'FAIL'}] {r.name}
             {r.info ? ` — ${r.info}` : ''}
           </li>
         ))}

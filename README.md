@@ -5,31 +5,28 @@ with natural narration, read-along, story videos, science games and learning art
 
 **Designed & developed by Eng. Sajed Al-Abadlah — تصميم وتطوير المهندس ساجد العبادلة**
 
-## Stack
+## Stack (v2.9.1 — Single Version Source: `src/version.ts`)
 
 - Vite 6 + React 18 + TypeScript (strict), Tailwind CSS v4
 - `server.ts` (Express 5) — thin Gemini proxy required by Google AI Studio hosting
-- `@google/genai` model chains (strongest first, each with its own quota):
-  - Text: `gemini-3.8-flash` → `gemini-2.5-flash` → `gemini-3.1-flash-lite`
-  - Images (Nano Banana only): `gemini-nano-banana-2.1` → `gemini-3-pro-image` → `gemini-3.1-flash-image` → `gemini-3.1-flash-lite-image`
-  - Narration: `gemini-3.8-flash-tts` → `gemini-3.8-flash-lite-tts` → `gemini-3.1-flash-tts-preview` → `gemini-2.5-pro-preview-tts`
-  - Music: `lyria-3-clip-preview` → `lyria-3.5` (instrumental, SynthID watermarked)
-- IndexedDB (versioned schema) for the library, images, audio cache and child profiles
+- `@google/genai` model chains (strongest first, each with its own quota, defined in `server.ts` & `src/shared/modelRules.ts`):
+  - Text: `gemini-3-flash-preview` → `gemini-2.5-flash` → `gemini-2.5-pro` → `gemini-2.5-flash-lite`
+  - Images: `gemini-2.5-flash-image` → `gemini-3.1-flash-image-preview` → `gemini-3-pro-image-preview`
+  - Narration: `gemini-2.5-flash-preview-tts` → `gemini-2.5-pro-preview-tts`
+  - Music: `lyria-realtime-exp` / `lyria-3-clip-preview` (with WebAudio procedural lullaby fallback)
+- IndexedDB (versioned schema) for the library, 2048px print-grade images, audio cache and child profiles
 - WebCodecs + `mp4-muxer` for MP4 video export (MediaRecorder fallback)
 - PWA: manifest + service worker (offline shell)
 
-## What's new in v2.2.1 — image engine rebuilt around the browser
+## What's new in v2.9.1 — Audit Remediation & Architecture Hardening
 
-- **Browser-first image ladder** (`src/services/imageEngine.ts`): `direct-user` (visitor key straight to Google) →
-  `direct-env` (key injected by Vite, even if it is the AI Studio placeholder, exactly like the reference app) →
-  `server` (Nano Banana chain + Cloudflare FLUX) → `web-free` (Pollinations, no key, watermark, no reference photos).
-  Hard failures (zero quota, rejected key, no key) disable an engine for 30 min; temporary quota for 60 s.
-- Model `gemini-2.5-flash-image` is first in both the browser path and the server chain (it takes no `imageSize`).
-- New error code `NOKEY` ("server has no Gemini key") instead of the misleading "Google rejected the key".
-- Visitor key can be **remembered encrypted** (AES-GCM, non-extractable key in its own IndexedDB `sawan-vault`).
-- "Technical details" now reports the origin of every key (injected / user / server) and tests each engine.
-- Character sheet is skipped (not fatal) when only reference-less engines are left.
-- Production builds never embed a real key; only the public `MY_GEMINI_API_KEY` placeholder can pass.
+- **Single Version Source (`src/version.ts`)**: Centralized version tracking across UI, `config.ts`, `package.json`, and documentation.
+- **Shared Model Capabilities (`src/shared/modelRules.ts`)**: `NO_SIZE_IMAGE_MODELS` shared between `server.ts` and `src/services/imageEngine.ts` so `gemini-2.5-flash-image` never receives `imageSize: '1K'`, and concise positive anatomical directives replace negative prompt lists.
+- **Reference Sheet Protection**: Retrying without the character reference sheet is restricted strictly to image/safety/filter errors (and logged as `[no-ref retry]` in the diagnostic trail), preventing silent hero drift on network or rate-limit errors.
+- **Honest API Key Preflight & Voice Pitch Matching**: `getApiKey()` only returns `'server-proxy'` after `/api/preflight` confirms server key availability. Voice pitch matching is transparently labeled as selecting the closest prebuilt narrator voice to the user's vocal frequency (Hz).
+- **2048px Print Resolution & 250-URL Safe Cache**: `CONFIG.IMAGE_MAX_DIM = 2048` preserves crisp print quality, and `objectUrlFor` caches up to 250 active blob URLs with safe re-creation.
+- **Dual Interactive Book Readers & Ambient Audio Ducking**: Both Framer Motion spread reader and classic flipbook are selectable in `StoryReader`, with automatic narration ducking and unmount teardown for WebAudio oscillators.
+- **100% Inline SVG Iconography**: All decorative emojis replaced with custom inline SVG artwork (`src/components/common/BrandIcons.tsx`) and Lucide vector icons.
 
 ## What's new in v2.2.0
 

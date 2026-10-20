@@ -1,4 +1,5 @@
 import { dbAll, dbByIndex, dbGet, dbPut, newId } from './db';
+import { CONFIG } from '../config';
 
 export type ImageKind = 'page' | 'cover' | 'sheet' | 'photo';
 
@@ -15,10 +16,23 @@ export interface ImageRecord {
 const sniffMime = (b64: string): string =>
   b64.startsWith('/9j/') ? 'image/jpeg' : b64.startsWith('UklG') ? 'image/webp' : b64.startsWith('PHN2') || b64.startsWith('PD94') ? 'image/svg+xml' : 'image/png';
 
-// مصدر صالح لـ <img> من blob:/data:/base64 خام
+const MAX_OBJECT_URLS = 250;
+const urlCache = new Map<string, string>();
+const blobBackupCache = new Map<string, Blob>();
+const revokedUrlToId = new Map<string, string>();
+
+// مصدر صالح لـ <img> من blob:/data:/base64 خام، مع إعادة إنشاء آمنة لأي رابط blob أُبطل سابقاً
 export const toSrc = (img?: string): string | null => {
   if (!img) return null;
-  if (img.startsWith('blob:') || img.startsWith('data:')) return img;
+  if (img.startsWith('blob:')) {
+    const revokedId = revokedUrlToId.get(img);
+    if (revokedId) {
+      const backup = blobBackupCache.get(revokedId);
+      if (backup) return objectUrlFor(revokedId, backup);
+    }
+    return img;
+  }
+  if (img.startsWith('data:')) return img;
   return `data:${sniffMime(img)};base64,${img}`;
 };
 
@@ -125,10 +139,8 @@ export const cropToAspect = async (blob: Blob, aspect: string): Promise<Blob> =>
   return (await new Promise<Blob | null>((res) => canvas.toBlob(res, 'image/jpeg', 0.92))) ?? blob;
 };
 
-const MAX_OBJECT_URLS = 48;
-const urlCache = new Map<string, string>();
-
 export const objectUrlFor = (id: string, blob: Blob): string => {
+  blobBackupCache.set(id, blob);
   const existing = urlCache.get(id);
   if (existing) {
     // Refresh LRU order
@@ -136,12 +148,15 @@ export const objectUrlFor = (id: string, blob: Blob): string => {
     urlCache.set(id, existing);
     return existing;
   }
-  // Enforce memory boundary: revoke oldest URLs
+  // Enforce memory boundary: revoke oldest URLs while recording their ID for safe re-creation
   if (urlCache.size >= MAX_OBJECT_URLS) {
     const oldestKey = urlCache.keys().next().value;
     if (oldestKey) {
       const oldUrl = urlCache.get(oldestKey);
-      if (oldUrl) URL.revokeObjectURL(oldUrl);
+      if (oldUrl) {
+        URL.revokeObjectURL(oldUrl);
+        revokedUrlToId.set(oldUrl, oldestKey);
+      }
       urlCache.delete(oldestKey);
     }
   }
@@ -155,19 +170,20 @@ export const purgeUnusedObjectUrls = (keepIds?: Set<string>) => {
   for (const [id, url] of urlCache.entries()) {
     if (!keepIds || !keepIds.has(id)) {
       URL.revokeObjectURL(url);
+      revokedUrlToId.set(url, id);
       urlCache.delete(id);
     }
   }
 };
 
-// تكيّف ذكي مع سرعة الإنترنت لتسريع التحميل وتوفير البيانات
+// تكيّف ذكي مع سرعة الإنترنت مع الحفاظ على دقة الطباعة (2048px) من CONFIG
 export const getNetworkAdaptation = () => {
   const conn = (navigator as unknown as { connection?: { effectiveType?: string; saveData?: boolean } }).connection;
-  const isSlow = conn?.effectiveType === 'slow-2g' || conn?.effectiveType === '2g' || conn?.effectiveType === '3g' || conn?.saveData;
+  const isSlow = conn?.effectiveType === 'slow-2g' || conn?.effectiveType === '2g' || conn?.saveData;
   return {
     isSlow: Boolean(isSlow),
-    maxImageSide: isSlow ? 800 : 1280,
-    compressionQuality: isSlow ? 0.78 : 0.88,
+    maxImageSide: isSlow ? 1024 : CONFIG.IMAGE_MAX_DIM,
+    compressionQuality: isSlow ? 0.80 : 0.90,
   };
 };
 

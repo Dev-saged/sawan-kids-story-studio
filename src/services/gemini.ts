@@ -11,7 +11,7 @@ export const getArtStylePrompt = (style: string): string => {
 };
 
 export const NEGATIVE_PROMPT_ARTIFACTS =
-  'Negative prompt: extra fingers, mutated hands, missing limbs, distorted faces, asymmetrical eyes, blurry details, double heads, cloned characters, floating objects, unwanted text, letters, captions, logos, signature, watermark, bad anatomy, deformed bodies, cut off heads, low resolution, jpeg artifacts, inconsistent face features, changing hair color, changing outfit.';
+  'Depict each character once with natural, proportionate anatomy and clean hands; keep the scene free of any text, letters, or watermarks.';
 
 export const CHARACTER_SHEET_BINDING =
   '[GLOBAL CHARACTER SEED & STRICT BINDING]: Enforce 100% visual consistency with the character reference sheet. Maintain exact face shape, eye color, hairstyle, hair color, skin tone, clothing design, color palette, and body proportions across every scene generation.';

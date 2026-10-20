@@ -16,7 +16,7 @@ export const VOICE_OPTIONS: { value: NarratorVoice; label: { ar: string; en: str
   { value: 'Algieba', label: { ar: 'راوٍ حكواتي', en: 'Smooth narrator (M)' } },
   { value: 'Charon', label: { ar: 'راوٍ رزين', en: 'Deep narrator (M)' } },
   { value: 'Puck', label: { ar: 'راوٍ مرح', en: 'Playful narrator (M)' } },
-  { value: 'ClonedVoice', label: { ar: '🎙️ بصمتي الصوتية المستنسخة', en: '🎙️ Cloned Voice (AI)' } },
+  { value: 'ClonedVoice', label: { ar: 'راوٍ مطابق لطبقة صوتك', en: 'Pitch-Matched AI Narrator' } },
   { value: 'Family', label: { ar: 'صوت العائلة (تسجيلك)', en: 'Family voice (your recording)' } },
 ];
 

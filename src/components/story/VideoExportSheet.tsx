@@ -139,7 +139,7 @@ export default function VideoExportSheet({ storyData, ar, voice, onClose }: Prop
                   [
                     {
                       id: 'auto-composite',
-                      title: { ar: '🎬 مونتاج آلي شامل (دمج جميع حركات Veo 3 تلقائياً)', en: '🎬 Full Auto Production (Combines All Veo 3 Motions)' },
+                      title: { ar: 'مونتاج آلي شامل (دمج جميع حركات Veo 3 تلقائياً)', en: 'Full Auto Production (Combines All Veo 3 Motions)' },
                       desc: { ar: 'تبديل آلي ذكي بين الحركة السينمائية و2.5D والمسح متعدد الزوايا لكل مشهد', en: 'Smart automated switching between Cinematic, 2.5D Depth, and 3D Sweeps per scene' },
                     },
                     {

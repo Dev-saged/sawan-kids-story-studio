@@ -217,7 +217,7 @@ export default function App() {
         onToggleTheme={toggleTheme}
       />
 
-      <main className="mx-auto w-full max-w-2xl flex-1 px-4 pb-28 pt-6">
+      <main className="mx-auto w-full max-w-4xl flex-1 px-3.5 pb-28 pt-5 sm:px-6 md:pb-16">
         <Suspense fallback={<SectionFallback />}>
           {section === 'studio' && !hasKey && <ApiKeyGate language={language} onSaved={handleKeySaved} noKey={noKey} />}
 

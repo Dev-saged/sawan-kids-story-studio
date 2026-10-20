@@ -64,7 +64,7 @@ export default function FullPageEditor({
   const handleAddSpeechBubble = () => {
     if (!bubbleText.trim()) return;
     // Add speech bubble directly into the page text or overlay note
-    const updated = `${editingText}\n\n💬 ${bubbleText.trim()}`;
+    const updated = `${editingText}\n\n«${bubbleText.trim()}»`;
     setEditingText(updated);
     onUpdatePage({ text: updated });
     setBubbleText('');
