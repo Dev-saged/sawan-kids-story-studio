@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { ChevronLeft, ChevronRight, BookOpen, Download, Sparkles, X, Layers } from 'lucide-react';
 import { StoryData } from '../../types';
 import { toSrc } from '../../services/media';
-import { BRAND } from '../../config';
+import { APP_VERSION, BRAND } from '../../config';
 
 interface Props {
   storyData: StoryData;
@@ -62,7 +62,7 @@ export default function InteractiveFlipbook({ storyData, ar, onClose, onDownload
               <h3 className="font-display text-base sm:text-lg font-bold text-white flex items-center gap-2">
                 <span>{ar ? 'الكتاب التفاعلي بخصائص تقليب الصفحات' : 'Interactive Flipbook Reader'}</span>
                 <span className="rounded-full bg-lantern/20 border border-lantern/40 text-lantern px-2 py-0.5 text-[10px] font-bold">
-                  v2.5.0
+                  v{APP_VERSION}
                 </span>
               </h3>
               <p className="text-xs text-white/60">

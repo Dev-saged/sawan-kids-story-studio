@@ -3,68 +3,30 @@ import {
   ArabicDialect,
   ArtStyle,
   AspectRatio,
+  CoverFontStyle,
+  CoverTextEffect,
   Language,
   GameDefinition,
   ReadLearnArticle,
   StoryLength,
   StoryType,
+  StoryTypeSpec,
 } from './types';
+import {
+  SHARED_ART_STYLE_OPTIONS,
+  STORY_TYPE_SPECS as SHARED_STORY_TYPE_SPECS,
+  buildSharedSystemInstruction,
+} from './shared/modelRules';
 
-// Centralized model IDs — single source of truth so a Gemini deprecation notice
-// only ever requires editing these two lines.
-// gemini-3-flash-preview / gemini-2.5-flash-image (the original spec's picks) are being
-// superseded by GA endpoints; using the current stable GA models avoids preview
-// rate limits and the Aug 17, 2026 preview-endpoint sunset window.
 export const TEXT_MODEL = 'gemini-3.6-flash';
 export const IMAGE_MODEL = 'gemini-3.1-flash-image';
 
 export const MAX_IDEA_LENGTH = 500;
 export const IMAGE_BATCH_SIZE = 3;
 
-export const SYSTEM_INSTRUCTION = `You are building a PROFESSIONAL MVP SaaS called: "Sajed Kids Story Studio"
-This is an AI-powered children story creation tool.
+export const STORY_TYPE_SPECS: Record<StoryType, StoryTypeSpec> = SHARED_STORY_TYPE_SPECS;
 
-====================
-CORE ROLE
-====================
-Act as a senior product AI that:
-- Designs logic
-- Generates structured outputs
-- Thinks like a real SaaS product (not a demo)
-
-====================
-LANGUAGE & UI LOGIC
-====================
-Default language: English (LTR)
-
-If the requested language is Arabic:
-- Generate the story in Arabic suitable for kids
-- Use simple Arabic, or the requested dialect if one is specified
-- Avoid complex vocabulary
-
-====================
-CHARACTER CREATION
-====================
-Generate 1-3 main characters. For EACH character output name, age, gender,
-a clear reusable appearance description, and a kid-friendly personality.
-
-STRICT CHARACTER CONSTANCY RULES:
-1. Use a FIXED set of characters across the entire story. Never introduce new
-   random characters later.
-2. Each character keeps exactly the same name, appearance, and species
-   (especially animals) on every page.
-3. Keep visual consistency: same distinguishing features, same colors, same style.
-4. Never change or replace a character under any condition.
-
-====================
-STORY STRUCTURE
-====================
-Create the story as pages. Each page contains a page number, short child-friendly
-story text (2-6 sentences), and a very detailed image prompt that matches the
-established character appearance and the chosen art style.
-
-Return ONLY the structured JSON matching the provided response schema. No prose,
-no markdown fences, no commentary outside the JSON.`;
+export const SYSTEM_INSTRUCTION = buildSharedSystemInstruction();
 
 export const DIALECT_OPTIONS: { value: ArabicDialect; label: string; flag: string }[] = [
   { value: 'Modern Standard', label: 'الفصحى المبسطة', flag: 'MSA' },
@@ -96,10 +58,8 @@ export const AGE_GROUPS: { value: AgeGroup; label: string; desc: { en: string; a
   { value: '13-18', label: '13-18', desc: { en: 'Dramatic young adult sagas & mystery', ar: 'قصص درامية مشوقة لليافعين والشباب' } },
 ];
 
-// Minimum idea length (in words) per age group — a too-thin idea produces a generic story.
 export const PROMPT_LIMITS: Record<AgeGroup, number> = { '3-4': 5, '4-6': 8, '7-9': 10, '9-12': 15, '13-18': 18 };
 
-// Seconds of reading/listening time budgeted per illustrated page.
 export const SECONDS_PER_PAGE = 25;
 
 export const SURPRISE_PROMPTS: Record<Language, string[]> = {
@@ -143,13 +103,59 @@ export const SMART_TIPS: Record<Language, Record<AgeGroup, string>> = {
   },
 };
 
-export const STORY_TYPES: { value: StoryType; label: { en: string; ar: string } }[] = [
-  { value: 'Bedtime', label: { en: 'Bedtime', ar: 'قبل النوم' } },
-  { value: 'Adventure', label: { en: 'Adventure', ar: 'مغامرة' } },
-  { value: 'Funny', label: { en: 'Funny', ar: 'مضحكة' } },
-  { value: 'Educational', label: { en: 'Educational', ar: 'تعليمية' } },
-  { value: 'Moral', label: { en: 'Moral', ar: 'أخلاقية' } },
+export const STORY_TYPES: { value: StoryType; label: { en: string; ar: string }; desc: { en: string; ar: string }; isPrimary: boolean }[] = Object.values(
+  STORY_TYPE_SPECS
+).map((spec) => ({
+  value: spec.value,
+  label: spec.label,
+  desc: spec.desc,
+  isPrimary: spec.isPrimary,
+}));
+
+export const PRIMARY_STORY_TYPES = STORY_TYPES.filter((t) => t.isPrimary);
+export const EXTRA_STORY_TYPES = STORY_TYPES.filter((t) => !t.isPrimary);
+
+export interface CoverFontOption {
+  value: CoverFontStyle;
+  className: string;
+  familyCss: string;
+  label: { ar: string; en: string };
+  sublabel: { ar: string; en: string };
+}
+
+export const COVER_FONT_OPTIONS: CoverFontOption[] = [
+  { value: 'kufi', className: 'font-cover-kufi', familyCss: "'Reem Kufi', sans-serif", label: { ar: 'الكوفي الهندسي (ريم كوفي)', en: 'Reem Kufi Geometric' }, sublabel: { ar: 'خط كوفي هندسي متناسق وفخم للعناوين', en: 'Clean geometric Arabic Kufi' } },
+  { value: 'diwani', className: 'font-cover-diwani', familyCss: "'Aref Ruqaa', serif", label: { ar: 'الرقعة والديواني (عارف رقعة)', en: 'Aref Ruqaa Calligraphic' }, sublabel: { ar: 'طابع تراثي أصيل بلمسة خطاط', en: 'Classic calligraphic elegance' } },
+  { value: 'naskh', className: 'font-cover-naskh', familyCss: "'Amiri', serif", label: { ar: 'النسخ الأميري للقصص', en: 'Amiri Classic Naskh' }, sublabel: { ar: 'واضح ومريح للقراءة والكتب المطبوعة', en: 'Warm traditional book serif' } },
+  { value: 'display3d', className: 'font-cover-3d', familyCss: "'Marhey', sans-serif", label: { ar: 'خط مرحي الاحتفالي (Marhey)', en: 'Marhey Playful Display' }, sublabel: { ar: 'خط مرح ومبهج لقصص الأطفال', en: 'Playful display title style' } },
+  { value: 'lalezar', className: 'font-cover-lalezar', familyCss: "'Lalezar', sans-serif", label: { ar: 'لاليزار العريض (Lalezar)', en: 'Lalezar Bold Poster' }, sublabel: { ar: 'حروف سميكة بارزة للمغامرات والبطولة', en: 'Heavy bold display for adventure' } },
+  { value: 'elmessiri', className: 'font-cover-elmessiri', familyCss: "'El Messiri', sans-serif", label: { ar: 'المسيري الأنيق (El Messiri)', en: 'El Messiri Modern Serif' }, sublabel: { ar: 'انسيابية عصرية تجمع الأصالة والحداثة', en: 'Graceful modern Arabic display' } },
+  { value: 'readex', className: 'font-cover-readex', familyCss: "'Readex Pro', sans-serif", label: { ar: 'ريدكس برو الواضح (Readex Pro)', en: 'Readex Pro Crisp' }, sublabel: { ar: 'وضوح فائق للقصص التعليمية والعلمية', en: 'Ultra-legible educational display' } },
+  { value: 'alexandria', className: 'font-cover-alexandria', familyCss: "'Alexandria', sans-serif", label: { ar: 'الإسكندرية الهندسي (Alexandria)', en: 'Alexandria Geometric' }, sublabel: { ar: 'تصميم هندسي معاصر للخيال العلمي', en: 'Futuristic geometric typography' } },
+  { value: 'harmattan', className: 'font-cover-harmattan', familyCss: "'Harmattan', serif", label: { ar: 'هرمتان التراثي (Harmattan)', en: 'Harmattan Heritage' }, sublabel: { ar: 'خط هادئ يناسب الحكايات والسير', en: 'Traditional calm calligraphic flow' } },
+  { value: 'lemonada', className: 'font-cover-lemonada', familyCss: "'Lemonada', sans-serif", label: { ar: 'ليموناضة المبهج (Lemonada)', en: 'Lemonada Rounded' }, sublabel: { ar: 'حروف دائرية لطيفة للصغار والمرح', en: 'Friendly rounded strokes for kids' } },
+  { value: 'changa', className: 'font-cover-changa', familyCss: "'Changa', sans-serif", label: { ar: 'تشانغا الحماسي (Changa)', en: 'Changa Dynamic' }, sublabel: { ar: 'زوايا حادة مثالية للرياضة والألغاز', en: 'Energetic headline font' } },
+  { value: 'katibeh', className: 'font-cover-katibeh', familyCss: "'Katibeh', serif", label: { ar: 'كتيبة الزخرفي (Katibeh)', en: 'Katibeh Ornamental' }, sublabel: { ar: 'طابع الشرقيات والحكايات الشعبية', en: 'Rich ornamental storybook header' } },
 ];
+
+export interface CoverEffectOption {
+  value: CoverTextEffect;
+  className: string;
+  label: { ar: string; en: string };
+}
+
+export const COVER_EFFECT_OPTIONS: CoverEffectOption[] = [
+  { value: 'gold', className: 'cover-effect-gold', label: { ar: 'ذهبي ملكي', en: 'Royal Gold' } },
+  { value: 'shadow', className: 'cover-effect-shadow', label: { ar: 'ظل سينمائي', en: 'Deep Shadow' } },
+  { value: 'outline', className: 'cover-effect-outline', label: { ar: 'حدود مفرغة', en: 'Hollow Outline' } },
+  { value: 'plain', className: 'cover-effect-plain', label: { ar: 'أبيض صافي', en: 'Clean Plain' } },
+];
+
+export const getCoverTitleClasses = (font: CoverFontStyle = 'kufi', effect: CoverTextEffect = 'gold'): string => {
+  const f = COVER_FONT_OPTIONS.find((o) => o.value === font) ?? COVER_FONT_OPTIONS[0];
+  const e = COVER_EFFECT_OPTIONS.find((o) => o.value === effect) ?? COVER_EFFECT_OPTIONS[0];
+  return `${f.className} ${e.className}`;
+};
 
 export const STORY_LENGTHS: { value: StoryLength; pages: number; label: { en: string; ar: string } }[] = [
   { value: 'Short', pages: 6, label: { en: 'Short (6 pages)', ar: 'قصيرة (6 صفحات)' } },
@@ -158,47 +164,12 @@ export const STORY_LENGTHS: { value: StoryLength; pages: number; label: { en: st
   { value: 'Epic', pages: 36, label: { en: 'Epic (36 pages)', ar: 'ملحمية (36 صفحة)' } },
 ];
 
-// الحد الأعلى لعدد الصفحات؛ ما فوق دفعة واحدة يُكتب على دفعات بفصول
 export const MAX_STORY_PAGES = 40;
 export const MIN_STORY_PAGES = 3;
 export const FIRST_BATCH_PAGES = 10;
 export const NEXT_BATCH_PAGES = 6;
 
-// `prompt` is the expanded style description sent to the image model (see getArtStylePrompt).
-export const ART_STYLE_OPTIONS: { value: ArtStyle; labelAr: string; prompt: string }[] = [
-  { value: 'Cute Cartoon', labelAr: 'كرتون لطيف', prompt: 'masterpiece cute children cartoon, adorable expressive characters, smooth clean linework, vibrant cheerful color palette, high resolution digital artwork, award winning children illustration' },
-  {
-    value: 'Hand-drawn Cartoon',
-    labelAr: 'كرتون مرسوم باليد',
-    prompt:
-      'hand-drawn cartoon characters, simple human figures, thin black outline, slightly imperfect hand-drawn lines, minimal facial features, dot eyes and simple mouth, educational explainer illustration style, looks drawn by a human illustrator, soft limited colors, simple clean shapes, NOT vector, NOT flat design. Negative prompt: vector, flat illustration, 3d, pixar, anime, realistic, photorealistic, clay, stop motion, smooth digital lines, gradients, glossy',
-  },
-  { value: 'Watercolor', labelAr: 'ألوان مائية', prompt: 'masterpiece storybook watercolor illustration, soft translucent luminous washes, fine delicate ink line detail, rich paper grain texture, gentle bleeding edges, magical warm lighting' },
-  { value: '3D Pixar Style', labelAr: 'ثلاثي الأبعاد (بيكسار)', prompt: 'masterpiece Pixar Disney 3D animated render, soft cinematic volumetric lighting, expressive big eyes, subsurface scattering skin, rounded friendly shapes, rich detailed textures, 8k resolution' },
-  { value: 'Pastel Dream', labelAr: 'باستيل حالم', prompt: 'masterpiece soft pastel illustration, dreamy cozy atmosphere, luminous muted gradients, gentle magical lighting, high detail fairytale artwork' },
-  { value: 'Doodle Sketch', labelAr: 'رسومات خربشية', prompt: 'playful high quality sketchy doodle illustration, loose expressive pen lines, creative scribbled shading, charming hand-crafted storybook art' },
-  { value: 'Anime', labelAr: 'أنمي للأطفال', prompt: 'masterpiece studio anime kids illustration, Makoto Shinkai aesthetic, clean cel-shading, big expressive sparkling eyes, rich detailed backgrounds, vivid glowing lighting, sharp clean line art' },
-  { value: 'Paper Cutout', labelAr: 'قصاصات ورقية', prompt: 'masterpiece layered paper cut-out collage, intricate handmade craft paper textures, soft drop shadows between paper layers, rich depth' },
-  {
-    value: 'Educational Line Cartoon',
-    labelAr: 'كرتون تعليمي خطي',
-    prompt:
-      'simple flat line illustration, white background, clean black outlines, minimal flat colors, educational cartoon style, whiteboard illustration, no 3D, no shadows, no textures, simple characters, expressive faces, child-friendly, vector-style drawing',
-  },
-  { value: 'Claymation', labelAr: 'صلصال / ستوب موشن', prompt: 'masterpiece clay stop-motion style, handmade plasticine characters, visible subtle fingerprint texture, warm miniature set cinematic lighting' },
-  { value: 'Flat Vector', labelAr: 'فلات فيكتور', prompt: 'masterpiece flat vector children illustration, bold elegant simple shapes, crisp clean edges, vibrant harmonious palette' },
-  { value: 'Fantasy Fairy Tale', labelAr: 'خيال قصصي', prompt: 'masterpiece epic fantasy fairy-tale illustration, enchanted glowing particles, lush magical environments and castles, dramatic luminous lighting, rich saturated colors, award winning storybook art' },
-  { value: 'Bedtime Story', labelAr: 'قصة قبل النوم', prompt: 'cozy bedtime storybook illustration, moonlit night palette, warm lantern glow, soft calm lighting, soothing fairytale mood' },
-  { value: 'Classic Storybook', labelAr: 'كتاب قصص كلاسيكي', prompt: 'masterpiece classic picture-book illustration, warm gouache and ink, timeless vintage fairy-tale feel, rich artistic details' },
-  { value: 'Pixel Art', labelAr: 'بكسل آرت', prompt: 'vibrant 16-bit pixel art illustration, crisp pixel perfection, colorful retro game aesthetic' },
-  { value: 'Chalk Drawing', labelAr: 'رسم بالطباشير', prompt: 'masterpiece chalk drawing on dark chalkboard, textured chalk strokes, vibrant pastel chalk art' },
-  { value: 'Comic Book', labelAr: 'قصص مصورة', prompt: 'masterpiece kids comic-book graphic novel style, bold expressive ink outlines, dynamic composition, halftone shading, vivid vibrant colors' },
-  {
-    value: 'Photorealistic',
-    labelAr: 'واقعي',
-    prompt: 'ultra photorealistic, real humans, cinematic lighting, natural skin texture, no cartoon, no illustration',
-  },
-];
+export const ART_STYLE_OPTIONS: { value: ArtStyle; labelAr: string; prompt: string }[] = SHARED_ART_STYLE_OPTIONS;
 
 export const ASPECT_RATIO_OPTIONS: { value: AspectRatio; label: { en: string; ar: string } }[] = [
   { value: '4:3', label: { en: 'Classic (4:3)', ar: 'كلاسيكي (4:3)' } },

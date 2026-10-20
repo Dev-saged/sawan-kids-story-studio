@@ -1,6 +1,8 @@
-import { BookOpen, BookMarked, Gamepad2, Library, Sparkles, Moon, Sun, Languages } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { ArrowUpCircle, BookOpen, BookMarked, Gamepad2, Library, Sparkles, Moon, Sun, Languages, X } from 'lucide-react';
 import { Language } from '../../types';
 import { APP_VERSION, BRAND } from '../../config';
+import { checkForAppUpdate, type UpdateCheckResult } from '../../services/versionCheck';
 import { LanternSvg } from '../common/BrandIcons';
 
 export type Section = 'studio' | 'library' | 'games' | 'learn' | 'names';
@@ -24,9 +26,54 @@ const ITEMS: { id: Section; icon: typeof BookOpen; label: { en: string; ar: stri
 
 export default function NavBar({ active, onNavigate, language, onToggleLanguage, theme, onToggleTheme }: NavBarProps) {
   const isAr = language === 'Arabic';
+  const [updateInfo, setUpdateInfo] = useState<UpdateCheckResult | null>(null);
+  const [dismissedUpdate, setDismissedUpdate] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    checkForAppUpdate().then((res) => {
+      if (alive && res.hasUpdate) setUpdateInfo(res);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   return (
     <>
+      {updateInfo?.hasUpdate && !dismissedUpdate && (
+        <div
+          dir={isAr ? 'rtl' : 'ltr'}
+          className="flex items-center justify-between gap-2 border-b border-lantern/30 bg-lantern/15 px-4 py-1.5 text-xs font-bold text-ink dark:text-amber-200"
+        >
+          <div className="flex items-center gap-2">
+            <ArrowUpCircle size={15} className="text-lantern shrink-0" aria-hidden />
+            <span>
+              {isAr
+                ? `يتوفر إصدار أحدث (v${updateInfo.latestVersion})`
+                : `A newer version is available (v${updateInfo.latestVersion})`}
+            </span>
+            {updateInfo.releaseUrl && (
+              <a
+                href={updateInfo.releaseUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="underline decoration-lantern underline-offset-4 hover:text-lantern"
+              >
+                {isAr ? 'عرض التحديث' : 'View update'}
+              </a>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={() => setDismissedUpdate(true)}
+            className="rounded-lg p-1 text-ink/60 hover:text-ink dark:text-amber-200/70 dark:hover:text-amber-100"
+            aria-label={isAr ? 'إغلاق الإشعار' : 'Dismiss update notice'}
+          >
+            <X size={14} aria-hidden />
+          </button>
+        </div>
+      )}
       {/* Top luxury header bar: brand + desktop nav + theme + language */}
       <header className="sticky top-0 z-40 border-b border-dream/20 bg-moonlight/85 px-3.5 py-2.5 backdrop-blur-xl transition-colors dark:border-white/10 dark:bg-dusk/85 sm:px-6">
         <div className="mx-auto flex max-w-4xl items-center justify-between gap-3">

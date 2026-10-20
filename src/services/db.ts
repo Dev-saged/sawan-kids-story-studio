@@ -1,64 +1,172 @@
-const DB_NAME = 'sawan-studio';
-const DB_VERSION = 2;
+// مخزن المتصفح المحلي (IndexedDB v3): قصص + صور + صوت + ملفات الأطفال + البصمات الصوتية + ألبوم الشخصيات (ب7) + الهويات المخصصة (ب3)
+import type { BrandPreset } from '../config';
+import type { SavedCharacter } from '../types';
 
-export type StoreName = 'stories' | 'images' | 'audio' | 'children' | 'voice_profiles';
+export const DB_NAME = 'sawan_studio';
+export const DB_VERSION = 3;
 
-const MIGRATIONS: Record<number, (db: IDBDatabase) => void> = {
-  1: (db) => {
-    db.createObjectStore('stories', { keyPath: 'id' }).createIndex('updatedAt', 'updatedAt');
-    db.createObjectStore('images', { keyPath: 'id' }).createIndex('style', 'style');
-    db.createObjectStore('audio', { keyPath: 'id' });
-    db.createObjectStore('children', { keyPath: 'id' });
-  },
-  2: (db) => {
-    if (!db.objectStoreNames.contains('voice_profiles')) {
-      db.createObjectStore('voice_profiles', { keyPath: 'id' });
-    }
-  },
-};
+export type ImageKind = 'page' | 'cover' | 'sheet' | 'hero' | 'explain';
+
+export interface StoredImage {
+  id: string;
+  blob: Blob;
+  kind: ImageKind;
+  style: string;
+  tokens: string[];
+  createdAt: number;
+}
+
+export interface StoredAudio {
+  key: string;
+  blob: Blob;
+  createdAt: number;
+}
+
+export interface ChildProfile {
+  id: string;
+  name: string;
+  photoId?: string;
+  createdAt: number;
+}
+
+export interface VoiceProfile {
+  id: string;
+  name: string;
+  sampleAudioKey: string;
+  matchedAiVoice: string;
+  pitchAdjust: number;
+  rateAdjust: number;
+  warmthAdjust: number;
+  description: string;
+  createdAt: number;
+}
 
 let dbPromise: Promise<IDBDatabase> | null = null;
 
-const openDb = (): Promise<IDBDatabase> => {
+export const openDb = (): Promise<IDBDatabase> => {
   if (dbPromise) return dbPromise;
   dbPromise = new Promise((resolve, reject) => {
-    if (typeof indexedDB === 'undefined') return reject(new Error('IndexedDB unavailable'));
     const req = indexedDB.open(DB_NAME, DB_VERSION);
-    req.onupgradeneeded = (e) => {
-      for (let v = e.oldVersion + 1; v <= DB_VERSION; v++) MIGRATIONS[v]?.(req.result);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains('stories')) {
+        const s = db.createObjectStore('stories', { keyPath: 'id' });
+        s.createIndex('createdAt', 'createdAt');
+      }
+      if (!db.objectStoreNames.contains('images')) {
+        const i = db.createObjectStore('images', { keyPath: 'id' });
+        i.createIndex('kind', 'kind');
+      }
+      if (!db.objectStoreNames.contains('audio')) {
+        db.createObjectStore('audio', { keyPath: 'key' });
+      }
+      if (!db.objectStoreNames.contains('children')) {
+        db.createObjectStore('children', { keyPath: 'id' });
+      }
+      if (!db.objectStoreNames.contains('voice_profiles')) {
+        db.createObjectStore('voice_profiles', { keyPath: 'id' });
+      }
+      // ب7: مخزن ألبوم الشخصيات المحفوظة مع صورها المرجعية
+      if (!db.objectStoreNames.contains('characters')) {
+        const c = db.createObjectStore('characters', { keyPath: 'id' });
+        c.createIndex('createdAt', 'createdAt');
+      }
+      // ب3: مخزن الهويات السريعة المخصصة («احفظ هويتي»)
+      if (!db.objectStoreNames.contains('custom_presets')) {
+        const p = db.createObjectStore('custom_presets', { keyPath: 'id' });
+        p.createIndex('createdAt', 'createdAt');
+      }
     };
     req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-  });
-  dbPromise.catch(() => {
-    dbPromise = null;
+    req.onerror = () => {
+      dbPromise = null;
+      reject(req.error);
+    };
   });
   return dbPromise;
 };
 
-const run = async <T>(store: StoreName, mode: IDBTransactionMode, fn: (s: IDBObjectStore) => IDBRequest<T>): Promise<T> => {
+const run = async <T,>(store: string, mode: IDBTransactionMode, fn: (s: IDBObjectStore) => IDBRequest<T>): Promise<T> => {
   const db = await openDb();
-  return new Promise<T>((resolve, reject) => {
+  return new Promise((resolve, reject) => {
     const tx = db.transaction(store, mode);
     const req = fn(tx.objectStore(store));
-    tx.oncomplete = () => resolve(req.result);
-    tx.onerror = () => reject(tx.error);
-    tx.onabort = () => reject(tx.error);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
   });
 };
 
-export const dbGet = <T>(store: StoreName, id: string): Promise<T | undefined> => run<T>(store, 'readonly', (s) => s.get(id));
-export const dbPut = <T>(store: StoreName, value: T): Promise<IDBValidKey> => run(store, 'readwrite', (s) => s.put(value));
-export const dbDelete = (store: StoreName, id: string): Promise<undefined> => run(store, 'readwrite', (s) => s.delete(id));
-export const dbAll = <T>(store: StoreName): Promise<T[]> => run<T[]>(store, 'readonly', (s) => s.getAll());
-export const dbByIndex = <T>(store: StoreName, index: string, key: IDBValidKey): Promise<T[]> =>
-  run<T[]>(store, 'readonly', (s) => s.index(index).getAll(key));
+export const dbGet = <T,>(store: string, key: IDBValidKey): Promise<T | undefined> => run(store, 'readonly', (s) => s.get(key));
+export const dbGetAll = <T,>(store: string): Promise<T[]> => run(store, 'readonly', (s) => s.getAll());
+export const dbAll = dbGetAll;
+export const dbByIndex = <T,>(store: string, index: string, key: IDBValidKey): Promise<T[]> =>
+  run(store, 'readonly', (s) => s.index(index).getAll(key));
+export const dbPut = <T,>(store: string, value: T): Promise<IDBValidKey> => run(store, 'readwrite', (s) => s.put(value));
+export const dbDelete = (store: string, key: IDBValidKey): Promise<undefined> => run(store, 'readwrite', (s) => s.delete(key));
 
 export const newId = (): string =>
-  typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+  typeof crypto !== 'undefined' && crypto.randomUUID
+    ? crypto.randomUUID()
+    : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 9)}`;
 
-export const hashText = (text: string): string => {
+export const hashText = (s: string): string => {
   let h = 2166136261;
-  for (let i = 0; i < text.length; i++) h = Math.imul(h ^ text.charCodeAt(i), 16777619);
+  for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619);
   return (h >>> 0).toString(36);
+};
+
+// ===== ب7: دوال ألبوم الشخصيات (IndexedDB characters store) =====
+export const saveAlbumCharacter = async (
+  input: Omit<SavedCharacter, 'id' | 'createdAt'> & { id?: string; createdAt?: number }
+): Promise<SavedCharacter> => {
+  const record: SavedCharacter = {
+    id: input.id || `char-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    name: input.name.trim(),
+    description: input.description.trim(),
+    personality: (input.personality || 'Friendly and brave').trim(),
+    age: (input.age || '7').trim(),
+    gender: (input.gender || 'Child').trim(),
+    referenceImageId: input.referenceImageId,
+    createdAt: input.createdAt ?? Date.now(),
+  };
+  await dbPut('characters', record);
+  return record;
+};
+
+export const listAlbumCharacters = async (): Promise<SavedCharacter[]> => {
+  try {
+    const all = await dbGetAll<SavedCharacter>('characters');
+    return all.sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
+  } catch {
+    return [];
+  }
+};
+
+export const deleteAlbumCharacter = async (id: string): Promise<void> => {
+  await dbDelete('characters', id);
+};
+
+// ===== ب3: دوال الهويات السريعة المخصصة (IndexedDB custom_presets store) =====
+export const saveCustomPreset = async (preset: BrandPreset): Promise<BrandPreset> => {
+  const record: BrandPreset = {
+    ...preset,
+    id: preset.id || `preset-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    isCustom: true,
+    createdAt: preset.createdAt ?? Date.now(),
+  };
+  await dbPut('custom_presets', record);
+  return record;
+};
+
+export const listCustomPresets = async (): Promise<BrandPreset[]> => {
+  try {
+    const all = await dbGetAll<BrandPreset>('custom_presets');
+    return all.sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
+  } catch {
+    return [];
+  }
+};
+
+export const deleteCustomPreset = async (id: string): Promise<void> => {
+  await dbDelete('custom_presets', id);
 };

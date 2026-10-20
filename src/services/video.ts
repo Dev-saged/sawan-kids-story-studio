@@ -1,5 +1,6 @@
 import { NarratorVoice, StoryData, VeoMotionMode } from '../types';
 import { srcToBlob } from './media';
+import { applyHollowWatermarkToBlob } from './watermark';
 import { getPageAudio, getStoryMusic, isArabicStory } from './narration';
 import { bitrateFor, getFormat, maxQuality, videoSize, VIDEO_QUALITIES, type VideoFormatId, type VideoQualityId } from './videoFormats';
 
@@ -53,7 +54,8 @@ const easeInOut = (x: number) => {
 const loadBitmap = async (src: string | undefined, W: number, H: number): Promise<ImageBitmap | null> => {
   if (!src) return null;
   try {
-    const blob = await srcToBlob(src);
+    const rawBlob = await srcToBlob(src);
+    const blob = rawBlob.type.includes('svg') ? rawBlob : await applyHollowWatermarkToBlob(rawBlob);
     let full: ImageBitmap;
     if (blob.type.includes('svg') || src.includes('image/svg') || src.startsWith('PHN2') || src.startsWith('PD94')) {
       const url = URL.createObjectURL(blob);

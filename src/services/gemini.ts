@@ -1,5 +1,6 @@
-import { Language, NameAnalysis, QuizItem, StoryData, StoryParams, StoryPage } from '../types';
+import { Character, Language, NameAnalysis, QuizItem, StoryData, StoryParams, StoryPage } from '../types';
 import { ART_STYLE_OPTIONS, FIRST_BATCH_PAGES, MAX_IDEA_LENGTH, MAX_STORY_PAGES, NEXT_BATCH_PAGES } from '../constants';
+import { POSITIVE_ILLUSTRATION_DIRECTIVE } from '../shared/modelRules';
 import { ApiError, authHeaders, codeFromStatus, postJson, trackApiCall } from './api';
 import { base64ToBlob } from './media';
 
@@ -7,75 +8,194 @@ export const API_KEY_MISSING = 'API_KEY_MISSING';
 
 export const getArtStylePrompt = (style: string): string => {
   const option = ART_STYLE_OPTIONS.find((o) => o.value === style);
-  return option ? option.prompt : `${style} illustration style, high quality, children friendly`;
+  return option ? option.prompt : `${style} storybook illustration, vibrant colors, expressive characters.`;
 };
 
-export const NEGATIVE_PROMPT_ARTIFACTS =
-  'Depict each character once with natural, proportionate anatomy and clean hands; keep the scene free of any text, letters, or watermarks.';
-
-export const CHARACTER_SHEET_BINDING =
-  '[GLOBAL CHARACTER SEED & STRICT BINDING]: Enforce 100% visual consistency with the character reference sheet. Maintain exact face shape, eye color, hairstyle, hair color, skin tone, clothing design, color palette, and body proportions across every scene generation.';
-
-const characterSheetText = (story: StoryData): string =>
-  story.characters
-    .map((c) => `CHARACTER "${c.name.toUpperCase()}" (${c.gender || 'hero'}, ${c.age}): ${c.description}. Visual anchor: distinct hair style, face features, outfit colors, and proportions.`)
-    .join(' | ');
-
-const styleLock = (story: StoryData): string => {
-  const seedTag = story.characterSheetId ? `[GLOBAL SEED: ${story.characterSheetId}]` : `[GLOBAL SEED: seed-${story.id || 'default'}]`;
-  return `[STYLE LOCK: ${story.story_info.art_style.toUpperCase()}] ${seedTag} Visual style guidelines: ${getArtStylePrompt(story.story_info.art_style)}. Maintain identical linework, character facial features, color palette, and rendering model on every image of this book.`;
+const wordsOf = (text: string): string[] => text.trim().split(/\s+/).filter(Boolean);
+const countWords = (text: string): number => wordsOf(text).length;
+const capWords = (text: string, maxWords: number): string => {
+  if (maxWords <= 0) return '';
+  const w = wordsOf(text);
+  return w.length <= maxWords ? w.join(' ') : w.slice(0, maxWords).join(' ');
 };
 
-const isFruitStory = (story: StoryData): boolean =>
-  Boolean(story.story_info.fruitFantasy) ||
-  /frui|فواكه|رمان|ليمون|برتقال|تفاح|بساتين|بذور الخلود|سايبر فروت/i.test(
-    `${story.story_info.title} ${(story.story_info.lessons || []).join(' ')} ${story.seriesTitle ?? ''}`
-  );
+// أ3: يفحص نصوص الصفحات ووصف الشخصيات واختيار المستخدم (fruitFantasy)، لا العنوان والدروس فقط
+const FRUIT_RE = /fruit|pomegranate|lemon|citrus|mango|apple|berry|strawberry|orange|banana|peach|apricot|grape|watermelon|fig|فواكه|فاكهة|رمان|ليمون|مانجو|تفاح|تفاحة|توت|برتقال|موز|مشمش|مشمشة|تين|عنب|بطيخ/i;
 
-const fruitThemeBoost = (story: StoryData): string =>
-  isFruitStory(story)
-    ? 'Anthropomorphic vibrant fruit character design with expressive eyes, human-like limbs, organic fruit armor and attire, lush fruit kingdom environment with giant exotic fruit trees.'
+export const isFruitStory = (story: StoryData): boolean => {
+  if (story.story_info.fruitFantasy) return true;
+  const charText = (story.characters ?? []).map((c) => `${c.name} ${c.description} ${c.personality}`).join(' ');
+  const pagesText = (story.pages ?? []).map((p) => `${p.text} ${p.image_prompt}`).join(' ');
+  const metaText = `${story.story_info.title ?? ''} ${(story.story_info.lessons ?? []).join(' ')} ${story.story_info.themeTopic ?? ''}`;
+  return FRUIT_RE.test(`${charText} ${pagesText} ${metaText}`);
+};
+
+const detectFruitKind = (c: Character): string => {
+  const combined = `${c.name} ${c.description}`.toLowerCase();
+  if (/pomegranate|رمان|جلنار/.test(combined)) return 'pomegranate';
+  if (/lemon|citrus|ليمون/.test(combined)) return 'lemon';
+  if (/mango|مانجو/.test(combined)) return 'mango';
+  if (/apple|تفاح/.test(combined)) return 'apple';
+  if (/apricot|مشمش/.test(combined)) return 'apricot';
+  if (/berry|strawberry|توت/.test(combined)) return 'berry';
+  if (/orange|برتقال/.test(combined)) return 'orange';
+  if (/peach|خوخ/.test(combined)) return 'peach';
+  if (/fig|تين/.test(combined)) return 'fig';
+  return 'fruit';
+};
+
+// أ3: fruitThemeBoost يعمل فقط إن كانت الشخصيات فاكهة، ويُدمج داخل سطر الشخصية دون فرض "fruit kingdom"
+export const fruitThemeBoost = (story: StoryData, character?: Character): string => {
+  if (!isFruitStory(story)) return '';
+  const name = character?.name || story.characters?.[0]?.name || 'Hero';
+  const fruit = character ? detectFruitKind(character) : 'fruit';
+  return `${name} is a cute ${fruit} character with a face and limbs`;
+};
+
+// وصف الشخصية في 15 كلمة كحد أقصى مع دمج سمة الفاكهة أو الموضوع داخل الوصف نفسه
+const formatCharacterLine = (c: Character, story: StoryData, maxWords = 15): string => {
+  const cleanDesc = (c.description || c.personality || 'friendly young hero').replace(/\bVisual anchor:.*$/i, '').trim();
+  const topic = story.story_info.themeTopic?.trim();
+  let raw: string;
+  if (isFruitStory(story)) {
+    const fruitPhrase = fruitThemeBoost(story, c);
+    raw = `${fruitPhrase}, ${cleanDesc}`;
+  } else if (topic) {
+    raw = `${c.name} (${topic} theme), ${cleanDesc}`;
+  } else {
+    raw = `${c.name}: ${cleanDesc}`;
+  }
+  return capWords(raw, maxWords);
+};
+
+// مطابقة الشخصيات الظاهرة في الصفحة فقط (من page.text و page.image_prompt)؛ إن لم تطابق أي شخصية فالرئيسية فقط
+export const getCharactersForPage = (story: StoryData, page?: StoryPage): Character[] => {
+  const chars = story.characters ?? [];
+  if (!chars.length) return [];
+  if (!page) return chars;
+  const haystack = `${page.text ?? ''} ${page.image_prompt ?? ''}`.toLowerCase();
+  const matched = chars.filter((c) => {
+    const name = c.name?.trim().toLowerCase();
+    return Boolean(name && haystack.includes(name));
+  });
+  return matched.length > 0 ? matched : [chars[0]];
+};
+
+// أ1: تجميع الطلب مع سقف صارم 120 كلمة؛ إن تجاوز نقصّ وصف الشخصيات أولاً ثم الأسلوب، ولا نقصّ المشهد أبداً
+const assemblePromptWithWordCap = (
+  sceneLine: string,
+  charactersLine: string,
+  styleLine: string,
+  directiveLine: string,
+  maxTotalWords = 120
+): string => {
+  const scene = sceneLine.trim();
+  const directive = directiveLine.trim();
+  let chars = charactersLine.trim();
+  let style = styleLine.trim();
+
+  const total = () => countWords([scene, chars, style, directive].filter(Boolean).join(' '));
+
+  if (total() > maxTotalWords) {
+    // 1) قصّ وصف الشخصيات أولاً
+    const fixedWithoutChars = countWords([scene, style, directive].filter(Boolean).join(' '));
+    const allowedForChars = Math.max(4, maxTotalWords - fixedWithoutChars);
+    chars = capWords(chars, allowedForChars);
+  }
+
+  if (total() > maxTotalWords) {
+    // 2) قصّ الأسلوب ثانياً
+    const fixedWithoutStyle = countWords([scene, chars, directive].filter(Boolean).join(' '));
+    const allowedForStyle = Math.max(4, maxTotalWords - fixedWithoutStyle);
+    style = capWords(style, allowedForStyle);
+  }
+
+  if (total() > maxTotalWords) {
+    // إذا كان المشهد نفسه طويلاً جداً، نقلص الشخصيات والأسلوب إلى الحد الأدنى دون المساس بالمشهد أبداً
+    const remaining = Math.max(0, maxTotalWords - countWords(scene) - countWords(directive));
+    const half = Math.floor(remaining / 2);
+    chars = capWords(chars, half);
+    style = capWords(style, Math.max(0, remaining - countWords(chars)));
+  }
+
+  return [scene, chars, style, directive].filter(Boolean).join('\n');
+};
+
+// أ1 + ب5: يبدأ بـ "Scene: <page.image_prompt>." (مع Correction إن وجد) ثم الشخصيات في الصفحة ثم الأسلوب ثم التوجيه الإيجابي (<= 120 كلمة)
+export const buildPageImagePrompt = (story: StoryData, page: StoryPage): string => {
+  const rawScene = (page.image_prompt || page.text || 'A colorful children storybook illustration').trim().replace(/\.+$/, '');
+  const correction = page.correctionNote?.trim()
+    ? ` Correction: ${page.correctionNote.trim().replace(/\.+$/, '')}.`
+    : '';
+  const sceneLine = `Scene: ${rawScene}.${correction}`;
+
+  const pageChars = getCharactersForPage(story, page);
+  const charsLine = pageChars.length
+    ? `Characters: ${pageChars.map((c) => formatCharacterLine(c, story, 15)).join('; ')}.`
     : '';
 
-export const buildPageImagePrompt = (story: StoryData, page: StoryPage): string =>
-  [
-    styleLock(story),
-    CHARACTER_SHEET_BINDING,
-    `CHARACTERS IN SCENE: ${characterSheetText(story)}.`,
-    `SCENE ACTION & COMPOSITION: ${page.image_prompt}.`,
-    fruitThemeBoost(story),
-    'Masterpiece illustration, sharp focus, rich vibrant colors, expressive faces, professional composition, award winning storybook art.',
-    NEGATIVE_PROMPT_ARTIFACTS,
-  ]
-    .filter(Boolean)
-    .join(' ');
+  const styleLine = getArtStylePrompt(story.story_info.art_style);
+  return assemblePromptWithWordCap(sceneLine, charsLine, styleLine, POSITIVE_ILLUSTRATION_DIRECTIVE, 120);
+};
 
-export const buildCoverPrompt = (story: StoryData): string =>
-  [
-    styleLock(story),
-    CHARACTER_SHEET_BINDING,
-    `BOOK COVER FOR: "${story.story_info.title}".`,
-    `HERO CHARACTERS: ${characterSheetText(story)}.`,
-    `COVER COMPOSITION: ${story.cover_image_prompt || story.pages[0]?.image_prompt || ''}.`,
-    fruitThemeBoost(story),
-    'Masterpiece iconic hero shot, strong focal point, depth and atmosphere, rich vibrant colors, generous calm space in the upper third, award winning artwork.',
-    NEGATIVE_PROMPT_ARTIFACTS,
-  ]
-    .filter(Boolean)
-    .join(' ');
+// أ1: الغلاف يبدأ بـ "Scene: <cover_image_prompt>" أولاً، ثم العنوان كسياق فقط (لا نص يظهر في الصورة)، ثم الأسلوب
+export const buildCoverPrompt = (story: StoryData): string => {
+  const rawCover = (story.cover_image_prompt || story.pages[0]?.image_prompt || story.story_info.title || 'Heroic children book cover illustration').trim().replace(/\.+$/, '');
+  const titleContext = story.story_info.title ? ` Story context (no text in image): "${story.story_info.title}".` : '';
+  const sceneLine = `Scene: ${rawCover}.${titleContext}`;
 
-export const buildSheetPrompt = (story: StoryData, withPhoto: boolean): string =>
-  [
-    styleLock(story),
-    '[CONSISTENT CHARACTER SHEET MODEL SHEET]: Official turnaround character reference sheet for picture book production.',
-    withPhoto ? 'The primary hero is the child in the attached photo, redrawn with faithful facial likeness, hair style, and joyful expression in this art style.' : '',
-    `CHARACTER MODELS: ${characterSheetText(story)}.`,
-    fruitThemeBoost(story),
-    'Layout: Full-body front view, side view, and neutral pose side by side for each character. Clean plain soft backdrop, studio lighting, sharp focus, masterwork character sheet model turnaround.',
-    NEGATIVE_PROMPT_ARTIFACTS,
-  ]
-    .filter(Boolean)
-    .join(' ');
+  const mainChars = (story.characters ?? []).slice(0, 2);
+  const charsLine = mainChars.length
+    ? `Characters: ${mainChars.map((c) => formatCharacterLine(c, story, 15)).join('; ')}.`
+    : '';
+
+  const styleLine = getArtStylePrompt(story.story_info.art_style);
+  return assemblePromptWithWordCap(sceneLine, charsLine, styleLine, POSITIVE_ILLUSTRATION_DIRECTIVE, 120);
+};
+
+// أ1: ورقة الشخصيات تبدأ بـ "Character reference sheet:" ثم الشخصيات ثم الأسلوب
+export const buildSheetPrompt = (story: StoryData, withPhoto: boolean, simplified = false): string => {
+  const photoNote = withPhoto ? ' Primary hero matches the attached child photo.' : '';
+  const sceneLine = simplified
+    ? `Character reference sheet: Simple front-view model sheet on plain background.${photoNote}`
+    : `Character reference sheet: Full-body turnaround model sheet on clean plain background.${photoNote}`;
+
+  const chars = story.characters ?? [];
+  const charsLine = chars.length
+    ? `Characters: ${chars.map((c) => formatCharacterLine(c, story, simplified ? 10 : 15)).join('; ')}.`
+    : '';
+
+  const styleLine = getArtStylePrompt(story.story_info.art_style);
+  return assemblePromptWithWordCap(sceneLine, charsLine, styleLine, POSITIVE_ILLUSTRATION_DIRECTIVE, 120);
+};
+
+// ب5: بناء وصف مشهد مصحح عند ضغط المستخدم على «الصورة لا تطابق»
+export const applySceneCorrection = (originalPrompt: string, correction: string): string => {
+  const cleanPrompt = originalPrompt.replace(/\s*Correction:[\s\S]*$/i, '').trim().replace(/\.+$/, '');
+  const cleanCorrection = correction.trim().replace(/\.+$/, '');
+  if (!cleanCorrection) return cleanPrompt;
+  return `${cleanPrompt}. Correction: ${cleanCorrection}.`;
+};
+
+// ب6: اقتراح 3 عناوين بديلة بنفس اللغة واللهجة
+export const suggestAlternativeTitles = async (story: StoryData, signal?: AbortSignal): Promise<string[]> => {
+  const summary = story.pages.slice(0, 5).map((p) => p.text).join(' ').slice(0, 900);
+  const data = await postJson<{ titles: string[] }>(
+    '/api/suggest-titles',
+    {
+      currentTitle: story.story_info.title,
+      language: story.story_info.language,
+      dialect: story.story_info.dialect,
+      summary,
+    },
+    signal,
+    2
+  );
+  if (!Array.isArray(data?.titles) || !data.titles.length) {
+    throw new ApiError('FAILED', 'Could not generate title suggestions.', undefined, '/api/suggest-titles');
+  }
+  return data.titles.slice(0, 3);
+};
 
 export interface ProgressInfo {
   progress: number;
@@ -162,6 +282,7 @@ export const continueStory = async (
           dialect: work.story_info.dialect,
           ageGroup: work.story_info.age_group,
           artStyle: work.story_info.art_style,
+          storyType: work.story_info.story_type,
           characters: work.characters,
           earlier: texts.slice(0, -3).map((t) => t.slice(0, 160)),
           recent: texts.slice(-3),
@@ -238,7 +359,6 @@ export class StoryGenerator {
   public async generate(rawParams: StoryParams, pageCount: number, onProgress: (info: ProgressInfo) => void): Promise<StoryData> {
     const params: StoryParams = { ...rawParams, idea: rawParams.idea.trim().slice(0, MAX_IDEA_LENGTH) };
     const total = Math.min(Math.max(Math.round(pageCount) || 6, 3), MAX_STORY_PAGES);
-    // القصص الطويلة تبدأ بدفعة أولى ثم تُكمَل بدفعات؛ الأقصر تُكتب دفعة واحدة كما كانت
     pageCount = total > 16 ? FIRST_BATCH_PAGES : total;
     if (!params.idea) throw new Error('Story idea cannot be empty.');
     const ar = params.language === 'Arabic';
@@ -247,6 +367,7 @@ export class StoryGenerator {
       language: params.language,
       dialect: params.dialect,
       artStyle: params.artStyle,
+      storyType: params.storyType,
       ageGroup: params.ageGroup,
     });
 
@@ -369,21 +490,31 @@ export class StoryGenerator {
     const parsed = story as StoryData | null;
     if (!parsed?.pages?.length || !parsed?.characters?.length) throw new ApiError('FAILED');
 
+    const albumRefId = params.customCharacters?.find((c) => c.referenceImageId)?.referenceImageId;
+
     let result: StoryData = {
       ...parsed,
       plannedPages: total > pageCount ? total : undefined,
-      characterSheetId: params.series?.characterSheetId ?? parsed.characterSheetId ?? `seed-${Date.now()}-${Math.floor(Math.random() * 89999 + 10000)}`,
+      characterSheetId:
+        params.series?.characterSheetId ??
+        albumRefId ??
+        parsed.characterSheetId ??
+        `seed-${Date.now()}-${Math.floor(Math.random() * 89999 + 10000)}`,
+      coverFontStyle: params.coverFontStyle,
+      coverTextEffect: params.coverTextEffect,
       story_info: {
         ...parsed.story_info,
         lessons: parsed.story_info.lessons ?? [],
         art_style: params.artStyle,
         aspect_ratio: params.aspectRatio,
         dialect: params.dialect,
+        story_type: params.storyType,
         fruitFantasy: params.fruitFantasy,
+        themeTopic: params.themeTopic,
         coverFontStyle: params.coverFontStyle,
+        coverTextEffect: params.coverTextEffect,
       },
       heroPhotoId: params.series?.heroPhotoId ?? params.heroPhotoId,
-      // الجزء التالي يحتفظ بنفس الشخصيات وورقة المراجع لتبقى الوجوه ثابتة
       ...(params.series
         ? {
             characters: params.series.characters,
@@ -397,7 +528,6 @@ export class StoryGenerator {
       pages: parsed.pages.slice(0, pageCount).map((p, i) => ({ ...cleanPage(p), page: i + 1 })),
     };
 
-    // بقية القصة الطويلة: أي انقطاع بعد الدفعة الأولى يُرجِع القصة ناقصة وقابلة للاستئناف بدل أن يضيع ما كُتب
     if (isIncomplete(result)) {
       let current = result;
       try {
@@ -442,15 +572,18 @@ export const generateMusic = async (prompt: string, signal?: AbortSignal): Promi
 
 export type CameraAngle = 'auto' | 'wide' | 'close' | 'low' | 'high' | 'side' | 'back';
 
-// إعادة كتابة وصف مشهد واحد بزاوية كاميرا جديدة أو بتعليمات المستخدم (الشخصيات والحدث ثابتان)
 export const rewriteImagePrompt = async (current: string, opts: { angle?: CameraAngle; instruction?: string; text?: string }, signal?: AbortSignal): Promise<string> => {
   const data = await postJson<{ prompt: string }>('/api/rewrite-prompt', { prompt: current, ...opts }, signal, 2);
   if (!data?.prompt) throw new ApiError('FAILED', 'Empty rewrite.', undefined, '/api/rewrite-prompt');
   return data.prompt;
 };
 
-export const analyzeNameMeaning = async (name: string, language: Language): Promise<NameAnalysis> => {
+export const analyzeName = async (name: string, language: Language): Promise<NameAnalysis> => {
   const trimmed = name.trim().slice(0, 60);
   if (!trimmed) throw new Error('Please enter a name first.');
-  return postJson<NameAnalysis>('/api/analyze-name', { name: trimmed, language });
+  return postJson<NameAnalysis>('/api/analyze-name', { name: trimmed, language }, undefined, 2);
 };
+
+export const analyzeNameMeaning = analyzeName;
+export const countPromptWords = (text: string): number => text.trim().split(/\s+/).filter(Boolean).length;
+

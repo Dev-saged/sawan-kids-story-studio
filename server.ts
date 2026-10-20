@@ -4,7 +4,12 @@ import crypto from 'crypto';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { GoogleGenAI, Modality, Type, type Schema } from '@google/genai';
-import { NO_SIZE_IMAGE_MODELS, POSITIVE_ILLUSTRATION_DIRECTIVE } from './src/shared/modelRules';
+import {
+  NO_SIZE_IMAGE_MODELS,
+  POSITIVE_ILLUSTRATION_DIRECTIVE,
+  STORY_TYPE_SPECS,
+  buildSharedSystemInstruction,
+} from './src/shared/modelRules.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -281,44 +286,7 @@ app.get('/api/preflight', async (req: Request, res: Response) => {
   }
 });
 
-const SYSTEM_INSTRUCTION = `You are the story engine of "Sajed Kids Story Studio", a professional AI children's story product.
-
-LANGUAGE
-- Write "text", "title", "lessons", "moral" and "quiz" in the requested language.
-- Arabic + Modern Standard: flawless, eloquent but simple Fusha suitable for kids. Correct grammar and i'rab. No colloquial words.
-- Arabic + a dialect: natural, authentic phrasing of that dialect, still clean and kid-friendly.
-
-NARRATION (field "narration", one per page)
-- The exact same content as "text", prepared for a professional voice actor.
-- Arabic Modern Standard: add COMPLETE, grammatically correct tashkeel (all harakat including case endings and shadda) on every word.
-- Arabic dialect: same words as "text", add tashkeel only where pronunciation would be ambiguous.
-- English: identical to "text".
-
-CHARACTERS & VISUAL DESIGN (STRICT & POWERFUL)
-- 1-3 fixed main characters. Every character must have an iconic, unmistakable visual identity.
-- "description": Complete model sheet in ENGLISH: exact species, precise age look, skin/fur color and undertones, hairstyle and exact hair color (e.g. glossy ink-black bob with bangs, golden honey-brown messy curls), expressive luminous eyes with highlight reflection, signature outfit with exact colors (e.g. sapphire-blue knitted sweater over amber corduroy trousers), footwear, and one distinctive signature accessory (e.g. glowing bronze compass, carved wooden acorn brooch).
-- Art styles must strictly adapt the visual rendering:
-  * "Anime": Studio Ghibli / Makoto Shinkai aesthetic, luminous big expressive eyes, clean lines, lush cloudscapes, cinematic lighting.
-  * "3D Cartoon / Pixar": Modern 3D animation studio style, tactile soft textures, subsurface glow, emotive facial expressions, warm volumetric light.
-  * "Watercolor Storybook": Classic picture book style, textured washes, organic ink outlines, dreamy soft atmosphere.
-  * "Comic / Webtoon": Vibrant dynamic panels, bold inks, expressive action lines, colorful saturated palette.
-- Consistency Rule: On every single page, repeat the character's exact name and their 3 core visual signatures (hair, eye color, clothing color) so the character NEVER drifts.
-- Never introduce random new characters later.
-
-PAGES
-- Each page: 2-6 short child-friendly sentences in "text".
-- Optional "chapter": a short chapter title (3-5 words, in the story language) ONLY on the first page of each chapter.
-- "image_prompt" is ALWAYS ENGLISH, 80-140 words, written like an award-winning animation director's shot description:
-  exact camera shot (e.g. Cinematic close-up, Dutch angle, wide panoramic landscape), focal character(s) BY NAME with visual traits repeated performing a specific emotional action (e.g. wide astonished sparkling eyes, gentle comforting smile), background environmental details, time of day, lighting, color harmony.
-  Never put words, letters, captions, signs, or watermarks in the image.
-
-COVER, MUSIC, MORAL, QUIZ
-- "cover_image_prompt": ENGLISH, 70-120 words, a striking hero composition of the main characters in the story's key setting that captures the title, cinematic lighting, no text.
-- "music_prompt": ENGLISH, one sentence describing an instrumental soundtrack for this story (mood, tempo, instruments), gentle and child friendly, no vocals.
-- "moral": one short sentence, the lesson of the story.
-- "quiz": exactly 3 comprehension questions, each with 3 short options, "answer" = index (0-2) of the correct option, "page" = the page number the question is about.
-
-Return ONLY JSON matching the response schema.`;
+const SYSTEM_INSTRUCTION = buildSharedSystemInstruction();
 
 const STORY_RESPONSE_SCHEMA: Schema = {
   type: Type.OBJECT,
@@ -429,16 +397,33 @@ app.post('/api/generate-story', async (req: Request, res: Response) => {
           .join(' | ')}. At most one new minor character may appear.`,
       ]
     : [];
+  const storyTypeKey = (clip(params.storyType, 30) || 'Bedtime') as keyof typeof STORY_TYPE_SPECS;
+  const typeSpec = STORY_TYPE_SPECS[storyTypeKey] ?? STORY_TYPE_SPECS.Bedtime;
+  const customChars = Array.isArray(params.customCharacters)
+    ? params.customCharacters
+        .slice(0, 3)
+        .map((c: any) => `${clip(c?.name, 40)} (${clip(c?.gender, 15)}, age ${clip(c?.age, 15)}): ${clip(c?.description, 250)} — ${clip(c?.personality, 120)}`)
+        .join(' | ')
+    : '';
+  const themeLine = params.fruitFantasy
+    ? 'Character theme: main characters are cute anthropomorphic fruit characters with faces and limbs.'
+    : params.themeTopic
+      ? `Character theme context: weave "${clip(params.themeTopic, 80)}" traits into character descriptions.`
+      : '';
   const prompt = [
     `Story idea: ${idea}`,
     isArabic ? `Language: Arabic (${clip(params.dialect, 30) || 'Modern Standard'})` : 'Language: English',
     `Age group: ${clip(params.ageGroup, 10) || '4-6'}`,
-    `Story type: ${clip(params.storyType, 20) || 'Bedtime'}`,
+    `Story type: ${typeSpec.value} — Narrative Arc: [Beginning: ${typeSpec.arc.beginning} | Middle: ${typeSpec.arc.middle} | Climax: ${typeSpec.arc.climax} | Ending: ${typeSpec.arc.ending}]. Rule: ${typeSpec.promptRule}`,
     `Exact page count: ${first}`,
     total > first
       ? `LONG STORY: the finished book will have ${total} pages in ${Math.ceil(total / 6)} chapters. Write ONLY the opening ${first} pages now (chapter 1 and its set-up). Do NOT conclude the story: end on a natural moment that leads into what comes next. Give page 1 a "chapter" title. The quiz and moral can be provisional.`
       : '',
     `Art style: ${clip(params.artStyle, 40) || 'Classic Storybook'}`,
+    themeLine,
+    customChars
+      ? `ALBUM CHARACTERS (include these exact characters in "characters" with their names and visual traits): ${customChars}`
+      : '',
     ...seriesLines,
     heroName
       ? `HERO: the main character is a real child named "${heroName}". A reference photo of this child will be used for the illustrations, so describe the hero as "${heroName}, the child from the reference photo" plus a fixed outfit with colors.`
@@ -527,13 +512,19 @@ const getFreeCreds = (req: Request): FreeCreds | null => {
   return CF_ACCOUNT_RE.test(account) && CF_TOKEN_RE.test(token) ? { account, token, source: user ? 'user' : 'env' } : null;
 };
 
-// FLUX يتبع بداية الوصف أكثر: المشهد أولاً ثم الأسلوب والشخصيات، وقصّ ما يزيد عن حد النموذج
+// أ2: المشهد أولاً ولا يُقصّ أبداً؛ ما بعد المشهد يُختصر إن لزم
 const fluxPrompt = (prompt: string, square: boolean): string => {
-  const m = /(?:Scene|Composition):\s*([\s\S]*)$/.exec(prompt);
-  const scene = (m ? m[1] : prompt).trim();
-  const rest = m ? prompt.slice(0, m.index).trim() : '';
-  const framing = square ? '' : ' Centered composition, key subjects in the middle, extra empty space above and below.';
-  return `${scene} Children's picture book illustration, no text, no letters, no watermark.${framing} ${rest}`.slice(0, 1900);
+  const lines = prompt
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean);
+  const sceneIdx = lines.findIndex((l) => /^(?:Scene|Character reference sheet|Composition):/i.test(l));
+  const sceneLine = sceneIdx >= 0 ? lines[sceneIdx] : lines[0] || prompt.trim();
+  const restLines = lines.filter((_, idx) => idx !== (sceneIdx >= 0 ? sceneIdx : 0));
+  const framing = square ? '' : ' Centered composition.';
+  const maxRestChars = Math.max(0, 1400 - sceneLine.length);
+  const rest = restLines.join(' ').slice(0, maxRestChars).trim();
+  return [sceneLine, rest, framing.trim(), POSITIVE_ILLUSTRATION_DIRECTIVE].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
 };
 
 const runFlux = async (creds: FreeCreds, prompt: string, steps = 6): Promise<string> => {
@@ -616,12 +607,15 @@ const AI_IMAGE_SIZES: Record<string, [number, number]> = {
   '9:16': [576, 1024],
 };
 
-const runAiFallback = async (prompt: string, aspectRatio: string): Promise<{ base64: string; mimeType: string; model: string }> => {
+const runAiFallback = async (
+  prompt: string,
+  aspectRatio: string
+): Promise<{ base64: string; mimeType: string; model: string; engine: 'pollinations'; promptSnippet: string }> => {
   const dims = AI_IMAGE_SIZES[aspectRatio] || [1024, 768];
-  const cleanPrompt = `${prompt.slice(0, 900)}. ${POSITIVE_ILLUSTRATION_DIRECTIVE}`;
+  const cleanPrompt = fluxPrompt(prompt, aspectRatio === '1:1');
   const encodedPrompt = encodeURIComponent(cleanPrompt);
   const seed = Math.floor(Math.random() * 2 ** 31);
-  
+
   const urls = [
     `https://image.pollinations.ai/prompt/${encodedPrompt}?width=${dims[0]}&height=${dims[1]}&seed=${seed}&nologo=true`,
     `https://image.pollinations.ai/prompt/${encodedPrompt}?seed=${seed}&nologo=true`,
@@ -638,11 +632,16 @@ const runAiFallback = async (prompt: string, aspectRatio: string): Promise<{ bas
         if (ct.includes('image')) {
           const buf = await res.arrayBuffer();
           const base64 = Buffer.from(buf).toString('base64');
-          return { base64, mimeType: 'image/jpeg', model: 'ai-image-generator' };
+          return {
+            base64,
+            mimeType: 'image/jpeg',
+            model: 'pollinations-flux',
+            engine: 'pollinations',
+            promptSnippet: cleanPrompt.slice(0, 300),
+          };
         }
       }
       if (res.status === 402) {
-        // Free limit or rate limit on IP: wait 2s and try next URL
         await sleep(2500);
       }
     } catch {
@@ -655,7 +654,7 @@ const runAiFallback = async (prompt: string, aspectRatio: string): Promise<{ bas
   throw new Error('AI fallback image generator currently busy. Please retry in a moment.');
 };
 
-// توليد الصور: أولاً عبر نماذج Gemini المتقدمة (Nano Banana / Flash Lite)، وعند انتهاء الحصة ينتقل بسلاسة للمحرك الذكي Flux
+// توليد الصور: أولاً عبر نماذج Gemini المتقدمة، ثم Cloudflare Flux إن توفر، ثم Pollinations الاحتياطي
 app.post('/api/generate-image', async (req: Request, res: Response) => {
   try {
     const prompt = clip(req.body?.prompt, 4000);
@@ -664,10 +663,11 @@ app.post('/api/generate-image', async (req: Request, res: Response) => {
     const refs = sanitizeRefs(req.body?.references);
     const session = getSession(req);
 
-    const lead = refs.length
-      ? '[STRICT CHARACTER REFERENCE ATTACHED]: Use the attached character reference sheet image(s) as the EXACT character model. Keep the identical face shape, hairstyle, hair color, skin tone, outfit design, color palette, and body proportions. '
+    // المشهد يبقى في البداية؛ ملاحظة المرجع تأتي في النهاية حتى لا تزيح المشهد عن أول 40 حرفاً
+    const refTail = refs.length
+      ? ' Maintain exact character face, hair, and outfit from the attached reference image.'
       : '';
-    const text = `${lead}${prompt} ${POSITIVE_ILLUSTRATION_DIRECTIVE}`;
+    const text = `${prompt}${refTail}`;
 
     try {
       const { value, model } = await runChain('image', await chainFor(req, 'image'), async (m) => {
@@ -704,11 +704,27 @@ app.post('/api/generate-image', async (req: Request, res: Response) => {
         return null;
       });
 
-      return res.json({ ...value, model, engine: 'gemini' });
+      return res.json({ ...value, model, engine: 'gemini', promptSnippet: text.slice(0, 300) });
     } catch (geminiErr: any) {
-      console.warn(`[image] Gemini image models unavailable (${geminiErr?.message?.slice(0, 100)}), generating with AI Flux illustration engine...`);
+      console.warn(`[image] Gemini image models unavailable (${geminiErr?.message?.slice(0, 100)}), trying fallback engines...`);
+      const freeCreds = getFreeCreds(req);
+      if (freeCreds) {
+        try {
+          const cfPrompt = fluxPrompt(prompt, aspectRatio === '1:1');
+          const base64 = await runFree(freeCreds, cfPrompt, 6);
+          return res.json({
+            base64,
+            mimeType: 'image/png',
+            model: FLUX_LABEL,
+            engine: 'flux',
+            promptSnippet: cfPrompt.slice(0, 300),
+          });
+        } catch (cfErr: any) {
+          console.warn(`[image] Cloudflare Flux failed (${cfErr?.message?.slice(0, 100)}), falling back to Pollinations...`);
+        }
+      }
       const fallback = await runAiFallback(prompt, aspectRatio);
-      return res.json({ ...fallback, engine: 'flux' });
+      return res.json(fallback);
     }
   } catch (err) {
     return sendError(res, err, 'Failed to generate image');
@@ -1057,6 +1073,46 @@ app.post('/api/analyze-name', async (req: Request, res: Response) => {
   }
 });
 
+const TITLES_SCHEMA: Schema = {
+  type: Type.OBJECT,
+  properties: {
+    titles: { type: Type.ARRAY, items: { type: Type.STRING } },
+  },
+  required: ['titles'],
+};
+
+// ب6: اقتراح 3 عناوين بديلة بنفس اللغة واللهجة
+app.post('/api/suggest-titles', async (req: Request, res: Response) => {
+  try {
+    const currentTitle = clip(req.body?.currentTitle, 120);
+    const language = clip(req.body?.language, 20) || 'Arabic';
+    const dialect = clip(req.body?.dialect, 40) || 'Modern Standard';
+    const summary = clip(req.body?.summary, 1000);
+    if (!summary && !currentTitle) {
+      return res.status(400).json({ error: 'Story summary or title is required.', code: 'FAILED' });
+    }
+    const ai = getAiClient(req);
+    const isArabic = /arab|عرب/i.test(language);
+    const prompt = isArabic
+      ? `اقترح 3 عناوين بديلة جذابة ومبتكرة لقصة أطفال باللغة العربية (${dialect}). العنوان الحالي: "${currentTitle}". ملخص القصة: "${summary}". كل عنوان بين 2 و6 كلمات، مختلف عن العنوان الحالي، ومناسب للأطفال. أعد JSON فقط.`
+      : `Suggest 3 creative, catchy alternative titles for a children's story in English. Current title: "${currentTitle}". Story summary: "${summary}". Each title 2-6 words, distinct from the current title. Return JSON only.`;
+
+    const { value } = await runChain('suggest-titles', await chainFor(req, 'text'), async (model) => {
+      const response = await ai.models.generateContent({
+        model,
+        contents: prompt,
+        config: { responseMimeType: 'application/json', responseSchema: TITLES_SCHEMA },
+      });
+      const parsed = response.text ? parseJson(response.text) : null;
+      return Array.isArray(parsed?.titles) && parsed.titles.length >= 3 ? parsed : null;
+    });
+    const titles = (value.titles as unknown[]).map((t) => clip(t, 90)).filter(Boolean).slice(0, 3);
+    return res.json({ titles });
+  } catch (err) {
+    return sendError(res, err, 'Failed to suggest titles');
+  }
+});
+
 const isProduction = process.env.NODE_ENV === 'production';
 
 if (!isProduction) {
@@ -1069,7 +1125,7 @@ if (!isProduction) {
 } else {
   const distPath = path.resolve(__dirname, 'dist');
   app.use(express.static(distPath, { index: false, maxAge: '1y', immutable: true, setHeaders: (res, file) => {
-    if (/(index\.html|sw\.js|manifest\.webmanifest)$/.test(file)) res.setHeader('Cache-Control', 'no-cache');
+    if (/(index\.html|sw\.js|version\.json|manifest\.webmanifest)$/.test(file)) res.setHeader('Cache-Control', 'no-cache');
   } }));
   // Express 5: '*' لم يعد مسار صالح
   app.get(/^(?!\/api\/).*/, (_req, res) => {

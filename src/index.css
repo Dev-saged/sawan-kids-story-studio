@@ -23,6 +23,14 @@
   --font-diwani: 'Aref Ruqaa', 'Amiri', serif;
   --font-naskh: 'Amiri', 'Cairo', serif;
   --font-3d: 'Marhey', 'Baloo Bhaijaan 2', sans-serif;
+  --font-lalezar: 'Lalezar', 'Baloo Bhaijaan 2', sans-serif;
+  --font-elmessiri: 'El Messiri', 'Cairo', sans-serif;
+  --font-readex: 'Readex Pro', 'Cairo', sans-serif;
+  --font-alexandria: 'Alexandria', 'Cairo', sans-serif;
+  --font-harmattan: 'Harmattan', 'Amiri', serif;
+  --font-lemonada: 'Lemonada', 'Baloo Bhaijaan 2', sans-serif;
+  --font-changa: 'Changa', 'Cairo', sans-serif;
+  --font-katibeh: 'Katibeh', 'Amiri', serif;
 }
 
 /* Global Typography Scale */
@@ -48,7 +56,7 @@
   font-weight: 500;
 }
 
-/* Authentic Calligraphic Cover Font Classes */
+/* 12 Authentic Calligraphic Cover Font Classes */
 .font-cover-kufi {
   font-family: var(--font-kufi);
   font-weight: 700;
@@ -70,7 +78,76 @@
 .font-cover-3d {
   font-family: var(--font-3d);
   font-weight: 800;
-  text-shadow: 0 2px 0 #b45309, 0 4px 12px rgba(0, 0, 0, 0.75);
+}
+
+.font-cover-lalezar {
+  font-family: var(--font-lalezar);
+  font-weight: 400;
+  line-height: 1.35;
+}
+
+.font-cover-elmessiri {
+  font-family: var(--font-elmessiri);
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.font-cover-readex {
+  font-family: var(--font-readex);
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.font-cover-alexandria {
+  font-family: var(--font-alexandria);
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.font-cover-harmattan {
+  font-family: var(--font-harmattan);
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.font-cover-lemonada {
+  font-family: var(--font-lemonada);
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.font-cover-changa {
+  font-family: var(--font-changa);
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.font-cover-katibeh {
+  font-family: var(--font-katibeh);
+  font-weight: 400;
+  line-height: 1.35;
+}
+
+/* 4 Cover Title Visual Effects (gold / shadow / outline / plain) */
+.cover-effect-gold {
+  color: #fde68a;
+  text-shadow: 0 2px 0 #92400e, 0 4px 16px rgba(245, 158, 11, 0.65);
+}
+
+.cover-effect-shadow {
+  color: #ffffff;
+  text-shadow: 0 3px 14px rgba(0, 0, 0, 0.9), 0 1px 3px rgba(0, 0, 0, 0.95);
+}
+
+.cover-effect-outline {
+  color: transparent;
+  -webkit-text-stroke: 1.6px #fde68a;
+  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.65);
+}
+
+.cover-effect-plain {
+  color: #f8fafc;
+  text-shadow: none;
 }
 
 /* Luxury Glassmorphic Card & Scrollbar Utilities */

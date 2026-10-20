@@ -132,16 +132,74 @@ export const hasAnyStory = async (): Promise<boolean> => {
   return (await listStories()).length > 0;
 };
 
-// نسخة JSON محمولة بصور مضمّنة
+// نسخة JSON محمولة بصور مضمّنة + ألبوم الشخصيات والهويات المخصصة (ب3 + ب7)
 export const serializeStory = async (story: StoryData): Promise<string> => {
+  const { listAlbumCharacters, listCustomPresets } = await import('./db');
   const embed = async (url?: string) => (url ? `data:image/webp;base64,${await blobToBase64(await srcToBlob(url))}` : undefined);
   const record = toRecord(story);
   const pages = await Promise.all(story.pages.map(async (p, i) => ({ ...record.pages[i], imageId: undefined, generatedImage: await embed(p.generatedImage) })));
+  const rawAlbum = await listAlbumCharacters();
+  const albumCharacters = await Promise.all(
+    rawAlbum.map(async (c) => {
+      const refImg = c.referenceImageId ? await getImage(c.referenceImageId) : null;
+      return {
+        ...c,
+        referenceImageDataUrl: refImg?.url ? await embed(refImg.url) : undefined,
+      };
+    })
+  );
+  const customPresets = await listCustomPresets();
   return JSON.stringify(
-    { ...record, id: undefined, coverImageId: undefined, characterSheetId: undefined, heroPhotoId: undefined, coverImage: await embed(story.coverImage), pages },
+    {
+      ...record,
+      id: undefined,
+      coverImageId: undefined,
+      characterSheetId: undefined,
+      heroPhotoId: undefined,
+      coverImage: await embed(story.coverImage),
+      pages,
+      albumCharacters,
+      customPresets,
+    },
     null,
     2
   );
+};
+
+export const restoreBackupExtras = async (parsed: any): Promise<void> => {
+  const { saveAlbumCharacter, saveCustomPreset } = await import('./db');
+  if (Array.isArray(parsed?.albumCharacters)) {
+    for (const item of parsed.albumCharacters) {
+      if (!item?.name) continue;
+      let referenceImageId = item.referenceImageId;
+      if (typeof item.referenceImageDataUrl === 'string' && item.referenceImageDataUrl.startsWith('data:image/')) {
+        try {
+          const blob = await reencode(await srcToBlob(item.referenceImageDataUrl), 1024);
+          const savedImg = await saveImage(blob, 'sheet', 'album', item.name);
+          referenceImageId = savedImg.id;
+        } catch {
+          // ignore
+        }
+      }
+      await saveAlbumCharacter({
+        id: item.id,
+        name: item.name,
+        description: item.description || '',
+        personality: item.personality || '',
+        age: item.age || '7',
+        gender: item.gender || 'Child',
+        referenceImageId,
+        createdAt: item.createdAt,
+      });
+    }
+  }
+  if (Array.isArray(parsed?.customPresets)) {
+    for (const p of parsed.customPresets) {
+      if (p?.id && p?.artStyle) {
+        await saveCustomPreset(p);
+      }
+    }
+  }
 };
 
 // ملفات الأطفال: الصورة تُحفظ مصغّرة (512px) لإعادة الاستخدام في قصص لاحقة دون إجهاد الذاكرة

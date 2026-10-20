@@ -1,6 +1,7 @@
 import { StoryData } from '../types';
 import { BRAND } from '../config';
 import { srcToBlob } from './media';
+import { applyHollowWatermarkToBlob } from './watermark';
 
 // كتاب جاهز للمطبعة: A5 (148×210 مم) + هامش قص 3 مم من كل جهة، 300 نقطة/بوصة
 const TRIM = { w: 148, h: 210 };
@@ -22,7 +23,9 @@ const lowMemory = () => {
 const loadBitmap = async (src?: string): Promise<ImageBitmap | null> => {
   if (!src) return null;
   try {
-    return await createImageBitmap(await srcToBlob(src));
+    const raw = await srcToBlob(src);
+    const watermarked = await applyHollowWatermarkToBlob(raw);
+    return await createImageBitmap(watermarked);
   } catch {
     return null;
   }

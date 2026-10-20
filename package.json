@@ -1,10 +1,11 @@
 {
   "name": "sawan-kids-story-studio",
   "private": true,
-  "version": "2.9.1",
+  "version": "2.10.0",
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
+    "prebuild": "node scripts/check-version.mjs",
     "build": "vite build",
     "start": "node server.ts",
     "preview": "vite preview",

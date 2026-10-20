@@ -3,6 +3,7 @@ import html2canvas from 'html2canvas';
 import { BookSize, PDFPreset, StoryData } from '../types';
 import { toSrc } from './media';
 import { BRAND } from '../config';
+import { drawHollowWatermarkOnCanvas } from './watermark';
 
 const SIZES: Record<BookSize, { width: number; height: number }> = {
   A4: { width: 794, height: 1123 },
@@ -80,6 +81,7 @@ export const generatePDFBlob = async (
     container.innerHTML = html;
     await Promise.all([waitForImages(container), document.fonts?.ready]);
     const canvas = await html2canvas(container, { scale: 2, useCORS: true, logging: false, backgroundColor: COLORS.paper });
+    await drawHollowWatermarkOnCanvas(canvas, { isArabic: isRTL });
     if (!firstPage) pdf.addPage();
     firstPage = false;
     pdf.addImage(canvas.toDataURL('image/jpeg', 0.9), 'JPEG', 0, 0, width, height);

@@ -2,19 +2,27 @@ import { useState, useSyncExternalStore } from 'react';
 import { Check, ClipboardCopy, ImageIcon, Stethoscope } from 'lucide-react';
 import { getApiRequestHistory, getErrorLog, subscribeApiHistory, subscribeErrorLog } from '../../services/api';
 import { getFreeCreds, isKeyRemembered, keyHint } from '../../services/apiKey';
-import { diagnoseImagePaths, getLastEngine, type KeyReport, type PathTest } from '../../services/imageEngine';
+import {
+  diagnoseImagePaths,
+  getDrawnImagesLog,
+  getLastEngine,
+  subscribeDrawnImages,
+  type KeyReport,
+  type PathTest,
+} from '../../services/imageEngine';
 import { getGeneratorLogs } from '../../services/gemini';
 import { APP_VERSION } from '../../config';
 
-// زر «تفاصيل تقنية»: يعرض النموذج ورسالة Google الفعلية وسجل API ويسمح بنسخها للمطوّر
-export default function ErrorDetails({ ar }: { ar: boolean }) {
+// زر «تفاصيل تقنية»: يعرض لكل صورة المحرك الذي رسمها (gemini / flux / pollinations) وأول 300 حرف من الطلب الفعلي، إضافةً لسجل الأخطاء وAPI
+export default function ErrorDetails({ ar, alwaysShow = false }: { ar: boolean; alwaysShow?: boolean }) {
   const log = useSyncExternalStore(subscribeErrorLog, getErrorLog);
   const apiHistory = useSyncExternalStore(subscribeApiHistory, getApiRequestHistory);
+  const drawnImages = useSyncExternalStore(subscribeDrawnImages, getDrawnImagesLog);
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const [diag, setDiag] = useState<{ tests: PathTest[]; keys: KeyReport } | null>(null);
   const [testing, setTesting] = useState(false);
-  if (!log.length && !diag && !apiHistory.length) return null;
+  if (!alwaysShow && !log.length && !diag && !apiHistory.length && !drawnImages.length) return null;
 
   const buildReport = () =>
     JSON.stringify(
@@ -24,6 +32,13 @@ export default function ErrorDetails({ ar }: { ar: boolean }) {
         remembered: isKeyRemembered(),
         freeEngine: Boolean(getFreeCreds()),
         lastImageEngine: getLastEngine() ?? undefined,
+        drawnImages: drawnImages.slice(0, 20).map((img) => ({
+          kind: img.kind,
+          engine: img.engine,
+          model: img.model,
+          promptFirst300Chars: img.promptSnippet.slice(0, 300),
+          at: img.timestamp,
+        })),
         keys: diag?.keys,
         imagePaths: diag?.tests,
         errors: log,
@@ -82,6 +97,24 @@ export default function ErrorDetails({ ar }: { ar: boolean }) {
       </button>
       {open && (
         <div className="mt-1 space-y-2">
+          {drawnImages.length > 0 && (
+            <div className="rounded-2xl border border-dream/25 bg-black/75 p-3 text-[11px] text-amber-100 space-y-1.5" dir={ar ? 'rtl' : 'ltr'}>
+              <p className="font-bold text-amber-300">
+                {ar ? 'سجل الصور المرسومة (المحرك + أول 300 حرف من الطلب المرسل فعلاً):' : 'Drawn Images Log (Engine + First 300 chars of sent prompt):'}
+              </p>
+              <ul className="space-y-1.5 max-h-44 overflow-auto">
+                {drawnImages.slice(0, 12).map((img) => (
+                  <li key={img.id} className="rounded-xl bg-white/5 p-2 font-mono text-[10px]" dir="ltr">
+                    <div className="flex items-center justify-between gap-2 text-emerald-300 font-bold">
+                      <span>[{img.kind}] engine: {img.engine}</span>
+                      <span className="text-white/60">{img.model}</span>
+                    </div>
+                    <p className="mt-1 text-white/85 break-words">{img.promptSnippet.slice(0, 300)}</p>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
           <pre className="max-h-64 select-all overflow-auto whitespace-pre-wrap break-words rounded-2xl bg-black/80 p-3 text-[11px] leading-relaxed text-green-200">{buildReport()}</pre>
           <button type="button" onClick={runTests} disabled={testing} className="flex min-h-11 w-full items-center justify-center gap-2 rounded-2xl border border-dream/30 text-sm font-semibold text-ink active:scale-95 disabled:opacity-60 dark:text-moonlight">
             <ImageIcon size={16} aria-hidden />

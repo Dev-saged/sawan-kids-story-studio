@@ -5,18 +5,29 @@ with natural narration, read-along, story videos, science games and learning art
 
 **Designed & developed by Eng. Sajed Al-Abadlah — تصميم وتطوير المهندس ساجد العبادلة**
 
-## Stack (v2.9.1 — Single Version Source: `src/version.ts`)
+## Stack (v2.10.0 — Single Version Source: `src/version.ts` & `src/config.ts`)
 
 - Vite 6 + React 18 + TypeScript (strict), Tailwind CSS v4
 - `server.ts` (Express 5) — thin Gemini proxy required by Google AI Studio hosting
-- `@google/genai` model chains (strongest first, each with its own quota, defined in `server.ts` & `src/shared/modelRules.ts`):
+- `@google/genai` model chains (strongest first, each with its own quota, defined in `server.ts` & `shared/config.ts`):
   - Text: `gemini-3-flash-preview` → `gemini-2.5-flash` → `gemini-2.5-pro` → `gemini-2.5-flash-lite`
   - Images: `gemini-2.5-flash-image` → `gemini-3.1-flash-image-preview` → `gemini-3-pro-image-preview`
   - Narration: `gemini-2.5-flash-preview-tts` → `gemini-2.5-pro-preview-tts`
   - Music: `lyria-realtime-exp` / `lyria-3-clip-preview` (with WebAudio procedural lullaby fallback)
-- IndexedDB (versioned schema) for the library, 2048px print-grade images, audio cache and child profiles
+- IndexedDB v3 (versioned schema) for the library, 2048px print-grade images, audio cache, child profiles, saved character album (`characters`), and custom story identities (`custom_presets`)
 - WebCodecs + `mp4-muxer` for MP4 video export (MediaRecorder fallback)
-- PWA: manifest + service worker (offline shell)
+- PWA: manifest + service worker (offline shell with build-time version injection)
+
+## What's new in v2.10.0 — Scene-First Prompt Engineering & Creative Studio Expansion
+
+- **Scene-First Image Prompts (<= 120 words)**: `buildPageImagePrompt`, `buildCoverPrompt`, and `buildSheetPrompt` start directly with `Scene: <prompt>.`, include only characters present in the page (up to 15 words each), apply the art style once, and end with `POSITIVE_ILLUSTRATION_DIRECTIVE` from `shared/config.ts`.
+- **16 Story Genres with Narrative Arcs (`STORY_TYPE_SPECS`)**: 5 primary genres + 11 expandable genres (`Mystery`, `Fantasy`, `SciFi`, `Fable`, `Historical`, `Rhyme`, `Interactive`, `Therapeutic`, `Prophets`, `Folklore`, `Sports`), each with structured beginning/middle/climax/ending arcs.
+- **12 Calligraphic Cover Fonts + 4 Visual Effects + Live Preview**: 12 open-source Arabic fonts loaded with `display=swap`, 4 cover text effects (`gold`, `shadow`, `outline`, `plain`), and a live cover preview box before generation.
+- **16 Complete Identity Presets + Custom Identity Saving**: Each preset configures art style, narrator voice, Arabic dialect, cover font, and ambient sound; users can save their own identities to IndexedDB (`custom_presets`).
+- **Cover & Page 1 Preview Gate**: Draws the character reference sheet, cover, and page 1 first, allowing the user to approve and continue or change the style before painting the remaining pages.
+- **Per-Page Mismatch Correction & Alternative Title Suggestions**: Instant scene correction (`Correction: ...`) and 3 dialect-matched title suggestions (`/api/suggest-titles`).
+- **Saved Character Album (`characters` store in IndexedDB v3)**: Save any story character with its reference sheet to reuse across future stories, included in JSON backups.
+- **Export-Only Adaptive Hollow Watermark**: Draws a 4%-width hollow watermark in the bottom corner on PDF/ZIP/share/video exports with automatic luminance contrast, keeping IndexedDB images 100% clean.
 
 ## What's new in v2.9.1 — Audit Remediation & Architecture Hardening
 

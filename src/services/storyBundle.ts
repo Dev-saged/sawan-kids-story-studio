@@ -2,6 +2,7 @@ import { saveAs } from 'file-saver';
 import type { StoryData } from '../types';
 import { BRAND } from '../config';
 import { srcToBlob } from './media';
+import { applyHollowWatermarkToBlob } from './watermark';
 import { serializeStory } from './library';
 import { animationPackText, animationPrompt } from './animation';
 import { safeFileName } from './export';
@@ -66,7 +67,8 @@ export const shareStory = async (s: StoryData, channel: ShareChannel): Promise<v
   let files: File[] = [];
   try {
     if (s.coverImage) {
-      const blob = await srcToBlob(s.coverImage);
+      const rawBlob = await srcToBlob(s.coverImage);
+      const blob = await applyHollowWatermarkToBlob(rawBlob, { isArabic: isAr(s) }, rawBlob.type || 'image/png');
       files = [new File([blob], `${safeFileName(s.story_info.title, 'story')}.${extFor(blob.type)}`, { type: blob.type })];
     }
   } catch {
@@ -92,7 +94,8 @@ const collectImages = async (s: StoryData, onProgress?: Progress): Promise<{ cov
   const ar = isAr(s);
   let cover: PackedImage | null = null;
   if (s.coverImage) {
-    const blob = await srcToBlob(s.coverImage);
+    const rawBlob = await srcToBlob(s.coverImage);
+    const blob = await applyHollowWatermarkToBlob(rawBlob, { isArabic: ar }, rawBlob.type || 'image/png');
     cover = { name: `cover.${extFor(blob.type)}`, blob };
   }
   const pages: (PackedImage | null)[] = [];
@@ -102,7 +105,8 @@ const collectImages = async (s: StoryData, onProgress?: Progress): Promise<{ cov
       pages.push(null);
       continue;
     }
-    const blob = await srcToBlob(p.generatedImage);
+    const rawBlob = await srcToBlob(p.generatedImage);
+    const blob = await applyHollowWatermarkToBlob(rawBlob, { isArabic: ar }, rawBlob.type || 'image/png');
     pages.push({ name: `page-${pad(p.page)}.${extFor(blob.type)}`, blob });
   }
   return { cover, pages };

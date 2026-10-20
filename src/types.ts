@@ -23,7 +23,23 @@ export type ArabicDialect =
 
 export type AgeGroup = '3-4' | '4-6' | '7-9' | '9-12' | '13-18';
 
-export type CoverFontStyle = 'kufi' | 'diwani' | 'naskh' | 'display3d';
+export type CoverFontStyle =
+  | 'kufi'
+  | 'diwani'
+  | 'naskh'
+  | 'display3d'
+  | 'lalezar'
+  | 'elmessiri'
+  | 'readex'
+  | 'alexandria'
+  | 'harmattan'
+  | 'lemonada'
+  | 'changa'
+  | 'katibeh';
+
+export type CoverTextEffect = 'gold' | 'shadow' | 'outline' | 'plain';
+
+export type AmbientPresetId = 'forest' | 'ocean' | 'rain' | 'night' | 'cozy_fire' | 'cyber' | 'dream';
 
 export type VeoMotionMode = 'cinematic-pack' | 'parallax-script' | 'sweeps-3d' | 'auto-composite';
 
@@ -31,7 +47,41 @@ export type Book3DTheme = 'hardcover' | 'carddeck' | 'grimoire';
 
 export type PDFPreset = 'storybook' | 'minimalist' | 'collector';
 
-export type StoryType = 'Bedtime' | 'Adventure' | 'Funny' | 'Educational' | 'Moral';
+export type StoryType =
+  | 'Bedtime'
+  | 'Adventure'
+  | 'Funny'
+  | 'Educational'
+  | 'Moral'
+  | 'Mystery'
+  | 'Fantasy'
+  | 'SciFi'
+  | 'Fable'
+  | 'Historical'
+  | 'Rhyme'
+  | 'Interactive'
+  | 'Therapeutic'
+  | 'Prophets'
+  | 'Folklore'
+  | 'Sports';
+
+export interface StoryTypeArc {
+  beginning: string;
+  middle: string;
+  climax: string;
+  ending: string;
+}
+
+export interface StoryTypeSpec {
+  value: StoryType;
+  label: { ar: string; en: string };
+  desc: { ar: string; en: string };
+  isPrimary: boolean;
+  tone: string;
+  pacing: string;
+  arc: StoryTypeArc;
+  pageRule: string;
+}
 
 export type StoryLength = 'Short' | 'Medium' | 'Long' | 'Epic';
 
@@ -74,6 +124,21 @@ export interface SeriesContext {
   aspectRatio: AspectRatio;
 }
 
+export interface Character {
+  name: string;
+  description: string;
+  personality: string;
+  age: string;
+  gender: string;
+}
+
+// شخصية محفوظة في ألبوم المستخدم (مخزن characters في IndexedDB v3)
+export interface SavedCharacter extends Character {
+  id: string;
+  referenceImageId?: string;
+  createdAt: number;
+}
+
 export interface StoryParams {
   idea: string;
   language: Language;
@@ -87,15 +152,10 @@ export interface StoryParams {
   heroPhotoId?: string;
   series?: SeriesContext;
   coverFontStyle?: CoverFontStyle;
+  coverTextEffect?: CoverTextEffect;
   fruitFantasy?: boolean;
-}
-
-export interface Character {
-  name: string;
-  description: string;
-  personality: string;
-  age: string;
-  gender: string;
+  themeTopic?: string;
+  customCharacters?: SavedCharacter[];
 }
 
 export interface StoryPage {
@@ -103,6 +163,8 @@ export interface StoryPage {
   text: string;
   image_prompt: string;
   narration?: string;
+  // ملاحظة تصحيح من المستخدم للمشهد عند عدم التطابق
+  correctionNote?: string;
   // عنوان الفصل: على أول صفحة في كل فصل فقط
   chapter?: string;
   // رابط عرض (blob:) وقت التشغيل، أو base64 قديم
@@ -119,10 +181,13 @@ export interface StoryInfo {
   art_style: string;
   aspect_ratio: AspectRatio;
   dialect?: string;
+  story_type?: StoryType;
   lessons: string[];
   moral?: string;
   coverFontStyle?: CoverFontStyle;
+  coverTextEffect?: CoverTextEffect;
   fruitFantasy?: boolean;
+  themeTopic?: string;
 }
 
 export interface QuizItem {
@@ -153,6 +218,7 @@ export interface StoryData {
   // العدد المستهدف لقصة طويلة تُكتب على دفعات؛ أقل من ذلك يعني قصة غير مكتملة تُستأنف
   plannedPages?: number;
   coverFontStyle?: CoverFontStyle;
+  coverTextEffect?: CoverTextEffect;
 }
 
 export type NarratorVoice = 'Sulafat' | 'Vindemiatrix' | 'Achernar' | 'Algieba' | 'Charon' | 'Puck' | 'Family' | 'ClonedVoice';

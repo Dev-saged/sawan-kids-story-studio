@@ -2,14 +2,12 @@ import { ApiError, postJson, preflight, type ApiErrorCode, type TrailItem } from
 import { getUserApiKey, keyShape } from './apiKey';
 import { hashText } from './db';
 import { base64ToBlob, cropToAspect } from './media';
-import { NO_SIZE_IMAGE_MODELS, POSITIVE_ILLUSTRATION_DIRECTIVE } from '../shared/modelRules';
+import { NO_SIZE_IMAGE_MODELS, POSITIVE_ILLUSTRATION_DIRECTIVE } from '../../shared/config.ts';
 import type { AspectRatio } from '../types';
 
-// طبقة الصور الموحدة: كل رسم في التطبيق يمر من هنا عبر نماذج Gemini الحقيقية فقط.
-//  1) direct-user : Gemini من المتصفح بمفتاح الزائر الخاص (gemini-2.5-flash-image وغيره)
-//  2) server      : الخادم (سلسلة نماذج Gemini عبر proxy مع المفتاح المحقون)
-//  3) direct-env  : Gemini من المتصفح بالمفتاح المحقون
+// طبقة الصور الموحدة: كل رسم في التطبيق يمر من هنا
 export type EngineId = 'direct-user' | 'server' | 'direct-env';
+export type DrawnEngineKind = 'gemini' | 'flux' | 'pollinations';
 
 export interface ImageRequest {
   prompt: string;
@@ -18,6 +16,36 @@ export interface ImageRequest {
   kind?: string;
   artStyle?: string;
 }
+
+// سجل تقني لكل صورة مرسومة: المحرك الذي رسمها وأول 300 حرف من الطلب المرسل فعلاً
+export interface DrawnImageRecord {
+  id: string;
+  kind: string;
+  engine: DrawnEngineKind;
+  model: string;
+  promptSnippet: string;
+  timestamp: string;
+}
+
+const drawnImages: DrawnImageRecord[] = [];
+const drawnListeners = new Set<() => void>();
+
+export const recordDrawnImage = (entry: Omit<DrawnImageRecord, 'id' | 'timestamp'>): void => {
+  drawnImages.unshift({
+    ...entry,
+    id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    promptSnippet: entry.promptSnippet.slice(0, 300),
+    timestamp: new Date().toISOString(),
+  });
+  if (drawnImages.length > 50) drawnImages.pop();
+  drawnListeners.forEach((fn) => fn());
+};
+
+export const getDrawnImagesLog = (): DrawnImageRecord[] => drawnImages;
+export const subscribeDrawnImages = (fn: () => void): (() => void) => {
+  drawnListeners.add(fn);
+  return () => drawnListeners.delete(fn);
+};
 
 // يرمى عندما يتم تخطي صورة (مثلاً ورقة الشخصيات إن لم تكن مطلوبة)
 export class SkippedImage extends Error {}
@@ -73,11 +101,9 @@ export const codeFromTrail = (trail: TrailItem[]): ApiErrorCode => {
   return 'FAILED';
 };
 
-// أيّ الأخطاء أنفع للمستخدم عند فشل كل المحركات (الأصغر أولاً)
 const RANK: Record<ApiErrorCode, number> = { FREE_AUTH: 0, FREE_QUOTA: 0, BILLING: 1, QUOTA: 2, NOKEY: 3, AUTH: 4, NOMODEL: 5, BUSY: 6, OFFLINE: 7, FAILED: 8 };
 export const rankError = (code: ApiErrorCode): number => RANK[code] ?? 9;
 
-// أخطاء دائمة: لا فائدة من إعادة المحاولة معها في هذه الجلسة
 const HARD: ReadonlySet<ApiErrorCode> = new Set(['BILLING', 'AUTH', 'NOKEY', 'NOMODEL', 'FREE_AUTH']);
 
 // ===== صحة المحركات داخل الجلسة =====
@@ -116,7 +142,18 @@ const withTimeout = <T,>(p: Promise<T>, ms: number): Promise<T> => {
 
 const failed = (trail: TrailItem[]): Error & { trail: TrailItem[] } => Object.assign(new Error('engine failed'), { trail });
 
-// ===== 1/2: Gemini من المتصفح (نفس استدعاء النسخة المرجعية) =====
+// يبني النص النهائي المرسل للنموذج مع الحفاظ على المشهد (Scene:) في الصدارة دائماً
+export const buildFinalImageText = (rawPrompt: string, hasRefs: boolean): string => {
+  const base = rawPrompt.trim();
+  const withDirective = base.includes(POSITIVE_ILLUSTRATION_DIRECTIVE)
+    ? base
+    : `${base}\n${POSITIVE_ILLUSTRATION_DIRECTIVE}`;
+  return hasRefs
+    ? `${withDirective}\nKeep exact character appearance from attached reference.`
+    : withDirective;
+};
+
+// ===== 1/2: Gemini من المتصفح =====
 const runDirect = async (eng: Engine, req: ImageRequest, signal?: AbortSignal): Promise<Blob> => {
   const { GoogleGenAI } = await import('@google/genai');
   const ai = new GoogleGenAI({ apiKey: eng.key! });
@@ -132,17 +169,13 @@ const runDirect = async (eng: Engine, req: ImageRequest, signal?: AbortSignal): 
     })
     .filter((r) => r.data.length > 200 && r.data.length < 5_000_000);
 
-  const lead = cleanRefs.length
-    ? '[STRICT CHARACTER REFERENCE ATTACHED]: Use the attached character reference sheet image(s) as the EXACT character model. Keep the identical face shape, hairstyle, hair color, skin tone, outfit design, color palette, and body proportions. '
-    : '';
-  const text = `${lead}${req.prompt} ${POSITIVE_ILLUSTRATION_DIRECTIVE}`;
-
   for (const model of DIRECT_MODELS) {
     const isNoSize = NO_SIZE_IMAGE_MODELS.has(model);
     let currentRefs = cleanRefs;
     let retriedWithoutRef = false;
     for (let attempt = 0; attempt < 2; attempt++) {
       if (signal?.aborted) throw abortError();
+      const text = buildFinalImageText(req.prompt, currentRefs.length > 0);
       try {
         const parts: any[] = currentRefs.length
           ? [...currentRefs.map((r) => ({ inlineData: { data: r.data, mimeType: r.mimeType } })), { text }]
@@ -161,7 +194,15 @@ const runDirect = async (eng: Engine, req: ImageRequest, signal?: AbortSignal): 
         );
         const cand = response.candidates?.[0];
         const part = (cand?.content?.parts ?? []).find((p) => p.inlineData?.data);
-        if (part?.inlineData?.data) return base64ToBlob(part.inlineData.data, part.inlineData.mimeType || 'image/png');
+        if (part?.inlineData?.data) {
+          recordDrawnImage({
+            kind: req.kind || 'page',
+            engine: 'gemini',
+            model: `${eng.id}/${model}`,
+            promptSnippet: text.slice(0, 300),
+          });
+          return base64ToBlob(part.inlineData.data, part.inlineData.mimeType || 'image/png');
+        }
         const why = [response.promptFeedback?.blockReason, cand?.finishReason, cand?.content?.parts?.find((p) => p.text)?.text?.slice(0, 120)].filter(Boolean).join(' · ');
         trail.push({ model: `${eng.id}/${model}`, kind: 'skip', status: 0, message: `No image returned${retriedWithoutRef ? ' [no-ref]' : ''}${why ? `: ${why}` : '.'}` });
         break;
@@ -170,7 +211,7 @@ const runDirect = async (eng: Engine, req: ImageRequest, signal?: AbortSignal): 
         const msg = String(err?.message ?? err).replace(/\s+/g, ' ');
         const status = Number(err?.status ?? err?.code ?? 0) || 0;
 
-        // إعادة المحاولة بدون الصورة المرجعية تقتصر حصراً على أخطاء فك تشفير الصورة أو السلامة والفلاتر (وليس الشبكة أو الحصة)
+        // إعادة المحاولة بدون الصورة المرجعية تقتصر حصراً على أخطاء فك تشفير الصورة أو السلامة والفلاتر
         const isRefOrSafetyError = /decode|could not be decoded|source image|safety|blocked|policy|filter|face|person/i.test(msg);
         if (currentRefs.length > 0 && isRefOrSafetyError) {
           console.warn(`[runDirect] Image/safety reference error on ${model} ("${msg.slice(0, 80)}..."), retrying without reference...`);
@@ -199,7 +240,6 @@ const runDirect = async (eng: Engine, req: ImageRequest, signal?: AbortSignal): 
           break;
         }
 
-        // استراتيجية إعادة المحاولة بتأخير متصاعد أسي عند كوتا الدقيقة (429) أو الانشغال المؤقت قبل الانتقال للنموذج التالي
         if ((kind === 'quota' || kind === 'busy') && attempt < 1) {
           const backoff = Math.min(1200 + Math.random() * 600, 3000);
           console.warn(`[runDirect] Per-minute rate limit or busy on ${model}, backing off for ${Math.round(backoff)}ms before retry...`);
@@ -216,15 +256,30 @@ const runDirect = async (eng: Engine, req: ImageRequest, signal?: AbortSignal): 
 
 // ===== 3: الخادم =====
 const runServer = async (req: ImageRequest, signal?: AbortSignal): Promise<Blob> => {
-  const data = await postJson<{ base64?: string; mimeType: string; skipped?: boolean; engine?: string }>(
+  const data = await postJson<{
+    base64?: string;
+    mimeType: string;
+    skipped?: boolean;
+    engine?: DrawnEngineKind | 'free';
+    model?: string;
+    promptSnippet?: string;
+  }>(
     '/api/generate-image',
     { prompt: req.prompt, aspectRatio: req.aspectRatio, references: req.references, kind: req.kind, artStyle: req.artStyle },
     signal
   );
   if (data?.skipped) throw new SkippedImage('Image skipped: free engine takes no reference sheet.');
   if (!data?.base64) throw new ApiError('FAILED', 'Empty image response.', undefined, '/api/generate-image');
+  const resolvedEngine: DrawnEngineKind =
+    data.engine === 'pollinations' ? 'pollinations' : data.engine === 'flux' || data.engine === 'free' ? 'flux' : 'gemini';
+  recordDrawnImage({
+    kind: req.kind || 'page',
+    engine: resolvedEngine,
+    model: data.model || resolvedEngine,
+    promptSnippet: (data.promptSnippet || req.prompt).slice(0, 300),
+  });
   const blob = base64ToBlob(data.base64, data.mimeType);
-  return data.engine === 'free' ? cropToAspect(blob, req.aspectRatio) : blob;
+  return resolvedEngine === 'flux' ? cropToAspect(blob, req.aspectRatio) : blob;
 };
 
 const run = (eng: Engine, req: ImageRequest, signal?: AbortSignal): Promise<Blob> =>
@@ -257,7 +312,6 @@ export const generateIllustration = async (req: ImageRequest, signal?: AbortSign
     }
   }
 
-  // كل مسارات Gemini المباشرة أو الخادم فشلت: نُظهر أنفع رمز
   const direct = codeFromTrail(trails);
   const best: ApiErrorCode = serverErr && rankError(serverErr.code) <= rankError(direct) ? serverErr.code : direct;
   if (serverErr && best === serverErr.code) {
@@ -281,7 +335,7 @@ export interface KeyReport {
   server: string;
 }
 
-const TEST_PROMPT = 'a small yellow star on a plain blue background, flat icon';
+const TEST_PROMPT = 'Scene: a small yellow star on a plain blue background, flat icon.';
 
 export const diagnoseImagePaths = async (): Promise<{ tests: PathTest[]; keys: KeyReport }> => {
   const tests: PathTest[] = [];

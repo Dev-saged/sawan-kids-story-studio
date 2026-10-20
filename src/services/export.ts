@@ -1,7 +1,8 @@
 import { saveAs } from 'file-saver';
 import { BookSize, StoryData } from '../types';
 import { srcToBlob } from './media';
-import { serializeStory } from './library';
+import { restoreBackupExtras, serializeStory } from './library';
+import { applyHollowWatermarkToBlob, drawHollowWatermarkOnCanvas } from './watermark';
 
 export const safeFileName = (title: string, fallback: string): string =>
   (title || fallback).trim().replace(/[\\/:*?"<>|]+/g, '-').slice(0, 80) || fallback;
@@ -45,6 +46,7 @@ export const exportStoryAsPDF = async (storyData: StoryData, containerIdOrSize?:
       for (let i = 0; i < pageNodes.length; i++) {
         onProgress?.(isRTL ? `معالجة الصفحة ${i + 1} من ${pageNodes.length}...` : `Processing page ${i + 1} of ${pageNodes.length}...`);
         const canvas = await html2canvas(pageNodes[i], { scale: 2, useCORS: true, allowTaint: true, backgroundColor: '#ffffff', logging: false });
+        await drawHollowWatermarkOnCanvas(canvas, { isArabic: isRTL });
         const imgData = canvas.toDataURL('image/jpeg', 0.94);
         const orientation = canvas.width >= canvas.height ? 'landscape' : 'portrait';
         if (!pdf) pdf = new jsPDF({ orientation, unit: 'px', format: [canvas.width, canvas.height], compress: true });
@@ -71,16 +73,19 @@ export const exportPrintBook = async (storyData: StoryData, onProgress?: (msg: s
 };
 
 export const exportImagesAsZip = async (storyData: StoryData): Promise<void> => {
+  const isArabic = /arab|عرب/i.test(storyData.story_info.language ?? '');
   const entries = [
     ...(storyData.coverImage ? [{ name: 'cover', src: storyData.coverImage }] : []),
     ...storyData.pages.filter((p) => p.generatedImage).map((p) => ({ name: `page-${String(p.page).padStart(2, '0')}`, src: p.generatedImage! })),
   ];
-  if (entries.length === 0) throw new Error(/arab|عرب/i.test(storyData.story_info.language) ? 'لا توجد صور بعد.' : 'No images available to export.');
+  if (entries.length === 0) throw new Error(isArabic ? 'لا توجد صور بعد.' : 'No images available to export.');
 
   const { default: JSZip } = await import('jszip');
   const zip = new JSZip();
   for (const e of entries) {
-    const blob = await srcToBlob(e.src);
+    const rawBlob = await srcToBlob(e.src);
+    const outType = rawBlob.type || 'image/png';
+    const blob = await applyHollowWatermarkToBlob(rawBlob, { isArabic }, outType);
     zip.file(`${e.name}.${extFor(blob.type)}`, blob);
   }
   const blob = await zip.generateAsync({ type: 'blob' });
@@ -92,13 +97,14 @@ export const saveStoryAsJSON = async (storyData: StoryData): Promise<void> => {
   saveAs(blob, `${safeFileName(storyData.story_info.title, 'story')}.json`);
 };
 
-// يرجع قصة خام؛ التطبيق يتولى ترحيل الصور (hydrateStory)
+// يرجع قصة خام؛ التطبيق يتولى ترحيل الصور (hydrateStory) واسترجاع ألبوم الشخصيات والهويات
 export const loadStoryFromJSON = (file: File): Promise<StoryData> =>
   new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = () => {
+    reader.onload = async () => {
       try {
         const parsed = JSON.parse(reader.result as string);
+        await restoreBackupExtras(parsed).catch(() => undefined);
         if (parsed.story_info && Array.isArray(parsed.pages)) return resolve(parsed as StoryData);
         if (parsed.storyData && Array.isArray(parsed.storyData.pages)) {
           const story: StoryData = parsed.storyData;
@@ -116,3 +122,4 @@ export const loadStoryFromJSON = (file: File): Promise<StoryData> =>
     reader.onerror = () => reject(new Error('Failed to read file.'));
     reader.readAsText(file);
   });
+

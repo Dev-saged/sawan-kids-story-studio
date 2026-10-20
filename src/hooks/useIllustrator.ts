@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { StoryData, StoryPage } from '../types';
+import { ArtStyle, Character, StoryData, StoryPage } from '../types';
+import { getStudioSettings } from '../config';
 import { ApiError } from '../services/api';
 import { buildCoverPrompt, buildPageImagePrompt, buildSheetPrompt, generateIllustration } from '../services/gemini';
 import { findSimilarImage, getImage, getNetworkAdaptation, reencode, saveImage, toReference, type ImageKind } from '../services/media';
@@ -15,7 +16,24 @@ const FATAL = new Set(['AUTH', 'NOKEY', 'BILLING', 'NOMODEL', 'OFFLINE', 'FREE_A
 const RESUME_AFTER_MS = 15_000;
 const MAX_AUTO_RESUMES = 5;
 
-// خط إنتاج الصور: ورقة الشخصيات ← الغلاف ← الصفحات (الأقرب للقارئ أولاً، صورتان بالتوازي)
+export const SHEET_FAILED_WARNING_AR =
+  'تنبيه: تعذّر رسم ورقة الشخصيات المرجعية بعد محاولتين؛ لذلك فإن ثبات ملامح الشخصيات بين صفحات هذه القصة غير مضمون.';
+
+// دالة نقية لبوابة المعاينة (ب4) قابلة للاختبار في #test
+export const shouldPauseAtPreviewGate = (
+  enabled: boolean,
+  approved: boolean,
+  coverDone: boolean,
+  page1Done: boolean,
+  totalPages: number,
+  remainingUndrawnPages: number
+): boolean => {
+  if (!enabled || approved) return false;
+  if (totalPages <= 1 || remainingUndrawnPages <= 0) return false;
+  return coverDone && page1Done;
+};
+
+// خط إنتاج الصور: ورقة الشخصيات ← الغلاف والصفحة 1 (مع بوابة معاينة اختيارية) ← باقي الصفحات
 export function useIllustrator(story: StoryData, update: Updater, focusIndex: number) {
   const storyRef = useRef(story);
   storyRef.current = story;
@@ -29,7 +47,13 @@ export function useIllustrator(story: StoryData, update: Updater, focusIndex: nu
   const resumes = useRef(0);
   const retryAllRef = useRef<() => void>(() => undefined);
   const rerunRef = useRef(false);
+  const previewApprovedRef = useRef<boolean>(
+    story.pages.filter((p) => p.page > 1 && Boolean(p.generatedImage)).length > 0
+  );
+
   const [error, setError] = useState<string | null>(null);
+  const [sheetWarning, setSheetWarning] = useState<string | null>(null);
+  const [awaitingPreviewApproval, setAwaitingPreviewApproval] = useState(false);
   const [running, setRunning] = useState(false);
 
   // مفتاح الإعادة: نفس الأسلوب + نفس الشخصيات + نفس صورة البطل
@@ -48,40 +72,50 @@ export function useIllustrator(story: StoryData, update: Updater, focusIndex: nu
       { prompt, aspectRatio: kind === 'sheet' ? '16:9' : s.story_info.aspect_ratio || '4:3', references: refs, kind, artStyle: s.story_info.art_style },
       signal
     );
-    // تكيّف ذكي مع سرعة الإنترنت لتوفير الذاكرة وسرعة العرض الفورية
     const net = getNetworkAdaptation();
     return saveImage(await reencode(raw, net.maxImageSide, 'image/webp', net.compressionQuality), kind, cacheStyle(s), matchText);
   };
 
+  // أ5: محاولة أولى لورقة الشخصيات، فإن فشلت نعيد مرة واحدة بوصف مبسّط، فإن فشلتا نظهر تنبيهاً عربياً واضحاً
   const references = async (signal: AbortSignal): Promise<Ref[]> => {
     if (refsCache.current) return refsCache.current;
     const s = storyRef.current;
     const photo = await getImage(s.heroPhotoId);
     let sheet = await getImage(s.characterSheetId);
 
-    // إذا وُجدت صورة شخصية للطفل ولم يتم توليد ورقة الشخصيات الكرتونية بعد:
-    // نقوم بتوليد ورقة كرتونية متطابقة أولاً لتكون المرجع الثابت لجميع صفحات الكتاب
     if (!sheet) {
-      try {
-        const photoRef = photo ? [await toReference(photo.blob)] : [];
-        const made = await create(
-          s,
-          'sheet',
-          buildSheetPrompt(s, Boolean(photo)),
-          s.characters.map((c) => c.description).join(' '),
-          photoRef,
-          true,
-          signal
-        );
-        update((prev) => ({ ...prev, characterSheetId: made.id }));
-        sheet = await getImage(made.id);
-      } catch (err) {
-        if (err instanceof ApiError && FATAL.has(err.code)) throw err;
+      const photoRef = photo ? [await toReference(photo.blob)] : [];
+      const matchText = s.characters.map((c) => c.description).join(' ');
+      for (let attempt = 0; attempt < 2; attempt++) {
+        if (signal.aborted) break;
+        const simplified = attempt === 1;
+        try {
+          const made = await create(
+            s,
+            'sheet',
+            buildSheetPrompt(s, Boolean(photo), simplified),
+            matchText,
+            photoRef,
+            !simplified,
+            signal
+          );
+          update((prev) => ({ ...prev, characterSheetId: made.id }));
+          sheet = await getImage(made.id);
+          if (sheet) {
+            setSheetWarning(null);
+            break;
+          }
+        } catch (err) {
+          if ((err as Error)?.name === 'AbortError') throw err;
+          if (err instanceof ApiError && FATAL.has(err.code)) throw err;
+          if (attempt === 1) {
+            setSheetWarning(SHEET_FAILED_WARNING_AR);
+          }
+        }
       }
     }
 
     const refs: Ref[] = [];
-    // ورقة الشخصيات الكرتونية هي المرجع الأساسي لتفادي حظر الوجوه الحقيقية من الموديل
     if (sheet) refs.push(await toReference(sheet.blob));
     else if (photo) refs.push(await toReference(photo.blob));
 
@@ -93,14 +127,22 @@ export function useIllustrator(story: StoryData, update: Updater, focusIndex: nu
     update((s) => ({ ...s, pages: s.pages.map((p) => (p.page === pageNo ? { ...p, ...patch } : p)) }));
 
   const paintPage = useCallback(
-    async (pageNo: number, force = false, signal: AbortSignal = new AbortController().signal, promptOverride?: string) => {
+    async (pageNo: number, force = false, signal: AbortSignal = new AbortController().signal, promptOverride?: string, correctionNote?: string) => {
       if (inFlight.current.has(pageNo)) return;
       const found = storyRef.current.pages.find((p) => p.page === pageNo);
       if (!found) return;
-      // وصف معدّل من المستخدم: يُحفظ في الصفحة ويُستعمل فوراً دون انتظار إعادة العرض
-      const page = promptOverride ? { ...found, image_prompt: promptOverride } : found;
+      const page: StoryPage = {
+        ...found,
+        ...(promptOverride ? { image_prompt: promptOverride } : {}),
+        ...(correctionNote !== undefined ? { correctionNote } : {}),
+      };
       inFlight.current.add(pageNo);
-      setPage(pageNo, { isGeneratingImage: true, imageError: false, ...(promptOverride ? { image_prompt: promptOverride } : {}) });
+      setPage(pageNo, {
+        isGeneratingImage: true,
+        imageError: false,
+        ...(promptOverride ? { image_prompt: promptOverride } : {}),
+        ...(correctionNote !== undefined ? { correctionNote } : {}),
+      });
       try {
         const refs = await references(signal);
         const img = await create(storyRef.current, 'page', buildPageImagePrompt(storyRef.current, page), page.image_prompt, refs, !force, signal);
@@ -123,10 +165,11 @@ export function useIllustrator(story: StoryData, update: Updater, focusIndex: nu
     update((s) => ({ ...s, coverImage: img.url, coverImageId: img.id }));
   };
 
-  const nextPage = (): number | null => {
+  const nextPage = (onlyFirstPage = false): number | null => {
     const pages = storyRef.current.pages;
     const focus = focusRef.current;
     const pending = pages
+      .filter((p) => (!onlyFirstPage ? true : p.page === 1))
       .map((p, i) => ({ p, d: i >= focus ? i - focus : (focus - i) * 2 }))
       .filter(({ p }) => !p.generatedImage && !p.imageError && !inFlight.current.has(p.page))
       .sort((a, b) => a.d - b.d);
@@ -160,11 +203,48 @@ export function useIllustrator(story: StoryData, update: Updater, focusIndex: nu
     };
     try {
       await references(ctrl.signal);
+
+      const settings = getStudioSettings();
+      const gateEnabled = settings.previewFirstGate;
+      const otherPagesAlreadyDrawn = storyRef.current.pages.some((p) => p.page > 1 && Boolean(p.generatedImage));
+      if (otherPagesAlreadyDrawn) {
+        previewApprovedRef.current = true;
+      }
+
+      // ب4: نرسم الغلاف والصفحة 1 أولاً
+      if (!ctrl.signal.aborted && !storyRef.current.coverImage) {
+        await paintCover(ctrl.signal).catch(fatal);
+      }
+      const p1 = storyRef.current.pages.find((p) => p.page === 1);
+      if (!ctrl.signal.aborted && p1 && !p1.generatedImage && !p1.imageError) {
+        await paintPage(1, false, ctrl.signal).catch(fatal);
+      }
+
+      const coverDone = Boolean(storyRef.current.coverImage);
+      const page1Done = Boolean(storyRef.current.pages.find((p) => p.page === 1)?.generatedImage);
+      const remainingUndrawn = storyRef.current.pages.filter((p) => p.page > 1 && !p.generatedImage).length;
+
+      if (
+        !ctrl.signal.aborted &&
+        shouldPauseAtPreviewGate(
+          gateEnabled,
+          previewApprovedRef.current,
+          coverDone,
+          page1Done,
+          storyRef.current.pages.length,
+          remainingUndrawn
+        )
+      ) {
+        setAwaitingPreviewApproval(true);
+        return;
+      }
+
+      setAwaitingPreviewApproval(false);
+
       const worker = async () => {
-        for (let next = nextPage(); next !== null && !ctrl.signal.aborted; next = nextPage()) {
+        for (let next = nextPage(false); next !== null && !ctrl.signal.aborted; next = nextPage(false)) {
           try {
             await paintPage(next, false, ctrl.signal);
-            // مهلة بسيطة بين كل صفحة لتفادي كوتا الدقيقة للنماذج (Rate Limit per minute)
             if (!ctrl.signal.aborted) await new Promise((r) => setTimeout(r, 1800));
           } catch (err) {
             if (fatal(err)) return;
@@ -172,18 +252,13 @@ export function useIllustrator(story: StoryData, update: Updater, focusIndex: nu
         }
       };
       await Promise.all(Array.from({ length: CONCURRENCY }, worker));
-      if (!ctrl.signal.aborted && !storyRef.current.coverImage) {
-        if (!ctrl.signal.aborted) await new Promise((r) => setTimeout(r, 1200));
-        await paintCover(ctrl.signal).catch(fatal);
-      }
     } catch (err) {
       fatal(err);
     } finally {
       if (ctrlRef.current === ctrl) {
         runningRef.current = false;
         setRunning(false);
-        // وصلت صفحات جديدة أثناء الرسم: دورة أخرى تلتقطها
-        if (rerunRef.current && !ctrl.signal.aborted) {
+        if (rerunRef.current && !ctrl.signal.aborted && !awaitingPreviewApproval) {
           rerunRef.current = false;
           setTimeout(run, 0);
         }
@@ -195,6 +270,9 @@ export function useIllustrator(story: StoryData, update: Updater, focusIndex: nu
   useEffect(() => {
     refsCache.current = null;
     resumes.current = 0;
+    setSheetWarning(null);
+    previewApprovedRef.current = story.pages.some((p) => p.page > 1 && Boolean(p.generatedImage));
+    setAwaitingPreviewApproval(false);
     run();
     return () => {
       ctrlRef.current?.abort();
@@ -210,18 +288,20 @@ export function useIllustrator(story: StoryData, update: Updater, focusIndex: nu
   useEffect(() => {
     if (pageTotal > seenTotal.current) {
       seenTotal.current = pageTotal;
-      if (runningRef.current) rerunRef.current = true;
-      else setTimeout(run, 0);
+      if (!awaitingPreviewApproval) {
+        if (runningRef.current) rerunRef.current = true;
+        else setTimeout(run, 0);
+      }
     }
     seenTotal.current = pageTotal;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pageTotal]);
+  }, [pageTotal, awaitingPreviewApproval]);
 
   const retryPage = useCallback(
-    async (pageNo: number, force = false, prompt?: string) => {
+    async (pageNo: number, force = false, prompt?: string, correctionNote?: string) => {
       setError(null);
       try {
-        await paintPage(pageNo, force, undefined, prompt);
+        await paintPage(pageNo, force, undefined, prompt, correctionNote);
       } catch (err) {
         setError((err as Error).message);
       }
@@ -246,5 +326,50 @@ export function useIllustrator(story: StoryData, update: Updater, focusIndex: nu
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  return { error, running, retryPage, retryAll, repaintCover };
+  // ب4: زر «أكمل» بعد معاينة الغلاف والصفحة 1
+  const approvePreviewContinue = useCallback(() => {
+    previewApprovedRef.current = true;
+    setAwaitingPreviewApproval(false);
+    setTimeout(run, 0);
+  }, [run]);
+
+  // ب4: زر «غيّر الأسلوب أو الشخصيات» لإعادة معاينة الغلاف والصفحة 1 بأسلوب أو شخصيات معدّلة
+  const resetPreviewAndRepaint = useCallback(
+    (newStyle?: ArtStyle, updatedCharacters?: Character[]) => {
+      ctrlRef.current?.abort();
+      runningRef.current = false;
+      refsCache.current = null;
+      previewApprovedRef.current = false;
+      setAwaitingPreviewApproval(false);
+      setSheetWarning(null);
+      update((s) => ({
+        ...s,
+        characterSheetId: `seed-${Date.now()}-${Math.floor(Math.random() * 89999 + 10000)}`,
+        coverImage: undefined,
+        coverImageId: undefined,
+        characters: updatedCharacters ?? s.characters,
+        story_info: {
+          ...s.story_info,
+          art_style: newStyle ?? s.story_info.art_style,
+        },
+        pages: s.pages.map((p) =>
+          p.page === 1 ? { ...p, generatedImage: undefined, imageId: undefined, imageError: false, isGeneratingImage: false } : p
+        ),
+      }));
+      setTimeout(run, 80);
+    },
+    [run, update]
+  );
+
+  return {
+    error,
+    sheetWarning,
+    awaitingPreviewApproval,
+    approvePreviewContinue,
+    resetPreviewAndRepaint,
+    running,
+    retryPage,
+    retryAll,
+    repaintCover,
+  };
 }

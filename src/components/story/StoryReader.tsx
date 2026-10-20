@@ -26,13 +26,20 @@ import {
   Package,
   Film,
   BookPlus,
+  AlertTriangle,
+  BookmarkPlus,
+  Check,
+  MessageSquareWarning,
 } from 'lucide-react';
-import { Language, NarratorVoice, PageImage, PDFPreset, StoryData, StoryPage } from '../../types';
+import { ArtStyle, Character, CoverFontStyle, CoverTextEffect, Language, NarratorVoice, PageImage, PDFPreset, StoryData, StoryPage } from '../../types';
+import { ART_STYLE_OPTIONS, COVER_EFFECT_OPTIONS, COVER_FONT_OPTIONS, getCoverTitleClasses } from '../../constants';
 import { exportImagesAsZip, exportPrintBook, saveStoryAsJSON } from '../../services/export';
 import { exportBundle } from '../../services/storyBundle';
 import { recordGame } from '../../services/progress';
 import { toSrc } from '../../services/media';
 import { VOICE_OPTIONS } from '../../services/narration';
+import { suggestAlternativeTitles } from '../../services/gemini';
+import { saveAlbumCharacter } from '../../services/db';
 import { useIllustrator } from '../../hooks/useIllustrator';
 import { useNarration } from '../../hooks/useNarration';
 import { useContinueStory } from '../../hooks/useContinueStory';
@@ -84,6 +91,22 @@ export default function StoryReader({ storyData, language, printableContainerId 
   const [showClassicFlipbook, setShowClassicFlipbook] = useState(false);
   const [fullEditMode, setFullEditMode] = useState(false);
   const [showVoiceCloner, setShowVoiceCloner] = useState(false);
+
+  // ب4: تحرير الأسلوب أو الشخصيات عند بوابة المعاينة
+  const [showPreviewChangePanel, setShowPreviewChangePanel] = useState(false);
+  const [previewNewStyle, setPreviewNewStyle] = useState<ArtStyle>(storyData.story_info.art_style as ArtStyle);
+  const [previewChars, setPreviewChars] = useState<Character[]>(storyData.characters);
+
+  // ب5: زر «الصورة لا تطابق» وتصحيح المشهد
+  const [showMismatchInput, setShowMismatchInput] = useState(false);
+  const [mismatchText, setMismatchText] = useState('');
+
+  // ب6: اقتراح 3 عناوين بديلة
+  const [suggestedTitles, setSuggestedTitles] = useState<string[]>([]);
+  const [suggestingTitles, setSuggestingTitles] = useState(false);
+
+  // ب7: حفظ الشخصيات في «ألبومي»
+  const [savedAlbumNames, setSavedAlbumNames] = useState<Record<string, boolean>>({});
 
   const illustrator = useIllustrator(storyData, onStoryChange, pageIndex);
   const goTo = useCallback((i: number) => setPageIndex(i), []);
@@ -226,21 +249,61 @@ export default function StoryReader({ storyData, language, printableContainerId 
         <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/25 to-transparent" />
         <div className="absolute inset-x-0 bottom-0 flex flex-col gap-2 p-4" dir={ar ? 'rtl' : 'ltr'}>
           <div className="flex items-end justify-between gap-3">
-            <div className="min-w-0">
-              {/* عنوان الغلاف بالخط المختار */}
-              <h1
-                className={
-                  (storyData.coverFontStyle || 'kufi') === 'kufi'
-                    ? 'font-cover-kufi text-xl sm:text-3xl text-amber-200 drop-shadow-[0_2px_14px_rgba(255,200,50,0.5)]'
-                    : storyData.coverFontStyle === 'diwani'
-                      ? 'font-cover-diwani text-2xl sm:text-3xl text-emerald-200 drop-shadow-[0_2px_14px_rgba(50,255,180,0.5)]'
-                      : storyData.coverFontStyle === 'display3d'
-                        ? 'font-cover-3d text-xl sm:text-3xl text-amber-300'
-                        : 'font-cover-naskh text-xl sm:text-3xl text-white drop-shadow-[0_2px_8px_rgba(0,0,0,0.85)]'
-                }
-              >
-                {storyData.story_info.title}
-              </h1>
+            <div className="min-w-0 flex-1">
+              {/* ب2 + ب6: عنوان الغلاف بالخط والتأثير المختارين + زر «اقترح عناوين» */}
+              <div className="flex flex-wrap items-center gap-2">
+                <h1
+                  className={`text-xl sm:text-3xl leading-snug ${getCoverTitleClasses(
+                    storyData.coverFontStyle ?? storyData.story_info.coverFontStyle ?? 'kufi',
+                    storyData.coverTextEffect ?? storyData.story_info.coverTextEffect ?? 'gold'
+                  )}`}
+                >
+                  {storyData.story_info.title}
+                </h1>
+                <button
+                  type="button"
+                  disabled={suggestingTitles}
+                  onClick={async () => {
+                    setSuggestingTitles(true);
+                    setActionError(null);
+                    try {
+                      const titles = await suggestAlternativeTitles(storyData);
+                      setSuggestedTitles(titles);
+                    } catch (err) {
+                      setActionError((err as Error).message);
+                    } finally {
+                      setSuggestingTitles(false);
+                    }
+                  }}
+                  className="inline-flex min-h-8 items-center gap-1 rounded-full border border-lantern/50 bg-black/55 px-3 py-1 text-[11px] font-bold text-amber-200 backdrop-blur-xs transition hover:bg-lantern hover:text-ink active:scale-95 disabled:opacity-50"
+                >
+                  {suggestingTitles ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
+                  <span>{ar ? 'اقترح عناوين' : 'Suggest Titles'}</span>
+                </button>
+              </div>
+
+              {suggestedTitles.length > 0 && (
+                <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                  {suggestedTitles.map((t) => (
+                    <button
+                      key={t}
+                      type="button"
+                      onClick={() => {
+                        onStoryChange((s) => ({
+                          ...s,
+                          story_info: { ...s.story_info, title: t },
+                        }));
+                        setSuggestedTitles([]);
+                        illustrator.repaintCover();
+                      }}
+                      className="rounded-full border border-lantern/60 bg-lantern/25 px-3 py-1 text-xs font-bold text-white backdrop-blur-xs transition hover:bg-lantern hover:text-ink"
+                    >
+                      {t}
+                    </button>
+                  ))}
+                </div>
+              )}
+
               <p className="mt-1 text-xs font-medium text-white/75">
                 {illustrator.running ? (ar ? `نرسم الصور... ${illustratedCount}/${storyData.pages.length}` : `Painting... ${illustratedCount}/${storyData.pages.length}`) : `${storyData.story_info.art_style}`}
               </p>
@@ -257,34 +320,170 @@ export default function StoryReader({ storyData, language, printableContainerId 
             )}
           </div>
 
-          {/* مبدّل أنماط خط الغلاف الملكية الأربعة */}
-          <div className="flex flex-wrap items-center gap-1.5 pt-1 border-t border-white/10">
-            <span className="text-[10px] font-medium text-white/60 me-1">{ar ? 'خط العنوان:' : 'Cover Font:'}</span>
-            {(
-              [
-                { id: 'kufi', cls: 'font-cover-kufi', label: { ar: 'كوفي هندسي', en: 'Geometric Kufi' } },
-                { id: 'diwani', cls: 'font-cover-diwani', label: { ar: 'ديواني ملكي', en: 'Royal Diwani' } },
-                { id: 'naskh', cls: 'font-cover-naskh', label: { ar: 'نسخ أميري', en: 'Story Naskh' } },
-                { id: 'display3d', cls: 'font-cover-3d', label: { ar: 'ثلاثي أبعاد 3D', en: 'Embossed 3D' } },
-              ] as const
-            ).map((font) => {
-              const active = (storyData.coverFontStyle || 'kufi') === font.id;
-              return (
-                <button
-                  key={font.id}
-                  type="button"
-                  onClick={() => onStoryChange((s) => ({ ...s, coverFontStyle: font.id }))}
-                  className={`rounded-full px-3 py-1 text-[11px] font-bold transition active:scale-95 ${font.cls} ${
-                    active ? 'bg-lantern text-ink shadow-xs' : 'bg-black/45 text-white/85 hover:text-white hover:bg-black/65'
-                  }`}
-                >
-                  {ar ? font.label.ar : font.label.en}
-                </button>
-              );
-            })}
+          {/* ب2: مبدّل أنماط خط الغلاف الـ 12 + تأثيرات النص الـ 4 */}
+          <div className="flex flex-col gap-1.5 pt-1.5 border-t border-white/10">
+            <div className="flex items-center gap-1.5 overflow-x-auto pb-1 custom-scrollbar">
+              <span className="text-[10px] font-medium text-white/60 shrink-0 me-1">{ar ? 'خط العنوان (12):' : 'Font (12):'}</span>
+              {COVER_FONT_OPTIONS.map((font) => {
+                const currentFont: CoverFontStyle = storyData.coverFontStyle ?? storyData.story_info.coverFontStyle ?? 'kufi';
+                const active = currentFont === font.value;
+                return (
+                  <button
+                    key={font.value}
+                    type="button"
+                    onClick={() =>
+                      onStoryChange((s) => ({
+                        ...s,
+                        coverFontStyle: font.value,
+                        story_info: { ...s.story_info, coverFontStyle: font.value },
+                      }))
+                    }
+                    className={`shrink-0 rounded-full px-3 py-1 text-[11px] font-bold transition active:scale-95 ${font.className} ${
+                      active ? 'bg-lantern text-ink shadow-xs' : 'bg-black/45 text-white/85 hover:text-white hover:bg-black/65'
+                    }`}
+                  >
+                    {ar ? font.label.ar : font.label.en}
+                  </button>
+                );
+              })}
+            </div>
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="text-[10px] font-medium text-white/60 me-1">{ar ? 'التأثير:' : 'Effect:'}</span>
+              {COVER_EFFECT_OPTIONS.map((ef) => {
+                const currentEf: CoverTextEffect = storyData.coverTextEffect ?? storyData.story_info.coverTextEffect ?? 'gold';
+                const active = currentEf === ef.value;
+                return (
+                  <button
+                    key={ef.value}
+                    type="button"
+                    onClick={() =>
+                      onStoryChange((s) => ({
+                        ...s,
+                        coverTextEffect: ef.value,
+                        story_info: { ...s.story_info, coverTextEffect: ef.value },
+                      }))
+                    }
+                    className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold transition ${
+                      active ? 'bg-amber-300 text-ink' : 'bg-black/45 text-white/80 hover:bg-black/65'
+                    }`}
+                  >
+                    {ar ? ef.label.ar : ef.label.en}
+                  </button>
+                );
+              })}
+            </div>
           </div>
         </div>
       </div>
+
+      {/* أ5: تنبيه عربي صريح عند تعذّر توليد ورقة الشخصيات بعد محاولتين */}
+      {illustrator.sheetWarning && (
+        <div
+          role="alert"
+          dir="rtl"
+          className="flex items-start gap-3 rounded-2xl border border-amber-500/45 bg-amber-500/15 px-4 py-3 text-xs sm:text-sm font-bold text-ink dark:text-amber-200"
+        >
+          <AlertTriangle size={18} className="mt-0.5 shrink-0 text-lantern" aria-hidden />
+          <span>{illustrator.sheetWarning}</span>
+        </div>
+      )}
+
+      {/* ب4: بوابة معاينة الغلاف والصفحة الأولى قبل إكمال رسم باقي الصفحات لتوفير الحصة */}
+      {illustrator.awaitingPreviewApproval && (
+        <div
+          dir={ar ? 'rtl' : 'ltr'}
+          className="space-y-3 rounded-3xl border-2 border-lantern bg-gradient-to-br from-lantern/20 via-amber-500/10 to-transparent p-4 sm:p-5 shadow-md"
+        >
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="space-y-1">
+              <h3 className="font-display text-sm sm:text-base font-extrabold text-ink dark:text-moonlight">
+                {ar
+                  ? 'اكتملت معاينة الغلاف والصفحة الأولى — هل نكمل رسم باقي صفحات القصة؟'
+                  : 'Cover & Page 1 preview ready — continue painting the remaining pages?'}
+              </h3>
+              <p className="text-xs text-ink/70 dark:text-moonlight/70">
+                {ar
+                  ? 'توقفنا هنا مؤقتاً لتوفير حصتك والتأكد من رضاك عن أسلوب الرسم وملامح الشخصيات.'
+                  : 'Paused after page 1 to save your image quota until you confirm the style and characters.'}
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={illustrator.approvePreviewContinue}
+                className="inline-flex min-h-11 items-center gap-2 rounded-2xl bg-lantern px-5 text-xs sm:text-sm font-extrabold text-ink shadow-sm transition hover:brightness-105 active:scale-95"
+              >
+                <Play size={15} />
+                <span>{ar ? 'أكمل' : 'Continue'}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setPreviewNewStyle(storyData.story_info.art_style as ArtStyle);
+                  setPreviewChars(storyData.characters);
+                  setShowPreviewChangePanel((v) => !v);
+                }}
+                className="inline-flex min-h-11 items-center gap-2 rounded-2xl border border-dream/40 bg-white/80 px-4 text-xs sm:text-sm font-bold text-ink transition hover:border-lantern active:scale-95 dark:bg-white/10 dark:text-moonlight"
+              >
+                <RefreshCw size={15} />
+                <span>{ar ? 'غيّر الأسلوب أو الشخصيات' : 'Change Style or Characters'}</span>
+              </button>
+            </div>
+          </div>
+
+          {showPreviewChangePanel && (
+            <div className="space-y-3 rounded-2xl border border-dream/30 bg-white/85 p-4 dark:border-white/15 dark:bg-black/40">
+              <div>
+                <label className="mb-1 block text-xs font-bold text-ink dark:text-moonlight">
+                  {ar ? 'اختر أسلوب الرسم الجديد:' : 'Select new art style:'}
+                </label>
+                <select
+                  value={previewNewStyle}
+                  onChange={(e) => setPreviewNewStyle(e.target.value as ArtStyle)}
+                  className="w-full rounded-xl border border-dream/30 bg-white px-3 py-2 text-xs font-bold text-ink dark:border-white/20 dark:bg-dusk dark:text-moonlight"
+                >
+                  {ART_STYLE_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {ar ? `${opt.labelAr} (${opt.value})` : opt.value}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="space-y-2">
+                <span className="block text-xs font-bold text-ink dark:text-moonlight">
+                  {ar ? 'تعديل وصف الشخصيات (باللغتين أو الإنجليزية):' : 'Adjust character descriptions:'}
+                </span>
+                {previewChars.map((ch, idx) => (
+                  <div key={ch.name} className="space-y-1">
+                    <span className="text-[11px] font-bold text-lantern">{ch.name}</span>
+                    <input
+                      type="text"
+                      value={ch.description}
+                      onChange={(e) =>
+                        setPreviewChars((prev) =>
+                          prev.map((item, i) => (i === idx ? { ...item, description: e.target.value } : item))
+                        )
+                      }
+                      className="w-full rounded-xl border border-dream/30 bg-white px-3 py-1.5 text-xs text-ink dark:border-white/20 dark:bg-dusk dark:text-moonlight"
+                    />
+                  </div>
+                ))}
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowPreviewChangePanel(false);
+                  illustrator.resetPreviewAndRepaint(previewNewStyle, previewChars);
+                }}
+                className="inline-flex min-h-10 items-center gap-2 rounded-xl bg-lantern px-4 text-xs font-extrabold text-ink shadow-xs"
+              >
+                <RefreshCw size={14} />
+                <span>{ar ? 'أعد رسم الغلاف والصفحة 1 بالإعدادات الجديدة' : 'Repaint Cover & Page 1 with New Settings'}</span>
+              </button>
+            </div>
+          )}
+        </div>
+      )}
 
       {illustrator.error && (
         <div
@@ -482,6 +681,18 @@ export default function StoryReader({ storyData, language, printableContainerId 
                   </button>
                   <button
                     type="button"
+                    onClick={() => {
+                      setMismatchText(page?.correctionNote ?? '');
+                      setShowMismatchInput((v) => !v);
+                    }}
+                    className="flex min-h-11 items-center gap-1.5 rounded-full bg-black/65 px-3.5 text-xs font-bold text-amber-200 shadow-sm backdrop-blur-xs transition hover:bg-black/85 active:scale-95"
+                    title={ar ? 'الصورة لا تطابق المشهد؟ صحّحها بسطر واحد' : 'Image does not match? Add a correction'}
+                  >
+                    <MessageSquareWarning size={14} />
+                    <span>{ar ? 'الصورة لا تطابق' : 'Image Mismatch'}</span>
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => setViewMode('gallery')}
                     className="flex min-h-11 items-center gap-1.5 rounded-full bg-black/55 px-3.5 text-xs font-semibold text-white shadow-sm backdrop-blur-xs transition hover:bg-black/75 active:scale-95"
                     title={ar ? 'عرض في المعرض الكامل' : 'Open in Gallery'}
@@ -516,6 +727,32 @@ export default function StoryReader({ storyData, language, printableContainerId 
             )}
 
             <div className="p-5" dir={ar ? 'rtl' : 'ltr'}>
+              {/* ب5: حقل تصحيح الصورة عند ضغط «الصورة لا تطابق» */}
+              {showMismatchInput && page && (
+                <div className="mb-4 flex flex-wrap items-center gap-2 rounded-2xl border border-lantern/45 bg-lantern/10 p-3">
+                  <input
+                    type="text"
+                    value={mismatchText}
+                    onChange={(e) => setMismatchText(e.target.value.slice(0, 160))}
+                    placeholder={ar ? 'ما الخطأ؟ (مثلاً: القطة يجب أن تكون بيضاء)' : 'What is wrong? (e.g., The cat should be white)'}
+                    className="min-h-10 flex-1 rounded-xl border border-dream/35 bg-white px-3 text-xs text-ink outline-none focus:border-lantern dark:border-white/15 dark:bg-black/40 dark:text-moonlight"
+                  />
+                  <button
+                    type="button"
+                    disabled={!mismatchText.trim() || page.isGeneratingImage}
+                    onClick={() => {
+                      const note = mismatchText.trim();
+                      setShowMismatchInput(false);
+                      illustrator.retryPage(page.page, true, undefined, note);
+                    }}
+                    className="inline-flex min-h-10 items-center gap-1.5 rounded-xl bg-lantern px-4 text-xs font-extrabold text-ink shadow-xs transition active:scale-95 disabled:opacity-50"
+                  >
+                    <RefreshCw size={13} />
+                    <span>{ar ? 'أعد الرسم بالتصحيح' : 'Repaint with Correction'}</span>
+                  </button>
+                </div>
+              )}
+
               {/* شريط الراوي */}
               <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-dream/20 bg-dream/5 px-3 py-2 dark:bg-white/5">
                 <div className="flex flex-wrap items-center gap-2">
@@ -834,17 +1071,42 @@ export default function StoryReader({ storyData, language, printableContainerId 
             <span>{busyAction === 'print' ? exportProgress || (ar ? 'جارٍ التجهيز...' : 'Preparing...') : ar ? 'كتاب للمطبعة A5 (هوامش قص 3 مم)' : 'Print-ready book A5 (3 mm bleed)'}</span>
           </button>
 
-          <details className="rounded-2xl border border-dream/20 bg-white/50 p-4 dark:bg-white/5">
-            <summary className="flex cursor-pointer items-center gap-2 font-display text-sm font-semibold text-ink dark:text-moonlight">
-              <Users size={16} aria-hidden />
-              {ar ? 'الشخصيات' : 'Characters'}
+          <details className="rounded-2xl border border-dream/20 bg-white/50 p-4 dark:bg-white/5" dir={ar ? 'rtl' : 'ltr'}>
+            <summary className="flex cursor-pointer items-center justify-between gap-2 font-display text-sm font-semibold text-ink dark:text-moonlight">
+              <span className="flex items-center gap-2">
+                <Users size={16} aria-hidden />
+                {ar ? 'الشخصيات (مع إمكانية الحفظ في ألبومي)' : 'Characters (Save to My Album)'}
+              </span>
             </summary>
-            <ul className="mt-3 space-y-2">
-              {storyData.characters.map((c) => (
-                <li key={c.name} className="text-sm text-ink/80 dark:text-moonlight/80">
-                  <span className="font-semibold text-ink dark:text-moonlight">{c.name}</span> — {c.personality || c.description}
-                </li>
-              ))}
+            <ul className="mt-3 space-y-2.5">
+              {storyData.characters.map((c) => {
+                const isSaved = Boolean(savedAlbumNames[c.name]);
+                return (
+                  <li key={c.name} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-dream/15 bg-white/60 p-2.5 text-sm text-ink/80 dark:bg-white/5 dark:text-moonlight/80">
+                    <div className="min-w-0 flex-1">
+                      <span className="font-semibold text-ink dark:text-moonlight">{c.name}</span> — {c.personality || c.description}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        await saveAlbumCharacter({
+                          name: c.name,
+                          description: c.description,
+                          personality: c.personality,
+                          age: c.age,
+                          gender: c.gender,
+                          referenceImageId: storyData.characterSheetId || storyData.coverImageId || storyData.pages[0]?.imageId,
+                        });
+                        setSavedAlbumNames((prev) => ({ ...prev, [c.name]: true }));
+                      }}
+                      className="inline-flex min-h-8 shrink-0 items-center gap-1 rounded-full border border-lantern/45 bg-lantern/15 px-3 py-1 text-xs font-bold text-ink transition hover:bg-lantern/25 dark:text-amber-200"
+                    >
+                      {isSaved ? <Check size={13} className="text-emerald-500" /> : <BookmarkPlus size={13} className="text-lantern" />}
+                      <span>{isSaved ? (ar ? 'محفوظة في ألبومي' : 'Saved in Album') : ar ? 'احفظ في ألبومي' : 'Save to Album'}</span>
+                    </button>
+                  </li>
+                );
+              })}
             </ul>
           </details>
 

@@ -3,16 +3,49 @@ import { isValidApiKeyFormat, isValidFreeCreds, keyShape } from '../services/api
 import { classifyFailure, codeFromTrail, rankError } from '../services/imageEngine';
 import { codeFromStatus } from '../services/api';
 import { activeWordIndex, wordTimings } from '../services/narration';
-import { dbDelete, dbGet, dbPut, hashText } from '../services/db';
+import {
+  dbDelete,
+  dbGet,
+  dbPut,
+  deleteAlbumCharacter,
+  deleteCustomPreset,
+  hashText,
+  listAlbumCharacters,
+  listCustomPresets,
+  saveAlbumCharacter,
+  saveCustomPreset,
+} from '../services/db';
 import { safeFileName } from '../services/export';
 import { base64ToBlob, blobToBase64, cropToAspect } from '../services/media';
-import { BRAND, SOCIAL_LINKS } from '../config';
+import { APP_VERSION, BRAND, BRAND_PRESETS, getStudioSettings, saveStudioSettings, SOCIAL_LINKS } from '../config';
+import { CURRENT_VERSION } from '../version';
+import { compareVersions } from '../services/versionCheck';
 import { VIDEO_FORMATS, VIDEO_QUALITIES, videoSize } from '../services/videoFormats';
-import { applyBatch, isIncomplete } from '../services/gemini';
+import {
+  applyBatch,
+  buildCoverPrompt,
+  buildPageImagePrompt,
+  buildSheetPrompt,
+  countPromptWords,
+  isFruitStory,
+  isIncomplete,
+} from '../services/gemini';
 import { allAnimationPrompts, animationPackText } from '../services/animation';
 import { shareMessage, storyPlainText } from '../services/storyBundle';
 import { LEARN_CARDS } from '../data/learnCards';
+import { BOOK_TEMPLATES } from '../data/bookTemplates';
 import { DAILY_POOL, dailyGameId, starsFor } from '../services/progress';
+import {
+  ART_STYLE_OPTIONS,
+  COVER_EFFECT_OPTIONS,
+  COVER_FONT_OPTIONS,
+  EXTRA_STORY_TYPES,
+  getCoverTitleClasses,
+  PRIMARY_STORY_TYPES,
+  STORY_TYPE_SPECS,
+} from '../constants';
+import { shouldPauseAtPreviewGate } from '../hooks/useIllustrator';
+import { applyHollowWatermarkToBlob, computeRegionLuminance, drawHollowWatermarkOnCanvas } from '../services/watermark';
 import type { StoryData, StoryPage } from '../types';
 
 interface Result {
@@ -25,10 +58,23 @@ interface Result {
 const FAKE_AQ = `AQ.${'Zz9'.repeat(16)}`;
 const FAKE_AIZA = `AIza${'Qq7'.repeat(12)}`;
 
-const page = (n: number, extra: Partial<StoryPage> = {}): StoryPage => ({ page: n, text: `Page ${n} runs and jumps.`, image_prompt: `scene ${n}`, ...extra });
+const page = (n: number, extra: Partial<StoryPage> = {}): StoryPage => ({
+  page: n,
+  text: `Page ${n} runs and jumps with Sami.`,
+  image_prompt: `Sami running happily across green hills in scene ${n}`,
+  ...extra,
+});
 const fixture = (pages: number, planned?: number): StoryData => ({
-  story_info: { title: 'Test Story', language: 'English', age_group: '4-6', art_style: 'Watercolor', aspect_ratio: '4:3', lessons: [], moral: 'old' },
-  characters: [{ name: 'Sami', description: 'a boy', personality: 'kind', age: '6', gender: 'boy' }],
+  story_info: {
+    title: 'Test Story',
+    language: 'English',
+    age_group: '4-6',
+    art_style: 'Watercolor',
+    aspect_ratio: '4:3',
+    lessons: [],
+    moral: 'old',
+  },
+  characters: [{ name: 'Sami', description: 'a cheerful 6-year-old boy with curly brown hair and blue jacket', personality: 'kind', age: '6', gender: 'boy' }],
   pages: Array.from({ length: pages }, (_, i) => page(i + 1)),
   plannedPages: planned,
 });
@@ -72,7 +118,6 @@ const TESTS: { name: string; run: () => void | Promise<void> }[] = [
         ['BILLING', 'QUOTA', 'AUTH', 'FAILED', true]
       ),
   },
-
   { name: 'شكل المفتاح لا يكشفه', run: () => eq([keyShape(''), keyShape('MY_GEMINI_API_KEY'), keyShape(FAKE_AQ).includes('Zz9')], ['none', 'placeholder', false]) },
   {
     name: 'قص مربع إلى 16:9',
@@ -176,6 +221,232 @@ const TESTS: { name: string; run: () => void | Promise<void> }[] = [
     },
   },
   { name: 'الهوية والروابط موجودة', run: () => eq([Boolean(BRAND.name.ar), Boolean(SOCIAL_LINKS.whatsapp)], [true, true]) },
+
+  // ═══ اختبارات القسم أ والقسم ب (v2.10.0) ═══
+  {
+    name: 'أ7 (1): طول طلب الصورة لأي صفحة من القوالب الـ 12 <= 120 كلمة + الغلاف وورقة الشخصيات',
+    run: () => {
+      eq(BOOK_TEMPLATES.length, 12);
+      for (const tmpl of BOOK_TEMPLATES) {
+        const st: StoryData = {
+          story_info: {
+            title: tmpl.title.ar,
+            language: 'Arabic',
+            dialect: tmpl.dialect,
+            age_group: tmpl.ageGroup,
+            story_type: tmpl.storyType,
+            art_style: tmpl.artStyle,
+            aspect_ratio: tmpl.aspectRatio,
+            lessons: ['الشجاعة', 'التعاون'],
+          },
+          cover_image_prompt: `Heroic composition showing the protagonists in ${tmpl.defaultIdea.en}`,
+          characters: [
+            {
+              name: 'سراج',
+              description: 'A brave 8-year-old boy with warm olive skin, curly dark hair, wearing an embroidered vest and carrying a brass lantern',
+              personality: 'curious and brave',
+              age: '8',
+              gender: 'boy',
+            },
+            {
+              name: 'ياسمين',
+              description: 'A cheerful 7-year-old girl with braided hair, bright brown eyes, wearing a green dress and woven scarf',
+              personality: 'clever',
+              age: '7',
+              gender: 'girl',
+            },
+          ],
+          pages: [
+            {
+              page: 1,
+              text: `${tmpl.defaultIdea.ar} مشى سراج مع ياسمين في المشهد الأول.`,
+              image_prompt: `Wide storybook shot of سراج and ياسمين exploring ${tmpl.defaultIdea.en} under warm golden light`,
+            },
+          ],
+        };
+        const pagePrompt = buildPageImagePrompt(st, st.pages[0]);
+        const coverPrompt = buildCoverPrompt(st);
+        const sheetPrompt = buildSheetPrompt(st, false);
+        const wPage = countPromptWords(pagePrompt);
+        const wCover = countPromptWords(coverPrompt);
+        const wSheet = countPromptWords(sheetPrompt);
+        if (wPage > 120) throw new Error(`template ${tmpl.id} page prompt has ${wPage} words (>120)`);
+        if (wCover > 120) throw new Error(`template ${tmpl.id} cover prompt has ${wCover} words (>120)`);
+        if (wSheet > 120) throw new Error(`template ${tmpl.id} sheet prompt has ${wSheet} words (>120)`);
+      }
+    },
+  },
+  {
+    name: 'أ7 (2): وصف المشهد يظهر في أول 40 حرفاً من الطلب ولا يحوي الحقول المحذوفة',
+    run: () => {
+      const st = fixture(2);
+      st.pages[0].image_prompt = 'Sami climbing the glowing crystal tree at sunset';
+      const prompt = buildPageImagePrompt(st, st.pages[0]);
+      if (!prompt.slice(0, 40).startsWith('Scene: Sami climbing')) {
+        throw new Error(`Scene not in first 40 chars: "${prompt.slice(0, 40)}"`);
+      }
+      if (/GLOBAL SEED|STYLE LOCK|Visual anchor|NEGATIVE/i.test(prompt)) {
+        throw new Error('Forbidden legacy tokens found in prompt');
+      }
+    },
+  },
+  {
+    name: 'أ3 + أ4: فحص الفواكه من الشخصيات/النص وتوحيد الـ 18 أسلوباً بدون قوائم سلبية',
+    run: () => {
+      const st = fixture(1);
+      st.characters[0] = { name: 'رمان', description: 'a ruby pomegranate hero', personality: 'brave', age: '7', gender: 'boy' };
+      eq(isFruitStory(st), true);
+      const p = buildPageImagePrompt(st, st.pages[0]);
+      if (/fruit kingdom/i.test(p)) throw new Error('Forbidden fruit kingdom environment forced');
+      if (!/cute pomegranate character with a face and limbs/i.test(p)) throw new Error('Fruit boost missing from character line');
+      eq(ART_STYLE_OPTIONS.length, 18);
+      for (const s of ART_STYLE_OPTIONS) {
+        if (countPromptWords(s.prompt) > 30) throw new Error(`Style ${s.value} exceeds 30 words`);
+      }
+    },
+  },
+  {
+    name: 'أ8: مصدر واحد لرقم الإصدار (APP_VERSION === CURRENT_VERSION.version) وفحص المقارنة',
+    run: () => {
+      eq(APP_VERSION, CURRENT_VERSION.version);
+      eq(/^\d+\.\d+\.\d+$/.test(APP_VERSION), true);
+      eq([compareVersions('2.11.0', '2.10.0'), compareVersions('2.10.0', '2.10.0'), compareVersions('2.9.1', '2.10.0')], [1, 0, -1]);
+    },
+  },
+  {
+    name: 'ب1: اكتمال جدول الـ 16 نوع قصص (5 أساسية + 11 إضافية) وبنيتها السردية',
+    run: () => {
+      eq([PRIMARY_STORY_TYPES.length, EXTRA_STORY_TYPES.length, Object.keys(STORY_TYPE_SPECS).length], [5, 11, 16]);
+      for (const spec of Object.values(STORY_TYPE_SPECS)) {
+        if (!spec.arc.beginning || !spec.arc.middle || !spec.arc.climax || !spec.arc.ending || !spec.pageRule) {
+          throw new Error(`Incomplete narrative arc for ${spec.value}`);
+        }
+      }
+    },
+  },
+  {
+    name: 'ب2: خطوط الغلاف الـ 12 وتأثيرات النص الـ 4 ومعاينة الفئات',
+    run: () => {
+      eq([COVER_FONT_OPTIONS.length, COVER_EFFECT_OPTIONS.length], [12, 4]);
+      for (const f of COVER_FONT_OPTIONS) {
+        for (const ef of COVER_EFFECT_OPTIONS) {
+          const cls = getCoverTitleClasses(f.value, ef.value);
+          if (!cls.includes(f.className) || !cls.includes(ef.className)) {
+            throw new Error(`Missing class for ${f.value}/${ef.value}`);
+          }
+        }
+      }
+    },
+  },
+  {
+    name: 'ب3: اكتمال الـ 16 هوية في BRAND_PRESETS وحفظ/استرجاع الهويات المخصصة في IndexedDB',
+    run: async () => {
+      eq(BRAND_PRESETS.length, 16);
+      for (const p of BRAND_PRESETS) {
+        if (!p.artStyle || !p.voice || !p.dialect || !p.coverFont || !p.ambientPreset) {
+          throw new Error(`Preset ${p.id} missing required identity fields`);
+        }
+      }
+      const testPresetId = `selftest-preset-${Date.now()}`;
+      await saveCustomPreset({
+        id: testPresetId,
+        label: { ar: 'هوية اختبار', en: 'Test Identity' },
+        desc: { ar: 'وصف', en: 'Desc' },
+        artStyle: 'Watercolor',
+        voice: 'Sulafat',
+        dialect: 'Palestinian',
+        coverFont: 'kufi',
+        ambientPreset: 'forest',
+      });
+      const list = await listCustomPresets();
+      eq(list.some((item) => item.id === testPresetId), true);
+      await deleteCustomPreset(testPresetId);
+      const after = await listCustomPresets();
+      eq(after.some((item) => item.id === testPresetId), false);
+    },
+  },
+  {
+    name: 'ب4: منطق بوابة المعاينة بعد الغلاف والصفحة 1 وإعدادات الاستوديو',
+    run: () => {
+      eq(
+        [
+          shouldPauseAtPreviewGate(true, false, true, true, 6, 5),
+          shouldPauseAtPreviewGate(true, true, true, true, 6, 5),
+          shouldPauseAtPreviewGate(false, false, true, true, 6, 5),
+          shouldPauseAtPreviewGate(true, false, true, true, 1, 0),
+        ],
+        [true, false, false, false]
+      );
+      const orig = getStudioSettings();
+      const updated = saveStudioSettings({ previewFirstGate: !orig.previewFirstGate });
+      eq(updated.previewFirstGate, !orig.previewFirstGate);
+      saveStudioSettings(orig);
+    },
+  },
+  {
+    name: 'ب5: زر «الصورة لا تطابق» يدمج Correction بعد المشهد مباشرة ويبقى <= 120 كلمة',
+    run: () => {
+      const st = fixture(1);
+      st.pages[0].correctionNote = 'The cat on the fence must be pure white';
+      const corrected = buildPageImagePrompt(st, st.pages[0]);
+      if (!corrected.startsWith('Scene: Sami running happily across green hills in scene 1. Correction: The cat on the fence must be pure white.')) {
+        throw new Error(`Unexpected corrected prompt start: ${corrected.slice(0, 120)}`);
+      }
+      if (countPromptWords(corrected) > 120) throw new Error('Corrected prompt exceeded 120 words');
+    },
+  },
+  {
+    name: 'ب6 + ب7: حفظ واسترجاع وحذف شخصية في ألبوم الشخصيات (IndexedDB v3 characters)',
+    run: async () => {
+      const saved = await saveAlbumCharacter({
+        id: `selftest-char-${Date.now()}`,
+        name: 'فارس الرمان',
+        description: 'A brave pomegranate knight with ruby armor',
+        personality: 'شجاع وحكيم',
+        age: '8',
+        gender: 'boy',
+        referenceImageId: 'ref-img-test',
+      });
+      const all = await listAlbumCharacters();
+      const found = all.find((c) => c.id === saved.id);
+      eq([Boolean(found), found?.referenceImageId], [true, 'ref-img-test']);
+      await deleteAlbumCharacter(saved.id);
+      const after = await listAlbumCharacters();
+      eq(after.some((c) => c.id === saved.id), false);
+    },
+  },
+  {
+    name: 'ب8: تطبيق العلامة المائية المفرغة عند التصدير وإنتاج صورة غير فارغة بتباين متكيف',
+    run: async () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = 400;
+      canvas.height = 300;
+      const ctx = canvas.getContext('2d')!;
+      // خلفية داكنة
+      ctx.fillStyle = '#111122';
+      ctx.fillRect(0, 0, 400, 300);
+      const darkData = ctx.getImageData(300, 260, 80, 30);
+      const darkLum = computeRegionLuminance(darkData.data);
+      if (darkLum >= 135) throw new Error(`Expected dark luminance < 135, got ${darkLum}`);
+
+      const srcBlob = await new Promise<Blob>((res) => canvas.toBlob((b) => res(b!), 'image/png'));
+      const watermarkedBlob = await applyHollowWatermarkToBlob(srcBlob, {
+        forceEnable: true,
+        customText: BRAND.name.ar,
+        isArabic: true,
+      });
+      if (watermarkedBlob.size === 0) throw new Error('Watermarked blob is empty');
+      const bmp = await createImageBitmap(watermarkedBlob);
+      eq([bmp.width, bmp.height], [400, 300]);
+
+      // التحقق من الرسم المباشر على Canvas
+      await drawHollowWatermarkOnCanvas(canvas, { forceEnable: true, customText: BRAND.name.en, isArabic: false });
+      const dataUrl = canvas.toDataURL('image/png');
+      if (!dataUrl.startsWith('data:image/png;base64,') || dataUrl.length < 100) {
+        throw new Error('Canvas watermark output invalid');
+      }
+    },
+  },
 ];
 
 // صفحة الاختبار الذاتي: افتح الرابط مع #test

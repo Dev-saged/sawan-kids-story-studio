@@ -1,5 +1,5 @@
 import { useState, useEffect, type FormEvent } from 'react';
-import { BookOpen, Clock, Compass, Crown, Feather, FileText, Film, FolderOpen, Frame, Gem, GraduationCap, Lightbulb, Mic, Moon, Palette, PenTool, Rocket, Smile, Smartphone, Sparkles, Square, Users, Wand2, X } from 'lucide-react';
+import { BookmarkPlus, Check, ChevronDown, ChevronUp, Clock, Compass, Crown, Eye, Feather, FileText, Film, FolderOpen, Frame, Lightbulb, Mic, Palette, PenTool, Rocket, ShieldCheck, Smile, Smartphone, Sparkles, Square, Trash2, Users, Wand2, X } from 'lucide-react';
 import VoiceDictationModal from './VoiceDictationModal';
 import BookTemplateBrowser from './BookTemplateBrowser';
 import LuxurySelect, { type LuxuryOption } from '../common/LuxurySelect';
@@ -10,22 +10,49 @@ import {
   AGE_GROUPS,
   ART_STYLE_OPTIONS,
   ASPECT_RATIO_OPTIONS,
+  COVER_EFFECT_OPTIONS,
+  COVER_FONT_OPTIONS,
   DIALECT_OPTIONS,
+  EXTRA_STORY_TYPES,
   FIRST_BATCH_PAGES,
+  getCoverTitleClasses,
   MAX_IDEA_LENGTH,
   MAX_STORY_PAGES,
   MIN_STORY_PAGES,
+  PRIMARY_STORY_TYPES,
   PROMPT_LIMITS,
   SECONDS_PER_PAGE,
   SMART_TIPS,
   STORY_LENGTHS,
-  STORY_TYPES,
+  STORY_TYPE_SPECS,
   SURPRISE_PROMPTS,
 } from '../../constants';
-import { AgeGroup, ArabicDialect, ArtStyle, AspectRatio, ChildProfile, CoverFontStyle, Language, SeriesContext, StoryLength, StoryParams, StoryType } from '../../types';
+import {
+  AgeGroup,
+  AmbientPresetId,
+  ArabicDialect,
+  ArtStyle,
+  AspectRatio,
+  ChildProfile,
+  CoverFontStyle,
+  CoverTextEffect,
+  Language,
+  SavedCharacter,
+  SeriesContext,
+  StoryLength,
+  StoryParams,
+  StoryType,
+} from '../../types';
 import HeroPicker from './HeroPicker';
-import { BRAND_PRESETS, DEFAULT_PRESET } from '../../config';
-import { setVoice as persistVoice } from '../../services/narration';
+import { BRAND, BRAND_PRESETS, DEFAULT_PRESET, getStudioSettings, saveStudioSettings, type BrandPreset } from '../../config';
+import {
+  deleteAlbumCharacter,
+  deleteCustomPreset,
+  listAlbumCharacters,
+  listCustomPresets,
+  saveCustomPreset,
+} from '../../services/db';
+import { getVoice, setVoice as persistVoice } from '../../services/narration';
 
 export interface TeenDramaTemplate {
   id: string;
@@ -219,7 +246,16 @@ export default function StorySetupForm({ initialIdea, language, onSubmit, onLoad
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>(() => series?.aspectRatio ?? '4:3');
   const [hero, setHero] = useState<ChildProfile | null>(null);
   const [presetId, setPresetId] = useState<string>(() => readPreset().id);
-  const [coverFontStyle, setCoverFontStyle] = useState<CoverFontStyle>('kufi');
+  const [coverFontStyle, setCoverFontStyle] = useState<CoverFontStyle>(() => readPreset().coverFont ?? 'kufi');
+  const [coverTextEffect, setCoverTextEffect] = useState<CoverTextEffect>('gold');
+  const [ambientPreset, setAmbientPreset] = useState<AmbientPresetId>(() => readPreset().ambientPreset ?? 'night');
+  const [showMoreStoryTypes, setShowMoreStoryTypes] = useState(false);
+  const [customPresets, setCustomPresets] = useState<BrandPreset[]>([]);
+  const [showSaveIdentity, setShowSaveIdentity] = useState(false);
+  const [customIdentityName, setCustomIdentityName] = useState('');
+  const [albumCharacters, setAlbumCharacters] = useState<SavedCharacter[]>([]);
+  const [selectedAlbumCharIds, setSelectedAlbumCharIds] = useState<string[]>([]);
+  const [studioSettings, setStudioSettings] = useState(() => getStudioSettings());
   const [showVoiceModal, setShowVoiceModal] = useState(false);
   const [showTemplates, setShowTemplates] = useState(false);
   const [availableDraft, setAvailableDraft] = useState<ReturnType<typeof getStoryDraft>>(null);
@@ -227,6 +263,11 @@ export default function StorySetupForm({ initialIdea, language, onSubmit, onLoad
   const [selectedTeenTemplate, setSelectedTeenTemplate] = useState<string | null>('fruit-kingdom-saga');
   const [isFruitFantasy, setIsFruitFantasy] = useState(false);
   const [selectedFruitTemplate, setSelectedFruitTemplate] = useState<string | null>('pomegranate-knight-citadel');
+
+  useEffect(() => {
+    listCustomPresets().then(setCustomPresets).catch(() => undefined);
+    listAlbumCharacters().then(setAlbumCharacters).catch(() => undefined);
+  }, []);
 
   const handleSelectTeenTemplate = (tmpl: TeenDramaTemplate) => {
     setSelectedTeenTemplate(tmpl.id);
@@ -304,19 +345,72 @@ export default function StorySetupForm({ initialIdea, language, onSubmit, onLoad
     setShowTemplates(false);
   };
 
-  // الهوية تضبط الأسلوب الفني واللهجة وصوت الراوي معاً
+  const allPresets = [...customPresets, ...BRAND_PRESETS];
+
+  // ب3: الهوية تضبط الأسلوب الفني واللهجة وصوت الراوي وخط الغلاف والصوت المحيطي معاً
   const applyPreset = (id: string) => {
-    const preset = BRAND_PRESETS.find((p) => p.id === id);
+    const preset = allPresets.find((p) => p.id === id);
     if (!preset) return;
     setPresetId(id);
     setArtStyle(preset.artStyle);
     setDialect(preset.dialect);
     persistVoice(preset.voice);
+    if (preset.coverFont) setCoverFontStyle(preset.coverFont);
+    if (preset.ambientPreset) {
+      setAmbientPreset(preset.ambientPreset);
+      try {
+        localStorage.setItem('sajed-ambient-preset', preset.ambientPreset);
+      } catch {
+        // ignore
+      }
+    }
     try {
       localStorage.setItem('sajed-preset', id);
     } catch {
       // ignore
     }
+  };
+
+  const handleSaveCustomIdentity = async () => {
+    const trimmed = customIdentityName.trim() || (ar ? `هويتي (${artStyle})` : `My Identity (${artStyle})`);
+    const saved = await saveCustomPreset({
+      id: `custom-${Date.now()}`,
+      label: { ar: trimmed, en: trimmed },
+      desc: { ar: `${artStyle} · ${dialect}`, en: `${artStyle} · ${dialect}` },
+      artStyle,
+      voice: getVoice(),
+      dialect,
+      coverFont: coverFontStyle,
+      ambientPreset,
+      isCustom: true,
+      createdAt: Date.now(),
+    });
+    const updated = await listCustomPresets();
+    setCustomPresets(updated);
+    setPresetId(saved.id);
+    setCustomIdentityName('');
+    setShowSaveIdentity(false);
+  };
+
+  const handleDeleteCustomIdentity = async (id: string) => {
+    await deleteCustomPreset(id);
+    setCustomPresets(await listCustomPresets());
+  };
+
+  const toggleAlbumCharacter = (charId: string) => {
+    setSelectedAlbumCharIds((prev) =>
+      prev.includes(charId) ? prev.filter((id) => id !== charId) : [...prev, charId].slice(0, 3)
+    );
+  };
+
+  const handleDeleteAlbumCharacter = async (charId: string) => {
+    await deleteAlbumCharacter(charId);
+    setSelectedAlbumCharIds((prev) => prev.filter((id) => id !== charId));
+    setAlbumCharacters(await listAlbumCharacters());
+  };
+
+  const updateSettings = (patch: Partial<typeof studioSettings>) => {
+    setStudioSettings(saveStudioSettings(patch));
   };
 
   const length: StoryLength = pageCount <= 8 ? 'Short' : pageCount <= 16 ? 'Medium' : pageCount <= 28 ? 'Long' : 'Epic';
@@ -335,6 +429,7 @@ export default function StorySetupForm({ initialIdea, language, onSubmit, onLoad
     e.preventDefault();
     if (!canSubmit) return;
     clearStoryDraft();
+    const chosenAlbumChars = albumCharacters.filter((c) => selectedAlbumCharIds.includes(c.id));
     const params: StoryParams = {
       idea,
       language,
@@ -348,7 +443,9 @@ export default function StorySetupForm({ initialIdea, language, onSubmit, onLoad
       heroPhotoId: series?.heroPhotoId ?? hero?.photoId,
       series: series ?? undefined,
       coverFontStyle,
+      coverTextEffect,
       fruitFantasy: isFruitFantasy,
+      customCharacters: chosenAlbumChars.length > 0 ? chosenAlbumChars : undefined,
     };
     onSubmit(params, pageCount);
   };
@@ -641,41 +738,202 @@ export default function StorySetupForm({ initialIdea, language, onSubmit, onLoad
 
       {!series && <HeroPicker ar={ar} selectedId={hero?.id ?? null} onSelect={setHero} />}
 
+      {/* ب7: ألبوم الشخصيات المحفوظة (IndexedDB characters store) */}
+      {!series && albumCharacters.length > 0 && (
+        <div className="luxury-card p-4 sm:p-5 space-y-3" dir={ar ? 'rtl' : 'ltr'}>
+          <div className="flex items-center justify-between gap-2">
+            <span className="font-display text-sm font-extrabold text-ink dark:text-moonlight flex items-center gap-2">
+              <Users size={16} className="text-lantern" />
+              <span>{ar ? 'من ألبومي (شخصيات محفوظة جاهزة للمشاركة)' : 'From My Character Album'}</span>
+            </span>
+            <span className="text-[11px] font-semibold text-ink/60 dark:text-moonlight/60">
+              {ar ? `اختر حتى 3 شخصيات (${selectedAlbumCharIds.length}/3)` : `Pick up to 3 (${selectedAlbumCharIds.length}/3)`}
+            </span>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+            {albumCharacters.map((c) => {
+              const selected = selectedAlbumCharIds.includes(c.id);
+              return (
+                <div
+                  key={c.id}
+                  className={`flex items-center justify-between gap-2 rounded-2xl border p-3 transition ${
+                    selected
+                      ? 'border-lantern bg-lantern/15 shadow-xs'
+                      : 'border-dream/25 bg-white/60 dark:border-white/10 dark:bg-white/5'
+                  }`}
+                >
+                  <button
+                    type="button"
+                    onClick={() => toggleAlbumCharacter(c.id)}
+                    className="flex flex-1 items-center gap-2.5 text-start"
+                  >
+                    <span
+                      className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full border text-xs font-bold ${
+                        selected ? 'border-lantern bg-lantern text-ink' : 'border-dream/40 text-ink/60 dark:text-moonlight/60'
+                      }`}
+                    >
+                      {selected ? <Check size={14} /> : c.name.slice(0, 1)}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p className="font-display text-xs font-extrabold text-ink dark:text-moonlight truncate">{c.name}</p>
+                      <p className="text-[11px] text-ink/60 dark:text-moonlight/60 truncate">{c.personality || c.description}</p>
+                    </div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleDeleteAlbumCharacter(c.id)}
+                    className="rounded-lg p-1.5 text-ink/45 hover:text-coral dark:text-moonlight/45"
+                    aria-label={ar ? 'حذف من الألبوم' : 'Remove from album'}
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* قسم الهوية الجاهزة وخصائص القصة بالقوائم المنسدلة الفخمة */}
       <div className="luxury-card p-4 sm:p-6 space-y-5" dir={ar ? 'rtl' : 'ltr'}>
         {!series && (
-          <div>
-            <span className="mb-2 block font-display text-sm font-extrabold text-ink dark:text-moonlight">
-              {ar ? 'الهوية السريعة للقصة (تضبط الرسم والراوي واللهجة معاً)' : 'Quick Story Identity Preset'}
-            </span>
+          <div className="space-y-2.5">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="font-display text-sm font-extrabold text-ink dark:text-moonlight">
+                {ar
+                  ? `الهوية السريعة للقصة (${allPresets.length} هوية تضبط الأسلوب والراوي واللهجة والخط والصوت المحيطي)`
+                  : `Quick Story Identity (${allPresets.length} Presets)`}
+              </span>
+              <button
+                type="button"
+                onClick={() => setShowSaveIdentity((v) => !v)}
+                className="inline-flex min-h-9 items-center gap-1.5 rounded-full border border-lantern/45 bg-lantern/15 px-3 py-1 text-xs font-bold text-ink transition hover:bg-lantern/25 active:scale-95 dark:text-amber-200"
+              >
+                <BookmarkPlus size={14} className="text-lantern" />
+                <span>{ar ? 'احفظ هويتي' : 'Save My Identity'}</span>
+              </button>
+            </div>
+
+            {showSaveIdentity && (
+              <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-lantern/35 bg-lantern/10 p-2.5">
+                <input
+                  type="text"
+                  value={customIdentityName}
+                  onChange={(e) => setCustomIdentityName(e.target.value.slice(0, 40))}
+                  placeholder={ar ? 'اسم الهوية (مثلاً: هويتي المسائية)...' : 'Identity name...'}
+                  className="min-h-9 flex-1 rounded-xl border border-dream/30 bg-white/90 px-3 text-xs text-ink outline-none focus:border-lantern dark:border-white/15 dark:bg-black/30 dark:text-moonlight"
+                />
+                <button
+                  type="button"
+                  onClick={handleSaveCustomIdentity}
+                  className="min-h-9 rounded-xl bg-lantern px-3.5 text-xs font-extrabold text-ink shadow-2xs active:scale-95"
+                >
+                  {ar ? 'حفظ' : 'Save'}
+                </button>
+              </div>
+            )}
+
             <div role="radiogroup" aria-label={ar ? 'هوية القصة' : 'Story identity'} className="-mx-1 flex snap-x gap-2.5 overflow-x-auto px-1 pb-2 custom-scrollbar">
-              {BRAND_PRESETS.map((p) => {
+              {allPresets.map((p) => {
                 const isSelected = presetId === p.id;
                 return (
-                  <button
+                  <div
                     key={p.id}
-                    type="button"
-                    role="radio"
-                    aria-checked={isSelected}
-                    onClick={() => applyPreset(p.id)}
-                    className={`min-h-14 min-w-[9.5rem] shrink-0 snap-start rounded-2xl border px-3.5 py-2.5 text-start transition-all active:scale-95 ${
+                    className={`relative min-h-14 min-w-[10.5rem] shrink-0 snap-start rounded-2xl border px-3.5 py-2.5 text-start transition-all ${
                       isSelected
                         ? 'border-lantern bg-gradient-to-br from-lantern/25 via-lantern/10 to-transparent shadow-sm ring-1 ring-lantern/40'
                         : 'border-dream/25 bg-white/65 hover:border-lantern/50 dark:border-white/10 dark:bg-white/[0.05]'
                     }`}
                   >
-                    <span className="block font-display text-xs sm:text-sm font-extrabold text-ink dark:text-moonlight">
-                      {ar ? p.label.ar : p.label.en}
-                    </span>
-                    <span className="mt-0.5 block text-[11px] leading-snug text-ink/60 dark:text-moonlight/60">
-                      {ar ? p.desc.ar : p.desc.en}
-                    </span>
-                  </button>
+                    <button
+                      type="button"
+                      role="radio"
+                      aria-checked={isSelected}
+                      onClick={() => applyPreset(p.id)}
+                      className="w-full text-start"
+                    >
+                      <span className="block font-display text-xs sm:text-sm font-extrabold text-ink dark:text-moonlight pe-5">
+                        {ar ? p.label.ar : p.label.en}
+                      </span>
+                      <span className="mt-0.5 block text-[11px] leading-snug text-ink/60 dark:text-moonlight/60">
+                        {ar ? p.desc.ar : p.desc.en}
+                      </span>
+                    </button>
+                    {p.isCustom && (
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteCustomIdentity(p.id)}
+                        className="absolute top-2 end-2 rounded-full p-1 text-ink/45 hover:text-coral dark:text-moonlight/45"
+                        aria-label={ar ? 'حذف الهوية' : 'Delete preset'}
+                      >
+                        <X size={12} />
+                      </button>
+                    )}
+                  </div>
                 );
               })}
             </div>
           </div>
         )}
+
+        {/* ب1: 16 نوع قصص (5 أساسية + زر المزيد للـ 11 الباقية) مع عرض البنية السردية */}
+        <div className="space-y-2.5">
+          <div className="flex items-center justify-between gap-2">
+            <label className="font-display text-xs sm:text-sm font-extrabold text-ink dark:text-moonlight">
+              {ar ? 'نوع القصة والبنية السردية (16 نوعاً)' : 'Story Genre & Narrative Arc (16 Types)'}
+            </label>
+            <button
+              type="button"
+              onClick={() => setShowMoreStoryTypes((v) => !v)}
+              className="inline-flex min-h-8 items-center gap-1 rounded-full border border-dream/35 bg-dream/10 px-3 py-1 text-xs font-bold text-ink transition hover:border-lantern dark:text-moonlight"
+            >
+              <span>
+                {showMoreStoryTypes
+                  ? ar
+                    ? 'إخفاء الأنواع الإضافية'
+                    : 'Show fewer'
+                  : ar
+                    ? `المزيد (+${EXTRA_STORY_TYPES.length})`
+                    : `More (+${EXTRA_STORY_TYPES.length})`}
+              </span>
+              {showMoreStoryTypes ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+            </button>
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+            {(showMoreStoryTypes ? [...PRIMARY_STORY_TYPES, ...EXTRA_STORY_TYPES] : PRIMARY_STORY_TYPES).map((t) => {
+              const active = storyType === t.value;
+              return (
+                <button
+                  key={t.value}
+                  type="button"
+                  onClick={() => setStoryType(t.value)}
+                  aria-pressed={active}
+                  className={`flex flex-col items-start justify-between rounded-2xl border p-2.5 text-start transition active:scale-95 ${
+                    active
+                      ? 'border-lantern bg-lantern/20 text-ink shadow-xs ring-1 ring-lantern/40 dark:text-moonlight'
+                      : 'border-dream/25 bg-white/65 text-ink/80 hover:border-lantern/45 dark:border-white/10 dark:bg-white/5 dark:text-moonlight/85'
+                  }`}
+                >
+                  <span className="font-display text-xs font-extrabold">{ar ? t.label.ar : t.label.en}</span>
+                  <span className="mt-1 text-[10px] leading-snug text-ink/60 dark:text-moonlight/60 line-clamp-2">
+                    {ar ? t.desc.ar : t.desc.en}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+
+          {STORY_TYPE_SPECS[storyType] && (
+            <div className="rounded-xl border border-dream/20 bg-dream/5 px-3 py-2 text-[11px] text-ink/70 dark:text-moonlight/70">
+              <span className="font-bold text-lantern">{ar ? 'قوس السرد: ' : 'Narrative Arc: '}</span>
+              <span>
+                {STORY_TYPE_SPECS[storyType].arc.beginning} ← {STORY_TYPE_SPECS[storyType].arc.middle} ←{' '}
+                {STORY_TYPE_SPECS[storyType].arc.climax} ← {STORY_TYPE_SPECS[storyType].arc.ending}
+              </span>
+            </div>
+          )}
+        </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           {ar && !series && (
@@ -730,39 +988,11 @@ export default function StorySetupForm({ initialIdea, language, onSubmit, onLoad
             }))}
           />
 
-          <LuxurySelect<StoryType>
-            id="storyType"
-            ar={ar}
-            label={ar ? 'طابع ونوع القصة' : 'Story Genre'}
-            value={storyType}
-            onChange={setStoryType}
-            searchable={false}
-            options={STORY_TYPES.map((t): LuxuryOption<StoryType> => ({
-              value: t.value,
-              label: ar ? t.label.ar : t.label.en,
-              icon: (
-                <span className="text-lantern">
-                  {t.value === 'Bedtime' ? (
-                    <Moon size={15} />
-                  ) : t.value === 'Adventure' ? (
-                    <Compass size={15} />
-                  ) : t.value === 'Funny' ? (
-                    <Smile size={15} />
-                  ) : t.value === 'Educational' ? (
-                    <GraduationCap size={15} />
-                  ) : (
-                    <Gem size={15} />
-                  )}
-                </span>
-              ),
-            }))}
-          />
-
           <LuxurySelect<ArtStyle>
             id="artStyle"
             ar={ar}
             disabled={Boolean(series)}
-            label={ar ? 'الأسلوب الفني للرسومات' : 'Illustration Art Style'}
+            label={ar ? 'الأسلوب الفني للرسومات (18 أسلوباً)' : 'Illustration Art Style (18 Styles)'}
             value={artStyle}
             onChange={setArtStyle}
             searchable
@@ -777,70 +1007,140 @@ export default function StorySetupForm({ initialIdea, language, onSubmit, onLoad
           <LuxurySelect<CoverFontStyle>
             id="coverFontStyle"
             ar={ar}
-            label={ar ? 'خط عنوان الغلاف الملكي' : 'Royal Cover Typography'}
+            label={ar ? 'خط عنوان الغلاف (12 خطاً عربياً)' : 'Cover Title Font (12 Fonts)'}
             value={coverFontStyle}
             onChange={setCoverFontStyle}
-            searchable={false}
-            options={[
-              {
-                value: 'kufi',
-                label: ar ? 'الكوفي الهندسي الفاخر' : 'Modern Geometric Kufi',
-                sublabel: ar ? 'خط هندسي متناسق وفخم للعناوين' : 'Clean geometric Arabic Kufi',
-                fontClassName: 'font-cover-kufi',
-                icon: <Feather size={15} className="text-lantern" />,
-              },
-              {
-                value: 'diwani',
-                label: ar ? 'الديواني والرقعة الملكي' : 'Royal Diwani Calligraphy',
-                sublabel: ar ? 'طابع تراثي أصيل بلمسة خطاط' : 'Classic calligraphic elegance',
-                fontClassName: 'font-cover-diwani',
-                icon: <Crown size={15} className="text-lantern" />,
-              },
-              {
-                value: 'naskh',
-                label: ar ? 'خط النسخ الأميري للقصص' : 'Amiri Classic Storybook Naskh',
-                sublabel: ar ? 'واضح ومريح للقراءة والكتب المطبوعة' : 'Warm traditional book serif',
-                fontClassName: 'font-cover-naskh',
-                icon: <BookOpen size={15} className="text-lantern" />,
-              },
-              {
-                value: 'display3d',
-                label: ar ? 'الخط البارز ثلاثي الأبعاد 3D' : 'Embossed 3D Display',
-                sublabel: ar ? 'تأثير ذهبي بارز ومبهج للأطفال' : 'Playful 3D embossed title style',
-                fontClassName: 'font-cover-3d',
-                icon: <Sparkles size={15} className="text-lantern" />,
-              },
-            ]}
+            searchable
+            options={COVER_FONT_OPTIONS.map((f): LuxuryOption<CoverFontStyle> => ({
+              value: f.value,
+              label: ar ? f.label.ar : f.label.en,
+              sublabel: ar ? f.sublabel.ar : f.sublabel.en,
+              fontClassName: f.className,
+              icon: <Feather size={15} className="text-lantern" />,
+            }))}
           />
 
-          <div className="sm:col-span-2">
-            <LuxurySelect<AspectRatio>
-              id="aspectRatio"
-              ar={ar}
-              disabled={Boolean(series)}
-              label={ar ? 'أبعاد وشكل لوحة الرسم' : 'Illustration Aspect Ratio'}
-              value={aspectRatio}
-              onChange={setAspectRatio}
-              searchable={false}
-              options={ASPECT_RATIO_OPTIONS.map((r): LuxuryOption<AspectRatio> => ({
-                value: r.value,
-                label: ar ? r.label.ar : r.label.en,
-                badge: r.value,
-                icon: (
-                  <span className="text-lantern">
-                    {r.value === '1:1' ? (
-                      <Square size={15} />
-                    ) : r.value === '16:9' ? (
-                      <Film size={15} />
-                    ) : r.value === '9:16' ? (
-                      <Smartphone size={15} />
-                    ) : (
-                      <Frame size={15} />
-                    )}
-                  </span>
-                ),
-              }))}
+          <LuxurySelect<AspectRatio>
+            id="aspectRatio"
+            ar={ar}
+            disabled={Boolean(series)}
+            label={ar ? 'أبعاد وشكل لوحة الرسم' : 'Illustration Aspect Ratio'}
+            value={aspectRatio}
+            onChange={setAspectRatio}
+            searchable={false}
+            options={ASPECT_RATIO_OPTIONS.map((r): LuxuryOption<AspectRatio> => ({
+              value: r.value,
+              label: ar ? r.label.ar : r.label.en,
+              badge: r.value,
+              icon: (
+                <span className="text-lantern">
+                  {r.value === '1:1' ? (
+                    <Square size={15} />
+                  ) : r.value === '16:9' ? (
+                    <Film size={15} />
+                  ) : r.value === '9:16' ? (
+                    <Smartphone size={15} />
+                  ) : (
+                    <Frame size={15} />
+                  )}
+                </span>
+              ),
+            }))}
+          />
+        </div>
+
+        {/* ب2: تأثيرات النص (ذهبي / ظل / حدود / عادي) + معاينة حية للعنوان أثناء الاختيار */}
+        <div className="rounded-2xl border border-dream/25 bg-gradient-to-br from-[#1b1533] via-[#261c47] to-[#120e24] p-4 text-white space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="text-xs font-bold text-amber-200 flex items-center gap-1.5">
+              <Crown size={14} className="text-lantern" />
+              <span>{ar ? 'تأثير نص الغلاف ومعاينة الخط الحية' : 'Cover Title Effect & Live Preview'}</span>
+            </span>
+            <div className="flex flex-wrap items-center gap-1.5" role="radiogroup" aria-label={ar ? 'تأثير العنوان' : 'Title effect'}>
+              {COVER_EFFECT_OPTIONS.map((ef) => {
+                const active = coverTextEffect === ef.value;
+                return (
+                  <button
+                    key={ef.value}
+                    type="button"
+                    onClick={() => setCoverTextEffect(ef.value)}
+                    aria-pressed={active}
+                    className={`rounded-full px-3 py-1 text-[11px] font-bold transition ${
+                      active
+                        ? 'bg-lantern text-ink shadow-xs'
+                        : 'bg-white/10 text-white/80 hover:bg-white/20'
+                    }`}
+                  >
+                    {ar ? ef.label.ar : ef.label.en}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          <div className="rounded-xl border border-white/10 bg-black/30 px-4 py-4 text-center">
+            <p className={`text-xl sm:text-2xl leading-relaxed ${getCoverTitleClasses(coverFontStyle, coverTextEffect)}`}>
+              {idea.trim()
+                ? idea.trim().split(/\s+/).slice(0, 6).join(' ')
+                : ar
+                  ? 'حكاية النجوم في بستان الأحلام'
+                  : 'The Secret of the Starlit Orchard'}
+            </p>
+          </div>
+        </div>
+
+        {/* ب4 + ب8: إعدادات توفير الحصة (معاينة الغلاف والصفحة 1) وعلامة الحقوق المفرغة عند التصدير */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-dream/20 dark:border-white/10">
+          <div className="flex items-center justify-between gap-3 rounded-2xl border border-dream/25 bg-white/55 p-3 dark:border-white/10 dark:bg-white/5">
+            <div className="flex items-start gap-2">
+              <Eye size={16} className="mt-0.5 text-lantern shrink-0" />
+              <div>
+                <p className="font-display text-xs font-bold text-ink dark:text-moonlight">
+                  {ar ? 'معاينة الغلاف والصفحة 1 أولاً' : 'Preview Cover & Page 1 First'}
+                </p>
+                <p className="text-[11px] text-ink/60 dark:text-moonlight/60">
+                  {ar ? 'يتوقف بعد الصفحة 1 لتوفير الحصة حتى تضغط «أكمل»' : 'Pauses after page 1 to save quota until you confirm'}
+                </p>
+              </div>
+            </div>
+            <input
+              type="checkbox"
+              checked={studioSettings.previewFirstGate}
+              onChange={(e) => updateSettings({ previewFirstGate: e.target.checked })}
+              className="h-5 w-5 accent-lantern cursor-pointer shrink-0"
+              aria-label={ar ? 'معاينة الغلاف والصفحة 1 أولاً' : 'Preview Cover & Page 1 First'}
             />
+          </div>
+
+          <div className="rounded-2xl border border-dream/25 bg-white/55 p-3 space-y-2 dark:border-white/10 dark:bg-white/5">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-start gap-2">
+                <ShieldCheck size={16} className="mt-0.5 text-lantern shrink-0" />
+                <div>
+                  <p className="font-display text-xs font-bold text-ink dark:text-moonlight">
+                    {ar ? 'علامة حقوق مفرغة عند التصدير' : 'Hollow Watermark on Export'}
+                  </p>
+                  <p className="text-[11px] text-ink/60 dark:text-moonlight/60">
+                    {ar ? 'تُضاف عند التصدير فقط وتبقى الصور الأصلية نظيفة' : 'Applied only on export; DB images stay clean'}
+                  </p>
+                </div>
+              </div>
+              <input
+                type="checkbox"
+                checked={studioSettings.watermarkEnabled}
+                onChange={(e) => updateSettings({ watermarkEnabled: e.target.checked })}
+                className="h-5 w-5 accent-lantern cursor-pointer shrink-0"
+                aria-label={ar ? 'تفعيل العلامة المائية عند التصدير' : 'Enable export watermark'}
+              />
+            </div>
+            {studioSettings.watermarkEnabled && (
+              <input
+                type="text"
+                value={studioSettings.watermarkText}
+                onChange={(e) => updateSettings({ watermarkText: e.target.value.slice(0, 50) })}
+                placeholder={ar ? `النص الافتراضي: ${BRAND.name.ar}` : `Default: ${BRAND.name.en}`}
+                className="w-full rounded-xl border border-dream/30 bg-white/85 px-3 py-1.5 text-xs text-ink outline-none focus:border-lantern dark:border-white/15 dark:bg-black/30 dark:text-moonlight"
+              />
+            )}
           </div>
         </div>
 
