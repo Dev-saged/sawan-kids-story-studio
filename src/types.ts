@@ -80,6 +80,7 @@ export interface StoryTypeSpec {
   tone: string;
   pacing: string;
   arc: StoryTypeArc;
+  arcEn?: StoryTypeArc;
   pageRule: string;
 }
 

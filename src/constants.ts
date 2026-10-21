@@ -14,9 +14,9 @@ import {
 } from './types';
 import {
   SHARED_ART_STYLE_OPTIONS,
-  STORY_TYPE_SPECS as SHARED_STORY_TYPE_SPECS,
   buildSharedSystemInstruction,
 } from './shared/modelRules';
+import { STORY_TYPE_SPECS as DATA_STORY_TYPE_SPECS } from './data/storyTypes';
 
 export const TEXT_MODEL = 'gemini-3.6-flash';
 export const IMAGE_MODEL = 'gemini-3.1-flash-image';
@@ -24,7 +24,7 @@ export const IMAGE_MODEL = 'gemini-3.1-flash-image';
 export const MAX_IDEA_LENGTH = 500;
 export const IMAGE_BATCH_SIZE = 3;
 
-export const STORY_TYPE_SPECS: Record<StoryType, StoryTypeSpec> = SHARED_STORY_TYPE_SPECS;
+export const STORY_TYPE_SPECS: Record<StoryType, StoryTypeSpec> = DATA_STORY_TYPE_SPECS;
 
 export const SYSTEM_INSTRUCTION = buildSharedSystemInstruction();
 

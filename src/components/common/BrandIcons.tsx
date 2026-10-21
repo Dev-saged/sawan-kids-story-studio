@@ -18,10 +18,11 @@ export function LanternSvg({ className = 'w-6 h-6' }: { className?: string }) {
   );
 }
 
-export function DialectBadgeSvg({ code }: { code: string }) {
+export function DialectBadgeSvg({ code, ar = true }: { code: string; ar?: boolean }) {
+  const displayCode = ar && code === 'MSA' ? 'فصحى' : code;
   return (
     <span className="inline-flex h-5 min-w-[1.6rem] items-center justify-center rounded-md border border-lantern/40 bg-lantern/15 px-1 font-mono text-[10px] font-bold text-lantern">
-      {code}
+      {displayCode}
     </span>
   );
 }

@@ -252,3 +252,102 @@ export const toReference = async (blob: Blob): Promise<{ data: string; mimeType:
   const small = await reencode(blob, 512, 'image/jpeg', 0.82);
   return { data: await blobToBase64(small), mimeType: 'image/jpeg' };
 };
+
+// ب3: جمع جميع معرّفات الصور النشطة المرتبطة بالقصص المحفوظة، الأبطال المخزنين، وألبوم الشخصيات
+export const collectActiveImageIds = async (extraActiveIds?: Iterable<string>): Promise<Set<string>> => {
+  const active = new Set<string>();
+  if (extraActiveIds) {
+    for (const id of extraActiveIds) {
+      if (id && typeof id === 'string') active.add(id);
+    }
+  }
+  try {
+    const [stories, children, characters] = await Promise.all([
+      dbAll<{
+        coverImageId?: string;
+        characterSheetId?: string;
+        heroPhotoId?: string;
+        pages?: { imageId?: string }[];
+      }>('stories').catch(() => []),
+      dbAll<{ photoId?: string }>('children').catch(() => []),
+      dbAll<{ referenceImageId?: string }>('characters').catch(() => []),
+    ]);
+    for (const s of stories) {
+      if (s?.coverImageId) active.add(s.coverImageId);
+      if (s?.characterSheetId) active.add(s.characterSheetId);
+      if (s?.heroPhotoId) active.add(s.heroPhotoId);
+      if (Array.isArray(s?.pages)) {
+        for (const p of s.pages) {
+          if (p?.imageId) active.add(p.imageId);
+        }
+      }
+    }
+    for (const c of children) {
+      if (c?.photoId) active.add(c.photoId);
+    }
+    for (const ch of characters) {
+      if (ch?.referenceImageId) active.add(ch.referenceImageId);
+    }
+  } catch {
+    // ignore
+  }
+  return active;
+};
+
+export interface CleanImageCacheResult {
+  orphanCount: number;
+  orphanBytes: number;
+  keptCount: number;
+  orphanIds: string[];
+}
+
+// ب3: معاينة تنظيف الكاش قبل الحذف لمعرفة العدد والحجم المتوقع للصور اليتيمة فقط
+export const previewCleanImageCache = async (extraActiveIds?: Iterable<string>): Promise<CleanImageCacheResult> => {
+  try {
+    const [allImages, activeIds] = await Promise.all([
+      dbAll<ImageRecord>('images').catch(() => []),
+      collectActiveImageIds(extraActiveIds),
+    ]);
+    let orphanBytes = 0;
+    let keptCount = 0;
+    const orphanIds: string[] = [];
+    for (const rec of allImages) {
+      if (!rec?.id) continue;
+      if (activeIds.has(rec.id)) {
+        keptCount++;
+      } else {
+        orphanIds.push(rec.id);
+        orphanBytes += rec.blob?.size ?? 0;
+      }
+    }
+    return {
+      orphanCount: orphanIds.length,
+      orphanBytes,
+      keptCount,
+      orphanIds,
+    };
+  } catch {
+    return { orphanCount: 0, orphanBytes: 0, keptCount: 0, orphanIds: [] };
+  }
+};
+
+// ب3: حذف الصور اليتيمة فقط غير المرتبطة بأي قصة أو بطل أو ألبوم شخصيات (لا يحذف أبداً صور القصص)
+export const cleanImageCache = async (extraActiveIds?: Iterable<string>): Promise<CleanImageCacheResult> => {
+  const { dbDelete } = await import('./db');
+  const preview = await previewCleanImageCache(extraActiveIds);
+  for (const id of preview.orphanIds) {
+    try {
+      await dbDelete('images', id);
+      const cachedUrl = urlCache.get(id);
+      if (cachedUrl) {
+        URL.revokeObjectURL(cachedUrl);
+        urlCache.delete(id);
+      }
+      blobBackupCache.delete(id);
+    } catch {
+      // ignore individual deletion error
+    }
+  }
+  return preview;
+};
+

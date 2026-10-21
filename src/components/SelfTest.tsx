@@ -18,35 +18,55 @@ import {
   upgradeDbSchema,
 } from '../services/db';
 import { safeFileName } from '../services/export';
-import { base64ToBlob, blobToBase64, cropToAspect } from '../services/media';
+import { base64ToBlob, blobToBase64, cleanImageCache, cropToAspect, saveImage } from '../services/media';
 import { APP_VERSION, BRAND, BRAND_PRESETS, CONFIG, getStudioSettings, saveStudioSettings, SOCIAL_LINKS } from '../config';
 import { CURRENT_VERSION, incrementVersion, compareVersions } from '../version';
 import { VIDEO_FORMATS, VIDEO_QUALITIES, videoSize } from '../services/videoFormats';
 import {
   applyBatch,
+  applyImprovedIdeaWithUndo,
   buildCoverPrompt,
   buildPageImagePrompt,
   buildSheetPrompt,
+  canRequestImproveIdea,
   countPromptWords,
+  IMPROVE_IDEA_COOLDOWN_MS,
   isFruitStory,
   isIncomplete,
+  restoreOriginalIdea,
+  validateAndClipImprovedIdeas,
 } from '../services/gemini';
 import { allAnimationPrompts, animationPackText } from '../services/animation';
 import { shareMessage, storyPlainText } from '../services/storyBundle';
 import { LEARN_CARDS } from '../data/learnCards';
 import { BOOK_TEMPLATES } from '../data/bookTemplates';
+import {
+  DAILY_IDEA_DISMISSED_KEY,
+  DAILY_IDEAS,
+  dismissDailyIdeaForToday,
+  isDailyIdeaDismissedToday,
+  pickDailyIdea,
+} from '../data/dailyIdeas';
 import { DAILY_POOL, dailyGameId, starsFor } from '../services/progress';
 import {
   ART_STYLE_OPTIONS,
   COVER_EFFECT_OPTIONS,
   COVER_FONT_OPTIONS,
+  DIALECT_OPTIONS,
   EXTRA_STORY_TYPES,
   getCoverTitleClasses,
+  MAX_IDEA_LENGTH,
   PRIMARY_STORY_TYPES,
   STORY_TYPE_SPECS,
 } from '../constants';
 import { shouldPauseAtPreviewGate } from '../hooks/useIllustrator';
 import { applyHollowWatermarkToBlob, computeRegionLuminance, drawHollowWatermarkOnCanvas } from '../services/watermark';
+import { buildSafeHealthReportJson, containsRawSecretPattern } from '../services/appHealth';
+import {
+  computeImageEffectiveDpi,
+  computePrintPageDimensionsMm,
+  computePrintPageMarginsMm,
+} from '../services/printBook';
 import type { StoryData, StoryPage } from '../types';
 
 interface Result {
@@ -225,6 +245,69 @@ export const TESTS: { name: string; run: () => void | Promise<void> }[] = [
         });
       } finally {
         indexedDB.deleteDatabase(tempDbName);
+      }
+
+      // 3) حالة ثانية (أ1): سجل legacy بلا حقل key وبمفتاح out-of-line يُرحَّل برقم/معرّف id صحيح دون فقدان
+      const tempOutDbName = `sawan_v1_out_${newId()}`;
+      try {
+        await new Promise<void>((resolve, reject) => {
+          const req1 = indexedDB.open(tempOutDbName, 1);
+          req1.onupgradeneeded = () => {
+            // مخزن بلا keyPath (يستخدم مفاتيح out-of-line)
+            req1.result.createObjectStore('audio');
+          };
+          req1.onsuccess = () => {
+            const db1 = req1.result;
+            const tx = db1.transaction('audio', 'readwrite');
+            tx.objectStore('audio').put({ createdAt: 77, tag: 'out-of-line-item' }, 105);
+            tx.oncomplete = () => {
+              db1.close();
+              resolve();
+            };
+            tx.onerror = () => {
+              db1.close();
+              reject(tx.error);
+            };
+          };
+          req1.onerror = () => reject(req1.error);
+        });
+
+        await new Promise<void>((resolve, reject) => {
+          const req2 = indexedDB.open(tempOutDbName, 2);
+          req2.onupgradeneeded = () => {
+            upgradeDbSchema(req2.result, req2.transaction);
+          };
+          req2.onsuccess = () => {
+            const db2 = req2.result;
+            const tx = db2.transaction('audio', 'readonly');
+            const store = tx.objectStore('audio');
+            if (store.keyPath !== 'id') {
+              db2.close();
+              reject(new Error(`Expected keyPath 'id' for out-of-line store, got '${String(store.keyPath)}'`));
+              return;
+            }
+            const getReq = store.get('105');
+            getReq.onsuccess = () => {
+              const migrated = getReq.result as { id?: string; createdAt?: number; tag?: string } | undefined;
+              if (!migrated || migrated.id !== '105' || migrated.createdAt !== 77 || migrated.tag !== 'out-of-line-item') {
+                db2.close();
+                reject(new Error('Out-of-line legacy audio record was not migrated with valid id'));
+                return;
+              }
+            };
+            tx.oncomplete = () => {
+              db2.close();
+              resolve();
+            };
+            tx.onerror = () => {
+              db2.close();
+              reject(tx.error);
+            };
+          };
+          req2.onerror = () => reject(req2.error);
+        });
+      } finally {
+        indexedDB.deleteDatabase(tempOutDbName);
       }
     },
   },
@@ -415,12 +498,60 @@ export const TESTS: { name: string; run: () => void | Promise<void> }[] = [
     },
   },
   {
-    name: 'ب1: اكتمال جدول الـ 16 نوع قصص (5 أساسية + 11 إضافية) وبنيتها السردية',
+    name: 'أ3 + ب1: اكتمال جدول الـ 16 نوع قصص وتعريب قوس السرد بالكامل وعدم ظهور MSA حرفياً في الواجهة العربية',
     run: () => {
       eq([PRIMARY_STORY_TYPES.length, EXTRA_STORY_TYPES.length, Object.keys(STORY_TYPE_SPECS).length], [5, 11, 16]);
       for (const spec of Object.values(STORY_TYPE_SPECS)) {
         if (!spec.arc.beginning || !spec.arc.middle || !spec.arc.climax || !spec.arc.ending || !spec.pageRule) {
           throw new Error(`Incomplete narrative arc for ${spec.value}`);
+        }
+        // أ3: التحقق من تعريب جميع أقسام قوس السرد للأنواع الـ 16 وعدم احتوائها على نص إنجليزي
+        const fields = [spec.arc.beginning, spec.arc.middle, spec.arc.climax, spec.arc.ending];
+        for (const f of fields) {
+          if (!/[\u0600-\u06FF]/.test(f)) {
+            throw new Error(`Narrative arc for ${spec.value} is not translated to Arabic`);
+          }
+          if (/[A-Za-z]{2,}/.test(f)) {
+            throw new Error(`Narrative arc for ${spec.value} contains English words in Arabic field: ${f}`);
+          }
+        }
+      }
+      const msaDialect = DIALECT_OPTIONS.find((d) => d.value === 'Modern Standard');
+      if (!msaDialect || msaDialect.label.includes('MSA') || !msaDialect.label.includes('الفصحى')) {
+        throw new Error('Modern Standard Arabic label does not use الفصحى');
+      }
+    },
+  },
+  {
+    name: 'فكرة اليوم (dailyIdeas): ≥60 فكرة ثنائية اللغة وثبات الاختيار اليومي والتدوير المحلي',
+    run: () => {
+      if (DAILY_IDEAS.length < 60) throw new Error(`Expected >= 60 daily ideas, got ${DAILY_IDEAS.length}`);
+      for (const item of DAILY_IDEAS) {
+        if (!item.idea.ar || !item.idea.en || !item.storyType || !item.presetId) {
+          throw new Error(`Incomplete daily idea ${item.id}`);
+        }
+      }
+      const fixedDate = new Date(2026, 9, 21, 9, 0);
+      const sameDayLater = new Date(2026, 9, 21, 22, 30);
+      const firstPick = pickDailyIdea(fixedDate, 'hakaya', 0);
+      const secondPick = pickDailyIdea(sameDayLater, 'hakaya', 0);
+      eq(firstPick.id, secondPick.id);
+      const rotatedPick = pickDailyIdea(fixedDate, 'hakaya', 1);
+      if (rotatedPick.id === firstPick.id && DAILY_IDEAS.length > 1) {
+        throw new Error('Offset rotation did not advance to another idea');
+      }
+      let prevDismissed: string | null = null;
+      try {
+        prevDismissed = localStorage.getItem(DAILY_IDEA_DISMISSED_KEY);
+        dismissDailyIdeaForToday(fixedDate);
+        eq(isDailyIdeaDismissedToday(fixedDate), true);
+        eq(isDailyIdeaDismissedToday(new Date(2026, 9, 22, 8, 0)), false);
+      } finally {
+        try {
+          if (prevDismissed === null) localStorage.removeItem(DAILY_IDEA_DISMISSED_KEY);
+          else localStorage.setItem(DAILY_IDEA_DISMISSED_KEY, prevDismissed);
+        } catch {
+          // ignore
         }
       }
     },
@@ -545,6 +676,196 @@ export const TESTS: { name: string; run: () => void | Promise<void> }[] = [
       const dataUrl = canvas.toDataURL('image/png');
       if (!dataUrl.startsWith('data:image/png;base64,') || dataUrl.length < 100) {
         throw new Error('Canvas watermark output invalid');
+      }
+    },
+  },
+  {
+    name: 'ب2 (v3.1.0): التحقق من مخرجات «حسّن فكرتي» وقصّ الطول والتراجع وحدّ الطلبات (3 ثوانٍ)',
+    run: () => {
+      // 1) قص الطول وتنقية HTML والتحقق من إرجاع 3 صياغات نظيفة
+      const overlongIdea = Array.from({ length: 95 }, (_, i) => `كلمة${i + 1}`).join(' ');
+      const rawResponse = {
+        suggestions: [
+          `<script>alert(1)</script> ${overlongIdea}`,
+          'بطل شجاع ينطلق في غابة الفوانيس المضيئة ليحل لغز النهر القديم ويتعلم قيمة الصبر والتعاون مع أصدقائه.',
+          'في قرية جبلية هادئة يواجه الطفل تحدياً صعباً أثناء البحث عن الطائر الذهبي ويكتشف أن الصدق ينجيه دائماً.',
+          'صياغة رابعة إضافية يجب تجاهلها لأن الحد الأقصى 3 بطاقات فقط.',
+        ],
+      };
+      const cleaned = validateAndClipImprovedIdeas(rawResponse, 70, MAX_IDEA_LENGTH);
+      eq(cleaned.length, 3);
+      if (cleaned[0].includes('<script>')) throw new Error('HTML tags were not stripped from improved idea');
+      const firstWordCount = cleaned[0].split(/\s+/).filter(Boolean).length;
+      if (firstWordCount > 70) throw new Error(`Expected <= 70 words after clipping, got ${firstWordCount}`);
+
+      // 2) التراجع يعيد النص الأصلي مهما تعددت الاختيارات
+      const step1 = applyImprovedIdeaWithUndo('فكرتي الأصلية القصيرة', null, cleaned[0]);
+      eq([step1.originalIdea, step1.nextIdea], ['فكرتي الأصلية القصيرة', cleaned[0]]);
+      const step2 = applyImprovedIdeaWithUndo(step1.nextIdea, step1.originalIdea, cleaned[1]);
+      eq([step2.originalIdea, step2.nextIdea], ['فكرتي الأصلية القصيرة', cleaned[1]]);
+      const restored = restoreOriginalIdea(step2.originalIdea, step2.nextIdea);
+      eq([restored.restoredIdea, restored.originalIdea], ['فكرتي الأصلية القصيرة', null]);
+
+      // 3) حدّ الطلبات بطلب واحد كل 3 ثوانٍ
+      const t0 = 100_000;
+      eq(canRequestImproveIdea(0, t0), true);
+      eq(canRequestImproveIdea(t0, t0 + 1500), false);
+      eq(canRequestImproveIdea(t0, t0 + IMPROVE_IDEA_COOLDOWN_MS - 1), false);
+      eq(canRequestImproveIdea(t0, t0 + IMPROVE_IDEA_COOLDOWN_MS), true);
+    },
+  },
+  {
+    name: 'ب3 (v3.1.0): تقرير صحة التطبيق خالٍ من أنماط المفاتيح، وcleanImageCache يحفظ صور القصص والأبطال ويحذف اليتيمة فقط',
+    run: async () => {
+      // 1) التحقق من تنقية الأسرار والمفاتيح من JSON التقرير
+      const mockDirtyReport = {
+        version: CURRENT_VERSION.version,
+        leakedAiKey: FAKE_AIZA,
+        leakedAqKey: FAKE_AQ,
+        leakedBearer: 'Bearer secret_token_1234567890abcdef',
+        nested: { cfAccount: '0123456789abcdef0123456789abcdef' },
+      };
+      const safeJson = buildSafeHealthReportJson(mockDirtyReport);
+      eq(containsRawSecretPattern(safeJson), false);
+      if (safeJson.includes(FAKE_AIZA) || safeJson.includes(FAKE_AQ)) {
+        throw new Error('Raw API key leaked into health report JSON');
+      }
+
+      // 2) التحقق من أن cleanImageCache يحفظ صور القصص والأبطال وألبوم الشخصيات ويحذف اليتيمة فقط
+      const tinyBlob = new Blob([new Uint8Array([137, 80, 78, 71])], { type: 'image/png' });
+      const storyImg = await saveImage(tinyBlob, 'page', 'Watercolor', 'active story page image');
+      const heroImg = await saveImage(tinyBlob, 'photo', 'photo', 'active hero photo');
+      const albumImg = await saveImage(tinyBlob, 'sheet', 'Watercolor', 'active character sheet');
+      const orphanImg = await saveImage(tinyBlob, 'page', 'Watercolor', 'orphan unreferenced image');
+
+      const testStoryId = `selftest-story-${newId()}`;
+      const testHeroId = `selftest-hero-${newId()}`;
+      const testCharId = `selftest-album-${newId()}`;
+
+      try {
+        await dbPut('stories', {
+          id: testStoryId,
+          story_info: { title: 'قصة اختبار', language: 'Arabic', age_group: '7-9', art_style: 'Watercolor', lessons: [] },
+          characters: [],
+          pages: [{ page: 1, text: 'نص', image_prompt: 'مشهد', imageId: storyImg.id }],
+          createdAt: Date.now(),
+        });
+        await dbPut('children', {
+          id: testHeroId,
+          name: 'بطل الاختبار',
+          photoId: heroImg.id,
+          createdAt: Date.now(),
+        });
+        await saveAlbumCharacter({
+          id: testCharId,
+          name: 'شخصية الاختبار',
+          description: 'وصف',
+          personality: 'لطيف',
+          age: '7',
+          gender: 'boy',
+          referenceImageId: albumImg.id,
+        });
+
+        const cleanRes = await cleanImageCache();
+        if (!cleanRes.orphanIds.includes(orphanImg.id)) {
+          throw new Error('Expected orphan image to be detected and removed by cleanImageCache');
+        }
+
+        const [keptStoryImg, keptHeroImg, keptAlbumImg, deletedOrphanImg] = await Promise.all([
+          dbGet('images', storyImg.id),
+          dbGet('images', heroImg.id),
+          dbGet('images', albumImg.id),
+          dbGet('images', orphanImg.id),
+        ]);
+        eq([Boolean(keptStoryImg), Boolean(keptHeroImg), Boolean(keptAlbumImg), Boolean(deletedOrphanImg)], [true, true, true, false]);
+      } finally {
+        await Promise.all([
+          dbDelete('stories', testStoryId).catch(() => undefined),
+          dbDelete('children', testHeroId).catch(() => undefined),
+          deleteAlbumCharacter(testCharId).catch(() => undefined),
+          dbDelete('images', storyImg.id).catch(() => undefined),
+          dbDelete('images', heroImg.id).catch(() => undefined),
+          dbDelete('images', albumImg.id).catch(() => undefined),
+          dbDelete('images', orphanImg.id).catch(() => undefined),
+        ]);
+      }
+    },
+  },
+  {
+    name: 'ب4 (v3.1.0): أبعاد الصفحة في printBook لكل مقاس مع bleed وبدونه، وانعكاس الهوامش الفردية/الزوجية في RTL',
+    run: () => {
+      // 1) أبعاد المقاسات الثلاثة (A5، A4، Square21) مع bleed 3مم وبدونه
+      const a5Bleed = computePrintPageDimensionsMm('A5', true);
+      const a5NoBleed = computePrintPageDimensionsMm('A5', false);
+      eq([a5Bleed.totalWidthMm, a5Bleed.totalHeightMm, a5Bleed.bleedMm], [154, 216, 3]);
+      eq([a5NoBleed.totalWidthMm, a5NoBleed.totalHeightMm, a5NoBleed.bleedMm], [148, 210, 0]);
+
+      const a4Bleed = computePrintPageDimensionsMm('A4', true);
+      const a4NoBleed = computePrintPageDimensionsMm('A4', false);
+      eq([a4Bleed.totalWidthMm, a4Bleed.totalHeightMm], [216, 303]);
+      eq([a4NoBleed.totalWidthMm, a4NoBleed.totalHeightMm], [210, 297]);
+
+      const sqBleed = computePrintPageDimensionsMm('Square21', true);
+      const sqNoBleed = computePrintPageDimensionsMm('Square21', false);
+      eq([sqBleed.totalWidthMm, sqBleed.totalHeightMm], [216, 216]);
+      eq([sqNoBleed.totalWidthMm, sqNoBleed.totalHeightMm], [210, 210]);
+
+      // 2) انعكاس الهامش الداخلي والخارجي بين الصفحات الفردية والزوجية في التجليد العربي RTL
+      const rtlOdd = computePrintPageMarginsMm(1, true, 12, 6);
+      const rtlEven = computePrintPageMarginsMm(2, true, 12, 6);
+      eq([rtlOdd.innerMm, rtlOdd.outerMm], [18, 12]);
+      eq([rtlOdd.rightMm, rtlOdd.leftMm], [18, 12]);
+      eq([rtlEven.rightMm, rtlEven.leftMm], [12, 18]);
+      // التحقق من الانعكاس التام بين الفردية والزوجية وبين RTL و LTR
+      const ltrOdd = computePrintPageMarginsMm(1, false, 12, 6);
+      eq([ltrOdd.leftMm, ltrOdd.rightMm], [rtlOdd.rightMm, rtlOdd.leftMm]);
+
+      // 3) حساب DPI للتنبيه عند < 150 DPI
+      const hiDpi = computeImageEffectiveDpi(2048, 2048, 148, 118);
+      const lowDpi = computeImageEffectiveDpi(600, 600, 210, 210);
+      if (hiDpi < 150) throw new Error(`Expected 2048px image on A5 to be >= 150 DPI, got ${hiDpi}`);
+      if (lowDpi >= 150) throw new Error(`Expected 600px image on 210mm square to be < 150 DPI, got ${lowDpi}`);
+    },
+  },
+  {
+    name: 'القسم ج (v3.1.0): فحص تباين الألوان للمكونات الجديدة (>= 4.5:1 حسب WCAG AA)',
+    run: () => {
+      const hexToRgb = (hex: string): [number, number, number] => {
+        const clean = hex.replace('#', '');
+        const n = parseInt(clean, 16);
+        return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+      };
+      const relLum = ([r, g, b]: [number, number, number]): number => {
+        const chan = (c: number) => {
+          const s = c / 255;
+          return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+        };
+        return 0.2126 * chan(r) + 0.7152 * chan(g) + 0.0722 * chan(b);
+      };
+      const contrastRatio = (fgHex: string, bgHex: string): number => {
+        const l1 = relLum(hexToRgb(fgHex));
+        const l2 = relLum(hexToRgb(bgHex));
+        const lighter = Math.max(l1, l2);
+        const darker = Math.min(l1, l2);
+        return (lighter + 0.05) / (darker + 0.05);
+      };
+
+      // أزواج الألوان المستخدمة في بطاقات فكرة اليوم، حسّن فكرتي، حالة التطبيق، ومعاينة الطباعة
+      const pairs: { label: string; fg: string; bg: string }[] = [
+        { label: 'Ink on Moonlight (Light cards)', fg: '#241b2f', bg: '#fbf7ef' },
+        { label: 'Moonlight on Dusk (Dark cards)', fg: '#fbf7ef', bg: '#1b1533' },
+        { label: 'Ink on Lantern CTA button', fg: '#241b2f', bg: '#f5b82e' },
+        { label: 'White on Emerald Ready Badge', fg: '#ffffff', bg: '#047857' },
+        { label: 'White on Stone Unavailable Badge', fg: '#ffffff', bg: '#44403c' },
+        { label: 'Amber-200 on Dark Dusk Card', fg: '#fde68a', bg: '#1b1533' },
+        { label: 'Print Soft Ink on Paper', fg: '#5d5470', bg: '#fbf7ef' },
+      ];
+
+      for (const p of pairs) {
+        const ratio = contrastRatio(p.fg, p.bg);
+        if (ratio < 4.5) {
+          throw new Error(`Contrast failure on ${p.label}: ${ratio.toFixed(2)}:1 (< 4.5:1)`);
+        }
       }
     },
   },

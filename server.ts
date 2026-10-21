@@ -39,9 +39,6 @@ const MODELS = {
   tts: [
     'gemini-2.5-flash-preview-tts',
     'gemini-2.5-pro-preview-tts',
-    'gemini-3.8-flash-tts',
-    'gemini-3.1-flash-tts-preview',
-    'gemini-3.8-flash-lite-tts',
   ],
   music: ['lyria-3-clip-preview'],
 };
@@ -1631,6 +1628,135 @@ app.post('/api/suggest-titles', async (req: Request, res: Response) => {
     }
   } catch (err) {
     return sendError(res, err, 'Failed to suggest titles');
+  }
+});
+
+const IMPROVE_IDEA_SCHEMA: Schema = {
+  type: Type.OBJECT,
+  properties: {
+    suggestions: {
+      type: Type.ARRAY,
+      items: { type: Type.STRING },
+    },
+  },
+  required: ['suggestions'],
+};
+
+const sanitizeAndBoundIdeaSuggestion = (raw: unknown, isArabic: boolean, maxWords = 70): string => {
+  const cleaned = clip(raw, 500)
+    .replace(/<[^>]*>/g, '')
+    .replace(/[\u0000-\u001F\u007F]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!cleaned) return '';
+  const words = cleaned.split(/\s+/).filter(Boolean);
+  if (words.length > maxWords) {
+    return words.slice(0, maxWords).join(' ').replace(/[,،؛:]+$/, '') + (isArabic ? '.' : '.');
+  }
+  return cleaned;
+};
+
+const buildFallbackImprovedIdeas = (idea: string, isArabic: boolean, ageGroup: string, storyType: string): string[] => {
+  const core = clip(idea, 160) || (isArabic ? 'مغامرة شيقة في عالم الحكايات' : 'an exciting storybook adventure');
+  if (isArabic) {
+    return [
+      `ينطلق بطلنا الشجاع في تجربة مليئة بالدهشة مستوحاة من فكرة (${core}) داخل حديقة الفوانيس المضيئة، لكنه يواجه لغزاً غامضاً يعترض طريقه ويختبر صبره وذكاءه. بفضل تعاونه مع أصدقائه الأوفياء وتفكيره الهادئ، ينجح في حل المشكلة وإعادة البهجة إلى المكان، ليتعلم في النهاية أن الشجاعة والتعاون يصنعان أجمل المعجزات لكل الأطفال (${ageGroup}).`,
+      `في قرية دافئة تحيط بها التلال الخضراء، تبدأ حكاية (${core}) حين يكتشف البطل الصغير سراً قديماً يحتاج إلى أمانة وإصرار. وعندما تهب رياح التحدي وتتعقد المهمة، يرفض الاستسلام ويبتكر خطة ذكية تنقذ الموقف وتجمع القلوب، ليدرك في خاتمة الرحلة أن الصدق والإحسان للآخرين يفتحان أبواب النجاح والسعادة الحقيقية دائماً.`,
+      `تحت سماء مرصعة بالنجوم وفي أجواء (${storyType})، يعيش البطل مغامرة استثنائية تدور حول (${core})، حيث يواجه عقبة غير متوقعة تتطلب منه الحكمة والهدوء. ومع كل خطوة يتعلم من أخطائه ويستعين بنصيحة الحكماء حتى يتجاوز الصعاب بنجاح، ويعود إلى بيته بقلب عامر بالامتنان ودرس نبيل يبقى أثره الجميل طويلاً.`,
+    ].map((s) => sanitizeAndBoundIdeaSuggestion(s, true, 70));
+  }
+  return [
+    `Starting from the idea of (${core}), our curious young hero ventures into the glowing Lantern Meadow for a (${storyType}) quest, only to face an unexpected puzzle that blocks the path home. Through calm thinking, teamwork, and gentle determination, the hero solves the challenge and restores harmony, learning that patience and kindness turn every obstacle into wisdom.`,
+    `In a cozy hillside village, the story of (${core}) unfolds when the young protagonist discovers a forgotten secret that requires courage and honesty. When a sudden storm tests everyone's resolve, the hero unites friends with a clever plan that saves the day, ending with a heartwarming lesson about empathy, trust, and perseverance for ages (${ageGroup}).`,
+    `Beneath a canopy of shimmering stars, a memorable journey inspired by (${core}) begins as the hero encounters a tricky dilemma in an enchanted workshop. By listening carefully, helping others along the way, and never giving up, the hero overcomes the trouble and returns home proud, discovering that true strength shines brightest through generosity.`,
+  ].map((s) => sanitizeAndBoundIdeaSuggestion(s, false, 70));
+};
+
+// ب2: «حسّن فكرتي» — 3 صياغات محسّنة (40-70 كلمة) بنفس اللغة واللهجة مع بطل ومشكلة ومكان وخاتمة قيمية
+app.post('/api/improve-idea', async (req: Request, res: Response) => {
+  try {
+    const rawIdea = clip(req.body?.idea, 500)
+      .replace(/<[^>]*>/g, '')
+      .trim();
+    const ideaWords = rawIdea.split(/\s+/).filter(Boolean);
+    if (ideaWords.length < 3) {
+      return res.status(400).json({
+        error: 'يرجى كتابة 3 كلمات على الأقل لتحسين الفكرة.',
+        code: 'FAILED',
+      });
+    }
+    const language = clip(req.body?.language, 20) || 'Arabic';
+    const dialect = clip(req.body?.dialect, 40) || 'Modern Standard';
+    const storyType = clip(req.body?.storyType, 40) || 'Magical Adventure';
+    const ageGroup = clip(req.body?.ageGroup, 20) || '7-9';
+    const isArabic = /arab|عرب/i.test(language);
+
+    const prompt = isArabic
+      ? [
+          `أنت محرر قصص أطفال خبير. حسّن فكرة المستخدم التالية إلى 3 صياغات قصصية متميزة وغنية للتوليد.`,
+          `فكرة المستخدم: "${rawIdea}"`,
+          `اللغة: العربية (${dialect === 'Modern Standard' ? 'فصحى واضحة وسلسة' : dialect}). نوع القصة: ${storyType}. الفئة العمرية: ${ageGroup} سنوات.`,
+          `القواعد الصارمة لكل صياغة من الصياغات الـ3:`,
+          `1) الطول بين 40 و70 كلمة بالضبط.`,
+          `2) بنفس اللغة واللهجة المطلوبة تماماً.`,
+          `3) حافظ على شخصيات المستخدم وفكرته الأساسية دون تغيير جوهرها.`,
+          `4) أضف بطلاً واضحاً، ومكاناً ملموساً، ومشكلة أو تحدياً مشوقاً، وخاتمة قيمية نبيلة.`,
+          `5) أعد JSON فقط بالشكل: { "suggestions": ["...", "...", "..."] }.`,
+        ].join('\n')
+      : [
+          `You are an expert children's story editor. Improve the user's story idea into 3 distinct, rich story pitches.`,
+          `User idea: "${rawIdea}"`,
+          `Language: English. Story type: ${storyType}. Age group: ${ageGroup} years.`,
+          `Strict rules for each of the 3 suggestions:`,
+          `1) Length MUST be between 40 and 70 words each.`,
+          `2) Keep the user's characters and core idea intact.`,
+          `3) Include a clear hero, a vivid setting, an engaging problem/challenge, and a value-driven ending.`,
+          `4) Return valid JSON only: { "suggestions": ["...", "...", "..."] }.`,
+        ].join('\n');
+
+    try {
+      const { value } = await runChain(
+        'improve-idea',
+        await chainFor(req, 'text'),
+        async (model, ai) => {
+          const response = await ai.models.generateContent({
+            model,
+            contents: prompt,
+            config: { responseMimeType: 'application/json', responseSchema: IMPROVE_IDEA_SCHEMA },
+          });
+          const parsed = response.text ? parseJson(response.text) : null;
+          if (!Array.isArray(parsed?.suggestions)) return null;
+          const cleaned = parsed.suggestions
+            .map((item: unknown) => sanitizeAndBoundIdeaSuggestion(item, isArabic, 70))
+            .filter((item: string) => item.split(/\s+/).filter(Boolean).length >= 15);
+          return cleaned.length >= 3 ? { suggestions: cleaned.slice(0, 3) } : null;
+        },
+        req
+      );
+      return res.json({ suggestions: value.suggestions.slice(0, 3) });
+    } catch (chainErr: any) {
+      const info = errorInfo(chainErr, 'Failed to improve idea');
+      if (info.body.code !== 'AUTH' && info.body.code !== 'NOKEY') {
+        const freeVal = await runFreeTextJson(
+          'Return JSON { "suggestions": ["40-70 word improved idea 1", "40-70 word improved idea 2", "40-70 word improved idea 3"] }',
+          prompt
+        );
+        if (Array.isArray(freeVal?.suggestions)) {
+          const cleaned = freeVal.suggestions
+            .map((item: unknown) => sanitizeAndBoundIdeaSuggestion(item, isArabic, 70))
+            .filter((item: string) => item.split(/\s+/).filter(Boolean).length >= 15);
+          if (cleaned.length >= 3) {
+            return res.json({ suggestions: cleaned.slice(0, 3) });
+          }
+        }
+        return res.json({
+          suggestions: buildFallbackImprovedIdeas(rawIdea, isArabic, ageGroup, storyType),
+        });
+      }
+      throw chainErr;
+    }
+  } catch (err) {
+    return sendError(res, err, 'Failed to improve idea');
   }
 });
 

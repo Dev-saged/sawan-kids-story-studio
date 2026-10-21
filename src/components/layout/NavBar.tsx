@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
-import { ArrowUpCircle, BookOpen, BookMarked, Gamepad2, Library, Sparkles, Moon, Sun, Languages, X } from 'lucide-react';
+import { ArrowUpCircle, BookOpen, BookMarked, Gamepad2, HelpCircle, Library, Sparkles, Moon, Sun, Languages, X } from 'lucide-react';
 import { Language } from '../../types';
 import { APP_VERSION, BRAND } from '../../config';
 import { checkForAppUpdate, type UpdateCheckResult } from '../../services/versionCheck';
 import { LanternSvg } from '../common/BrandIcons';
+import AppHealthModal from '../common/AppHealthModal';
 
 export type Section = 'studio' | 'library' | 'games' | 'learn' | 'names';
 
@@ -28,6 +29,7 @@ export default function NavBar({ active, onNavigate, language, onToggleLanguage,
   const isAr = language === 'Arabic';
   const [updateInfo, setUpdateInfo] = useState<UpdateCheckResult | null>(null);
   const [dismissedUpdate, setDismissedUpdate] = useState(false);
+  const [showHealthModal, setShowHealthModal] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -128,8 +130,18 @@ export default function NavBar({ active, onNavigate, language, onToggleLanguage,
             })}
           </nav>
 
-          {/* Language & Theme Controls */}
+          {/* Language, Theme & App Health (?) Controls */}
           <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              data-testid="open-app-health-btn"
+              onClick={() => setShowHealthModal(true)}
+              title={isAr ? 'حالة التطبيق' : 'App Health Report'}
+              aria-label={isAr ? 'حالة التطبيق' : 'App Health Report'}
+              className="flex min-h-11 min-w-11 items-center justify-center rounded-2xl border border-dream/30 bg-white/75 text-ink shadow-2xs transition hover:border-lantern active:scale-95 dark:border-white/15 dark:bg-white/10 dark:text-moonlight"
+            >
+              <HelpCircle size={17} className="text-lantern" aria-hidden />
+            </button>
             <button
               type="button"
               onClick={onToggleLanguage}
@@ -150,6 +162,7 @@ export default function NavBar({ active, onNavigate, language, onToggleLanguage,
           </div>
         </div>
       </header>
+      {showHealthModal && <AppHealthModal ar={isAr} onClose={() => setShowHealthModal(false)} />}
 
       {/* Mobile Bottom Dock: floating glassmorphic navigation for phones */}
       <nav

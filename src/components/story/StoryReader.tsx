@@ -60,6 +60,7 @@ import LivingCanvas from './LivingCanvas';
 import FullPageEditor from './FullPageEditor';
 import InteractiveBranches from './InteractiveBranches';
 import VoiceClonerModal from './VoiceClonerModal';
+import PrintPreviewModal from './PrintPreviewModal';
 import { ambientEngine, detectAmbientEnvironment, AMBIENT_PRESETS } from '../../services/ambientAudio';
 import { Rotate3D, ShieldCheck, AudioWaveform, VolumeX, Volume2 as VolumeIcon } from 'lucide-react';
 
@@ -91,6 +92,7 @@ export default function StoryReader({ storyData, language, printableContainerId 
   const [showClassicFlipbook, setShowClassicFlipbook] = useState(false);
   const [fullEditMode, setFullEditMode] = useState(false);
   const [showVoiceCloner, setShowVoiceCloner] = useState(false);
+  const [showPrintPreview, setShowPrintPreview] = useState(false);
 
   // ب4: تحرير الأسلوب أو الشخصيات عند بوابة المعاينة
   const [showPreviewChangePanel, setShowPreviewChangePanel] = useState(false);
@@ -1054,22 +1056,34 @@ export default function StoryReader({ storyData, language, printableContainerId 
             </div>
           </div>
 
-          <button
-            type="button"
-            disabled={busyAction !== null}
-            onClick={() => runAction('print', async () => {
-              setExportProgress(ar ? 'نجهّز ملف المطبعة...' : 'Preparing print file...');
-              try {
-                await exportPrintBook(storyData, setExportProgress);
-              } finally {
-                setExportProgress(null);
-              }
-            })}
-            className="flex min-h-12 w-full items-center justify-center gap-2 rounded-2xl border border-lantern/40 bg-lantern/10 px-4 text-sm font-semibold text-ink transition hover:brightness-105 active:scale-[0.99] disabled:opacity-50 dark:text-moonlight"
-          >
-            {busyAction === 'print' ? <Loader2 size={16} className="animate-spin" aria-hidden /> : <Printer size={16} aria-hidden />}
-            <span>{busyAction === 'print' ? exportProgress || (ar ? 'جارٍ التجهيز...' : 'Preparing...') : ar ? 'كتاب للمطبعة A5 (هوامش قص 3 مم)' : 'Print-ready book A5 (3 mm bleed)'}</span>
-          </button>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <button
+              type="button"
+              data-testid="open-print-preview-btn"
+              onClick={() => setShowPrintPreview(true)}
+              className="flex min-h-12 w-full items-center justify-center gap-2 rounded-2xl border border-lantern bg-lantern/20 px-4 text-sm font-extrabold text-ink transition-opacity hover:opacity-95 dark:text-amber-200"
+            >
+              <Printer size={16} className="text-lantern shrink-0" aria-hidden />
+              <span>{ar ? 'معاينة الطباعة (A5 / A4 / مربع 21×21)' : 'Print Preview (A5 / A4 / 21×21)'}</span>
+            </button>
+
+            <button
+              type="button"
+              disabled={busyAction !== null}
+              onClick={() => runAction('print', async () => {
+                setExportProgress(ar ? 'نجهّز ملف المطبعة...' : 'Preparing print file...');
+                try {
+                  await exportPrintBook(storyData, setExportProgress);
+                } finally {
+                  setExportProgress(null);
+                }
+              })}
+              className="flex min-h-12 w-full items-center justify-center gap-2 rounded-2xl border border-lantern/40 bg-lantern/10 px-4 text-sm font-semibold text-ink transition hover:brightness-105 active:scale-[0.99] disabled:opacity-50 dark:text-moonlight"
+            >
+              {busyAction === 'print' ? <Loader2 size={16} className="animate-spin" aria-hidden /> : <Download size={16} aria-hidden />}
+              <span>{busyAction === 'print' ? exportProgress || (ar ? 'جارٍ التجهيز...' : 'Preparing...') : ar ? 'تصدير سريع للمطبعة A5 (3 مم)' : 'Quick Print A5 (3 mm bleed)'}</span>
+            </button>
+          </div>
 
           <details className="rounded-2xl border border-dream/20 bg-white/50 p-4 dark:bg-white/5" dir={ar ? 'rtl' : 'ltr'}>
             <summary className="flex cursor-pointer items-center justify-between gap-2 font-display text-sm font-semibold text-ink dark:text-moonlight">
@@ -1198,6 +1212,15 @@ export default function StoryReader({ storyData, language, printableContainerId 
           language={language}
           onVoiceSelected={(v) => narration.setVoice(v)}
           onClose={() => setShowVoiceCloner(false)}
+        />
+      )}
+
+      {showPrintPreview && (
+        <PrintPreviewModal
+          story={storyData}
+          ar={ar}
+          onClose={() => setShowPrintPreview(false)}
+          onStoryUpdated={(updated) => onStoryChange(() => updated)}
         />
       )}
 

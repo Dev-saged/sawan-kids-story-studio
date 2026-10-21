@@ -375,3 +375,43 @@ export const diagnoseImagePaths = async (): Promise<{ tests: PathTest[]; keys: K
     },
   };
 };
+
+// ب3: قراءة صحة محركات الصور في الجلسة (down Map) دون أي طلبات شبكة
+export interface SessionEngineHealthEntry {
+  slot: string;
+  down: boolean;
+  remainingMs: number;
+}
+
+export const getImageEngineSessionHealth = (): {
+  engines: SessionEngineHealthEntry[];
+  models: SessionEngineHealthEntry[];
+  lastEngine: EngineId | null;
+} => {
+  const now = Date.now();
+  const engineEntries: SessionEngineHealthEntry[] = [];
+  for (const [k, until] of down.entries()) {
+    const rem = Math.max(0, until - now);
+    engineEntries.push({
+      slot: k.replace(/:.*$/, ''),
+      down: rem > 0,
+      remainingMs: rem,
+    });
+  }
+  const modelEntries: SessionEngineHealthEntry[] = [];
+  for (const [k, until] of directModelDown.entries()) {
+    const rem = Math.max(0, until - now);
+    const modelName = k.split(':').pop() || k;
+    modelEntries.push({
+      slot: modelName,
+      down: rem > 0,
+      remainingMs: rem,
+    });
+  }
+  return {
+    engines: engineEntries,
+    models: modelEntries,
+    lastEngine,
+  };
+};
+

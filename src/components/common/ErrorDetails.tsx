@@ -1,5 +1,5 @@
 import { useState, useSyncExternalStore } from 'react';
-import { Check, ClipboardCopy, ImageIcon, Stethoscope } from 'lucide-react';
+import { Activity, Check, ClipboardCopy, ImageIcon, Stethoscope } from 'lucide-react';
 import { getApiRequestHistory, getErrorLog, subscribeApiHistory, subscribeErrorLog } from '../../services/api';
 import { getFreeCreds, isKeyRemembered, keyHint } from '../../services/apiKey';
 import {
@@ -12,42 +12,41 @@ import {
 } from '../../services/imageEngine';
 import { getGeneratorLogs } from '../../services/gemini';
 import { APP_VERSION } from '../../config';
+import { buildSafeHealthReportJson } from '../../services/appHealth';
+import AppHealthModal from './AppHealthModal';
 
-// زر «تفاصيل تقنية»: يعرض لكل صورة المحرك الذي رسمها (gemini / flux / pollinations) وأول 300 حرف من الطلب الفعلي، إضافةً لسجل الأخطاء وAPI
+// زر «تفاصيل تقنية»: يعرض لكل صورة المحرك الذي رسمها (gemini / flux / pollinations) وأول 300 حرف من الطلب الفعلي، إضافةً لسجل الأخطاء وزر «حالة التطبيق»
 export default function ErrorDetails({ ar, alwaysShow = false }: { ar: boolean; alwaysShow?: boolean }) {
   const log = useSyncExternalStore(subscribeErrorLog, getErrorLog);
   const apiHistory = useSyncExternalStore(subscribeApiHistory, getApiRequestHistory);
   const drawnImages = useSyncExternalStore(subscribeDrawnImages, getDrawnImagesLog);
   const [open, setOpen] = useState(false);
+  const [showHealthModal, setShowHealthModal] = useState(false);
   const [copied, setCopied] = useState(false);
   const [diag, setDiag] = useState<{ tests: PathTest[]; keys: KeyReport } | null>(null);
   const [testing, setTesting] = useState(false);
   if (!alwaysShow && !log.length && !diag && !apiHistory.length && !drawnImages.length) return null;
 
   const buildReport = () =>
-    JSON.stringify(
-      {
-        app: APP_VERSION,
-        key: keyHint(),
-        remembered: isKeyRemembered(),
-        freeEngine: Boolean(getFreeCreds()),
-        lastImageEngine: getLastEngine() ?? undefined,
-        drawnImages: drawnImages.slice(0, 20).map((img) => ({
-          kind: img.kind,
-          engine: img.engine,
-          model: img.model,
-          promptFirst300Chars: img.promptSnippet.slice(0, 300),
-          at: img.timestamp,
-        })),
-        keys: diag?.keys,
-        imagePaths: diag?.tests,
-        errors: log,
-        recentApiRequests: apiHistory.slice(0, 12),
-        generatorLogs: getGeneratorLogs().slice(-10),
-      },
-      null,
-      2
-    );
+    buildSafeHealthReportJson({
+      app: APP_VERSION,
+      key: keyHint(),
+      remembered: isKeyRemembered(),
+      freeEngine: Boolean(getFreeCreds()),
+      lastImageEngine: getLastEngine() ?? undefined,
+      drawnImages: drawnImages.slice(0, 20).map((img) => ({
+        kind: img.kind,
+        engine: img.engine,
+        model: img.model,
+        promptFirst300Chars: img.promptSnippet.slice(0, 300),
+        at: img.timestamp,
+      })),
+      keys: diag?.keys,
+      imagePaths: diag?.tests,
+      errors: log.slice(0, 5),
+      recentApiRequests: apiHistory.slice(0, 12),
+      generatorLogs: getGeneratorLogs().slice(-10),
+    });
 
   const runTests = async () => {
     setTesting(true);
@@ -86,15 +85,25 @@ export default function ErrorDetails({ ar, alwaysShow = false }: { ar: boolean; 
 
   return (
     <div className="w-full text-start" dir="ltr">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        aria-expanded={open}
-        className="mx-auto flex min-h-11 items-center gap-1.5 text-xs font-semibold text-ink/60 underline-offset-4 hover:underline dark:text-moonlight/60"
-      >
-        <Stethoscope size={14} aria-hidden />
-        {ar ? 'تفاصيل تقنية' : 'Technical details'}
-      </button>
+      <div className="flex flex-wrap items-center justify-center gap-3">
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          aria-expanded={open}
+          className="inline-flex min-h-11 items-center gap-1.5 text-xs font-semibold text-ink/60 underline-offset-4 hover:underline dark:text-moonlight/60"
+        >
+          <Stethoscope size={14} aria-hidden />
+          {ar ? 'تفاصيل تقنية' : 'Technical details'}
+        </button>
+        <button
+          type="button"
+          onClick={() => setShowHealthModal(true)}
+          className="inline-flex min-h-11 items-center gap-1.5 text-xs font-bold text-lantern underline-offset-4 hover:underline"
+        >
+          <Activity size={14} aria-hidden />
+          {ar ? 'حالة التطبيق' : 'App Health'}
+        </button>
+      </div>
       {open && (
         <div className="mt-1 space-y-2">
           {drawnImages.length > 0 && (
@@ -126,6 +135,8 @@ export default function ErrorDetails({ ar, alwaysShow = false }: { ar: boolean; 
           </button>
         </div>
       )}
+      {showHealthModal && <AppHealthModal ar={ar} onClose={() => setShowHealthModal(false)} />}
     </div>
   );
 }
+

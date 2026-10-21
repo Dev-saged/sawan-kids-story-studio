@@ -197,6 +197,111 @@ export const suggestAlternativeTitles = async (story: StoryData, signal?: AbortS
   return data.titles.slice(0, 3);
 };
 
+// ب2: «حسّن فكرتي» — تنقية المدخلات، التحقق من المخرجات وقصّ الطول (40-70 كلمة)، التراجع، وحدّ الطلبات (طلب كل 3 ثوانٍ)
+export const IMPROVE_IDEA_COOLDOWN_MS = 3000;
+
+export const sanitizeUserIdeaText = (text: string): string =>
+  String(text ?? '')
+    .replace(/<[^>]*>/g, '')
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, MAX_IDEA_LENGTH);
+
+export const canRequestImproveIdea = (lastRequestAt: number, now = Date.now()): boolean => {
+  if (!lastRequestAt || lastRequestAt <= 0) return true;
+  return now - lastRequestAt >= IMPROVE_IDEA_COOLDOWN_MS;
+};
+
+export const validateAndClipImprovedIdeas = (
+  raw: unknown,
+  maxWords = 70,
+  maxChars = MAX_IDEA_LENGTH
+): string[] => {
+  const arr = Array.isArray(raw)
+    ? raw
+    : raw && typeof raw === 'object' && Array.isArray((raw as { suggestions?: unknown[] }).suggestions)
+      ? (raw as { suggestions: unknown[] }).suggestions
+      : [];
+  const out: string[] = [];
+  for (const item of arr) {
+    if (typeof item !== 'string') continue;
+    const stripped = sanitizeUserIdeaText(item);
+    if (!stripped) continue;
+    const clippedWords = capWords(stripped, maxWords);
+    const bounded = clippedWords.slice(0, maxChars).trim();
+    if (countWords(bounded) >= 5) {
+      out.push(bounded);
+    }
+    if (out.length === 3) break;
+  }
+  return out;
+};
+
+export const applyImprovedIdeaWithUndo = (
+  currentIdea: string,
+  previousOriginal: string | null,
+  selectedSuggestion: string
+): { nextIdea: string; originalIdea: string } => {
+  const originalIdea = previousOriginal !== null ? previousOriginal : currentIdea;
+  const nextIdea = sanitizeUserIdeaText(selectedSuggestion);
+  return { nextIdea, originalIdea };
+};
+
+export const restoreOriginalIdea = (
+  originalIdea: string | null,
+  currentIdea: string
+): { restoredIdea: string; originalIdea: null } => ({
+  restoredIdea: originalIdea !== null ? originalIdea : currentIdea,
+  originalIdea: null,
+});
+
+let lastImproveIdeaRequestAt = 0;
+export const resetImproveIdeaCooldownForTests = () => {
+  lastImproveIdeaRequestAt = 0;
+};
+
+export interface ImproveIdeaParams {
+  idea: string;
+  language: Language;
+  dialect: string;
+  storyType: string;
+  ageGroup: string;
+}
+
+export const improveStoryIdea = async (params: ImproveIdeaParams, signal?: AbortSignal): Promise<string[]> => {
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+    throw new ApiError('OFFLINE', 'لا يوجد اتصال بالإنترنت حالياً.', undefined, '/api/improve-idea');
+  }
+  const cleanIdea = sanitizeUserIdeaText(params.idea);
+  if (countWords(cleanIdea) < 3) {
+    throw new ApiError('FAILED', 'يرجى كتابة 3 كلمات على الأقل قبل تحسين الفكرة.', undefined, '/api/improve-idea');
+  }
+  const now = Date.now();
+  if (!canRequestImproveIdea(lastImproveIdeaRequestAt, now)) {
+    throw new ApiError('BUSY', 'يرجى الانتظار 3 ثوانٍ قبل طلب تحسين جديد.', undefined, '/api/improve-idea');
+  }
+  lastImproveIdeaRequestAt = now;
+
+  const data = await postJson<{ suggestions: string[] }>(
+    '/api/improve-idea',
+    {
+      idea: cleanIdea,
+      language: params.language,
+      dialect: params.dialect,
+      storyType: params.storyType,
+      ageGroup: params.ageGroup,
+    },
+    signal,
+    2
+  );
+  const validated = validateAndClipImprovedIdeas(data, 70, MAX_IDEA_LENGTH);
+  if (validated.length < 3) {
+    throw new ApiError('FAILED', 'تعذر توليد 3 صياغات محسّنة مكتملة. حاول مرة أخرى.', undefined, '/api/improve-idea');
+  }
+  return validated;
+};
+
 export interface ProgressInfo {
   progress: number;
   message: string;

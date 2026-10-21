@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, type FormEvent, type TouchEvent } from 'react';
 import {
+  AlertTriangle,
   BookmarkPlus,
   Check,
   ChevronDown,
@@ -21,7 +22,9 @@ import {
   Mic,
   Palette,
   PenTool,
+  RefreshCw,
   Rocket,
+  RotateCcw,
   Settings2,
   ShieldCheck,
   Smile,
@@ -32,6 +35,7 @@ import {
   Users,
   Volume2,
   Wand2,
+  WifiOff,
   X,
 } from 'lucide-react';
 import VoiceDictationModal from './VoiceDictationModal';
@@ -40,6 +44,11 @@ import LuxurySelect, { type LuxuryOption } from '../common/LuxurySelect';
 import { DialectBadgeSvg, StyleThumb, TemplateIconSvg } from '../common/BrandIcons';
 import OnboardingModal, { hasSeenOnboarding } from '../common/OnboardingModal';
 import { BookTemplate } from '../../data/bookTemplates';
+import {
+  dismissDailyIdeaForToday,
+  isDailyIdeaDismissedToday,
+  pickDailyIdea,
+} from '../../data/dailyIdeas';
 import { getStoryDraft, saveStoryDraft, clearStoryDraft } from '../../services/draftManager';
 import {
   AGE_GROUPS,
@@ -89,6 +98,15 @@ import {
   saveCustomPreset,
 } from '../../services/db';
 import { getVoice, setVoice as persistVoice, VOICE_OPTIONS } from '../../services/narration';
+import {
+  applyImprovedIdeaWithUndo,
+  canRequestImproveIdea,
+  IMPROVE_IDEA_COOLDOWN_MS,
+  improveStoryIdea,
+  restoreOriginalIdea,
+  sanitizeUserIdeaText,
+} from '../../services/gemini';
+import { ApiError } from '../../services/api';
 
 export interface TeenDramaTemplate {
   id: string;
@@ -359,6 +377,100 @@ export default function StorySetupForm({ initialIdea, language, onSubmit, onLoad
   const [selectedFruitTemplate, setSelectedFruitTemplate] = useState<string | null>(
     () => savedWizard?.selectedFruitTemplate ?? FRUIT_FANTASY_TEMPLATES[0].id
   );
+  const [dailyIdeaDismissed, setDailyIdeaDismissed] = useState<boolean>(() => isDailyIdeaDismissedToday());
+  const [dailyIdeaOffset, setDailyIdeaOffset] = useState<number>(0);
+
+  const currentDailyIdea = pickDailyIdea(new Date(), presetId, dailyIdeaOffset);
+  const dailyIdeaGenreObj = [...PRIMARY_STORY_TYPES, ...EXTRA_STORY_TYPES].find((t) => t.value === currentDailyIdea.storyType);
+  const dailyIdeaGenreLabel = dailyIdeaGenreObj ? (ar ? dailyIdeaGenreObj.label.ar : dailyIdeaGenreObj.label.en) : currentDailyIdea.storyType;
+
+  const handleApplyDailyIdea = () => {
+    setIdea(currentDailyIdea.idea[ar ? 'ar' : 'en'].slice(0, MAX_IDEA_LENGTH));
+    setStoryType(currentDailyIdea.storyType);
+    setStepValidationError(false);
+    setWizardStep(1);
+    setTimeout(() => ideaInputRef.current?.focus(), 60);
+  };
+
+  const handleDismissDailyIdea = () => {
+    dismissDailyIdeaForToday();
+    setDailyIdeaDismissed(true);
+  };
+
+  // ب2: حالة «حسّن فكرتي» (3 بطاقات + تراجع + حد 3 ثوانٍ + حالات تحميل/فشل/عدم اتصال)
+  const [improvedIdeas, setImprovedIdeas] = useState<string[]>([]);
+  const [improvingIdea, setImprovingIdea] = useState<boolean>(false);
+  const [improveError, setImproveError] = useState<string | null>(null);
+  const [improveOffline, setImproveOffline] = useState<boolean>(false);
+  const [originalIdeaBeforeImprove, setOriginalIdeaBeforeImprove] = useState<string | null>(null);
+  const [lastImproveClickAt, setLastImproveClickAt] = useState<number>(0);
+  const [cooldownActive, setCooldownActive] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (!cooldownActive) return;
+    const t = setTimeout(() => setCooldownActive(false), IMPROVE_IDEA_COOLDOWN_MS);
+    return () => clearTimeout(t);
+  }, [cooldownActive, lastImproveClickAt]);
+
+  const handleImproveIdea = async () => {
+    const clean = sanitizeUserIdeaText(idea);
+    if (clean.split(/\s+/).filter(Boolean).length < 3 || improvingIdea) return;
+    const now = Date.now();
+    if (!canRequestImproveIdea(lastImproveClickAt, now)) {
+      return;
+    }
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+      setImproveOffline(true);
+      setImproveError(
+        ar
+          ? 'لا يوجد اتصال بالإنترنت حالياً. تحقّق من الشبكة ثم أعد المحاولة.'
+          : 'You are currently offline. Please check your connection and try again.'
+      );
+      return;
+    }
+    setLastImproveClickAt(now);
+    setCooldownActive(true);
+    setImprovingIdea(true);
+    setImproveError(null);
+    setImproveOffline(false);
+    try {
+      const results = await improveStoryIdea({
+        idea: clean,
+        language,
+        dialect: ar ? dialect : 'Modern Standard',
+        storyType,
+        ageGroup,
+      });
+      setImprovedIdeas(results);
+    } catch (err) {
+      const isOff = err instanceof ApiError && err.code === 'OFFLINE';
+      setImproveOffline(isOff);
+      setImproveError(
+        isOff
+          ? ar
+            ? 'لا يوجد اتصال بالإنترنت حالياً. تحقّق من الشبكة ثم أعد المحاولة.'
+            : 'You are currently offline. Please check your connection and try again.'
+          : ar
+            ? 'تعذّر تحسين الفكرة في هذه اللحظة. يمكنك المحاولة مرة أخرى.'
+            : 'Could not improve your idea right now. Please try again.'
+      );
+    } finally {
+      setImprovingIdea(false);
+    }
+  };
+
+  const handleSelectImprovedIdea = (suggestion: string) => {
+    const { nextIdea, originalIdea } = applyImprovedIdeaWithUndo(idea, originalIdeaBeforeImprove, suggestion);
+    setOriginalIdeaBeforeImprove(originalIdea);
+    setIdea(nextIdea);
+    setStepValidationError(false);
+  };
+
+  const handleUndoImprovedIdea = () => {
+    const { restoredIdea, originalIdea } = restoreOriginalIdea(originalIdeaBeforeImprove, idea);
+    setIdea(restoredIdea);
+    setOriginalIdeaBeforeImprove(originalIdea);
+  };
 
   const ideaInputRef = useRef<HTMLTextAreaElement | null>(null);
   const touchStartXRef = useRef<number | null>(null);
@@ -690,6 +802,62 @@ export default function StorySetupForm({ initialIdea, language, onSubmit, onLoad
     >
       {showOnboarding && <OnboardingModal language={language} onClose={() => setShowOnboarding(false)} />}
 
+      {/* ب1: بطاقة «فكرة اليوم» القابلة للإغلاق في أعلى شاشة الاستوديو (تُختار محلياً بلا أي طلب API) */}
+      {!dailyIdeaDismissed && !series && (
+        <div
+          data-testid="daily-idea-card"
+          className="luxury-card relative overflow-hidden border border-lantern/40 bg-gradient-to-r from-lantern/15 via-white/80 to-dream/10 p-3 sm:p-4 dark:from-lantern/10 dark:via-white/[0.04] dark:to-dream/10"
+        >
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0 flex-1 space-y-1">
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="inline-flex items-center gap-1 rounded-full bg-lantern px-2.5 py-0.5 text-[11px] font-extrabold text-ink shadow-2xs">
+                  <Sparkles size={12} aria-hidden />
+                  <span>{ar ? 'فكرة اليوم' : 'Idea of the Day'}</span>
+                </span>
+                <span className="rounded-full border border-lantern/35 bg-lantern/10 px-2 py-0.5 text-[11px] font-bold text-ink dark:text-amber-200">
+                  {ar ? currentDailyIdea.title.ar : currentDailyIdea.title.en}
+                </span>
+                <span className="rounded-md bg-dream/15 px-2 py-0.5 text-[10px] font-bold text-ink/75 dark:text-moonlight/80">
+                  {dailyIdeaGenreLabel}
+                </span>
+              </div>
+              <p className="text-xs sm:text-sm font-medium leading-relaxed text-ink/90 dark:text-moonlight/90">
+                {ar ? currentDailyIdea.idea.ar : currentDailyIdea.idea.en}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={handleDismissDailyIdea}
+              className="flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-xl text-ink/55 transition hover:bg-black/5 hover:text-coral dark:text-moonlight/60 dark:hover:bg-white/10"
+              aria-label={ar ? 'إغلاق فكرة اليوم' : 'Dismiss daily idea'}
+              title={ar ? 'إغلاق لليوم' : 'Dismiss for today'}
+            >
+              <X size={16} aria-hidden />
+            </button>
+          </div>
+
+          <div className="mt-2.5 flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={handleApplyDailyIdea}
+              className="inline-flex min-h-11 items-center gap-1.5 rounded-xl bg-lantern px-3.5 py-1.5 text-xs font-extrabold text-ink shadow-2xs transition hover:brightness-105 active:scale-95"
+            >
+              <Wand2 size={14} aria-hidden />
+              <span>{ar ? 'ابدأ بهذه الفكرة' : 'Start with this idea'}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setDailyIdeaOffset((prev) => prev + 1)}
+              className="inline-flex min-h-11 items-center gap-1.5 rounded-xl border border-dream/35 bg-white/75 px-3.5 py-1.5 text-xs font-bold text-ink transition hover:border-lantern active:scale-95 dark:border-white/15 dark:bg-white/5 dark:text-moonlight"
+            >
+              <Sparkles size={13} className="text-lantern" aria-hidden />
+              <span>{ar ? 'فكرة أخرى' : 'Another idea'}</span>
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* شريط معالج الاستوديو العلوي من 3 خطوات («الفكرة»، «الشكل»، «التفاصيل») */}
       <div className="luxury-card p-3 sm:p-4 space-y-2.5">
         <div className="flex items-center justify-between gap-2">
@@ -894,6 +1062,137 @@ export default function StorySetupForm({ initialIdea, language, onSubmit, onLoad
               <span className="font-mono text-[11px] text-ink/60 dark:text-moonlight/60">
                 {idea.length}/{MAX_IDEA_LENGTH}
               </span>
+            </div>
+
+            {/* ب2: زر «حسّن فكرتي» + زر التراجع + حالات التحميل والفشل وعدم الاتصال والبطاقات الـ3 */}
+            <div className="space-y-2.5 pt-1">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    data-testid="improve-idea-btn"
+                    disabled={words < 3 || improvingIdea || cooldownActive || disabled}
+                    onClick={handleImproveIdea}
+                    className="inline-flex min-h-11 items-center gap-1.5 rounded-xl border border-lantern/50 bg-lantern/15 px-3.5 py-2 text-xs font-extrabold text-ink shadow-2xs transition-opacity hover:bg-lantern/25 disabled:cursor-not-allowed disabled:opacity-50 dark:text-amber-200"
+                  >
+                    <Wand2 size={14} className="text-lantern shrink-0" aria-hidden />
+                    <span>{ar ? 'حسّن فكرتي' : 'Improve my idea'}</span>
+                  </button>
+
+                  {originalIdeaBeforeImprove !== null && (
+                    <button
+                      type="button"
+                      data-testid="undo-improve-idea-btn"
+                      onClick={handleUndoImprovedIdea}
+                      className="inline-flex min-h-11 items-center gap-1.5 rounded-xl border border-dream/35 bg-white/75 px-3 py-2 text-xs font-bold text-ink transition-opacity hover:border-lantern dark:border-white/15 dark:bg-white/10 dark:text-moonlight"
+                    >
+                      <RotateCcw size={13} className="text-lantern shrink-0" aria-hidden />
+                      <span>{ar ? 'تراجع للنص الأصلي' : 'Undo to original'}</span>
+                    </button>
+                  )}
+                </div>
+
+                {words < 3 && (
+                  <span className="text-[11px] font-semibold text-ink/65 dark:text-moonlight/70">
+                    {ar ? 'يُفعَّل بعد كتابة 3 كلمات على الأقل' : 'Enabled after at least 3 words'}
+                  </span>
+                )}
+              </div>
+
+              {/* حالة التحميل: 3 بطاقات Skeleton تحترم prefers-reduced-motion */}
+              {improvingIdea && (
+                <div
+                  role="status"
+                  aria-live="polite"
+                  className="grid grid-cols-1 gap-2 sm:grid-cols-3"
+                >
+                  {[0, 1, 2].map((idx) => (
+                    <div
+                      key={idx}
+                      className="space-y-2 rounded-2xl border border-lantern/30 bg-white/70 p-3 dark:border-white/10 dark:bg-white/5"
+                    >
+                      <div className="h-3.5 w-24 animate-pulse motion-reduce:animate-none rounded-md bg-lantern/30" />
+                      <div className="h-3 w-full animate-pulse motion-reduce:animate-none rounded-md bg-dream/20" />
+                      <div className="h-3 w-5/6 animate-pulse motion-reduce:animate-none rounded-md bg-dream/20" />
+                      <div className="h-3 w-4/6 animate-pulse motion-reduce:animate-none rounded-md bg-dream/20" />
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* حالة الفشل أو عدم الاتصال */}
+              {!improvingIdea && improveError && (
+                <div
+                  role="alert"
+                  className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-coral/40 bg-coral/10 px-3.5 py-2.5 text-xs font-bold text-ink dark:text-moonlight"
+                >
+                  <div className="flex items-center gap-2">
+                    {improveOffline ? (
+                      <WifiOff size={15} className="text-coral shrink-0" aria-hidden />
+                    ) : (
+                      <AlertTriangle size={15} className="text-coral shrink-0" aria-hidden />
+                    )}
+                    <span>{improveError}</span>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={cooldownActive}
+                    onClick={handleImproveIdea}
+                    className="inline-flex min-h-11 items-center gap-1.5 rounded-xl bg-lantern px-3 py-1.5 text-xs font-extrabold text-ink transition-opacity hover:opacity-95 disabled:opacity-50"
+                  >
+                    <RefreshCw size={13} aria-hidden />
+                    <span>{ar ? 'إعادة المحاولة' : 'Retry'}</span>
+                  </button>
+                </div>
+              )}
+
+              {/* البطاقات الـ3 للصياغات المحسّنة */}
+              {!improvingIdea && improvedIdeas.length > 0 && (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-display text-xs font-extrabold text-ink dark:text-amber-200">
+                      {ar ? 'اختر إحدى الصياغات المحسّنة لاستبدال فكرتك:' : 'Pick an improved version to replace your idea:'}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setImprovedIdeas([])}
+                      className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-xl text-ink/60 hover:text-ink dark:text-moonlight/60 dark:hover:text-moonlight"
+                      aria-label={ar ? 'إخفاء الاقتراحات' : 'Hide suggestions'}
+                    >
+                      <X size={14} aria-hidden />
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
+                    {improvedIdeas.map((suggestion, idx) => {
+                      const isSelected = idea.trim() === suggestion.trim();
+                      return (
+                        <button
+                          key={idx}
+                          type="button"
+                          onClick={() => handleSelectImprovedIdea(suggestion)}
+                          className={`flex min-h-11 flex-col justify-between gap-2 rounded-2xl border p-3 text-start transition-opacity ${
+                            isSelected
+                              ? 'border-lantern bg-lantern/15 shadow-xs'
+                              : 'border-dream/30 bg-white/80 hover:border-lantern/60 dark:border-white/15 dark:bg-white/5'
+                          }`}
+                        >
+                          <p className="text-xs leading-relaxed text-ink dark:text-moonlight">{suggestion}</p>
+                          <div className="flex items-center justify-between gap-2 border-t border-dream/15 pt-1.5 text-[11px] font-extrabold text-ink/75 dark:border-white/10 dark:text-amber-200">
+                            <span>
+                              {ar ? `صياغة ${idx + 1}` : `Option ${idx + 1}`} ({suggestion.split(/\s+/).filter(Boolean).length}{' '}
+                              {ar ? 'كلمة' : 'words'})
+                            </span>
+                            <span className="inline-flex items-center gap-1 text-lantern">
+                              {isSelected ? <Check size={13} aria-hidden /> : <Sparkles size={12} aria-hidden />}
+                              <span>{isSelected ? (ar ? 'مُختارة' : 'Selected') : ar ? 'استخدم هذه' : 'Use this'}</span>
+                            </span>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
 
             <p className={hintCls}>
@@ -1238,7 +1537,7 @@ export default function StorySetupForm({ initialIdea, language, onSubmit, onLoad
                             <Volume2 size={11} className="text-lantern shrink-0" aria-hidden />
                             <span className="truncate">{presetVoiceInfo ? (ar ? presetVoiceInfo.label.ar.split(' ')[0] : presetVoiceInfo.value) : p.voice}</span>
                           </span>
-                          <DialectBadgeSvg code={presetDialectInfo?.flag ?? 'MSA'} />
+                          <DialectBadgeSvg code={presetDialectInfo?.flag ?? 'MSA'} ar={ar} />
                           <span className={`rounded bg-lantern/15 px-1.5 py-0.5 text-[10px] text-ink dark:text-amber-200 ${presetFontInfo?.className ?? ''}`}>
                             {ar ? 'أبجد' : 'Aa'}
                           </span>
@@ -1310,11 +1609,15 @@ export default function StorySetupForm({ initialIdea, language, onSubmit, onLoad
             </div>
 
             {STORY_TYPE_SPECS[storyType] && (
-              <div className="rounded-xl border border-dream/20 bg-dream/5 px-3 py-1.5 text-[11px] text-ink/75 dark:text-moonlight/75">
+              <div
+                dir={ar ? 'rtl' : 'ltr'}
+                className="rounded-xl border border-dream/20 bg-dream/5 px-3 py-1.5 text-[11px] text-ink/75 dark:text-moonlight/75 [unicode-bidi:plaintext]"
+              >
                 <span className="font-bold text-lantern">{ar ? 'قوس السرد: ' : 'Arc: '}</span>
-                <span>
-                  {STORY_TYPE_SPECS[storyType].arc.beginning} ← {STORY_TYPE_SPECS[storyType].arc.middle} ←{' '}
-                  {STORY_TYPE_SPECS[storyType].arc.climax} ← {STORY_TYPE_SPECS[storyType].arc.ending}
+                <span dir={ar ? 'rtl' : 'ltr'} className="[unicode-bidi:plaintext]">
+                  {ar
+                    ? `${STORY_TYPE_SPECS[storyType].arc.beginning} ← ${STORY_TYPE_SPECS[storyType].arc.middle} ← ${STORY_TYPE_SPECS[storyType].arc.climax} ← ${STORY_TYPE_SPECS[storyType].arc.ending}`
+                    : `${STORY_TYPE_SPECS[storyType].arcEn?.beginning ?? STORY_TYPE_SPECS[storyType].arc.beginning} → ${STORY_TYPE_SPECS[storyType].arcEn?.middle ?? STORY_TYPE_SPECS[storyType].arc.middle} → ${STORY_TYPE_SPECS[storyType].arcEn?.climax ?? STORY_TYPE_SPECS[storyType].arc.climax} → ${STORY_TYPE_SPECS[storyType].arcEn?.ending ?? STORY_TYPE_SPECS[storyType].arc.ending}`}
                 </span>
               </div>
             )}
@@ -1473,8 +1776,8 @@ export default function StorySetupForm({ initialIdea, language, onSubmit, onLoad
                   options={DIALECT_OPTIONS.map((d): LuxuryOption<ArabicDialect> => ({
                     value: d.value,
                     label: d.label,
-                    icon: <DialectBadgeSvg code={d.flag} />,
-                    badge: d.value === 'Modern Standard' ? 'فصحى' : undefined,
+                    icon: <DialectBadgeSvg code={d.flag} ar={ar} />,
+                    badge: d.value === 'Modern Standard' ? (ar ? 'فصحى' : 'MSA') : undefined,
                   }))}
                 />
               )}

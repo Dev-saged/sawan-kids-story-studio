@@ -1,18 +1,21 @@
 import { useEffect, useState } from 'react';
-import { BookMarked, ImageOff, Trash2 } from 'lucide-react';
-import { Language } from '../../types';
-import { deleteStory, listStories, type StorySummary } from '../../services/library';
+import { BookMarked, ImageOff, Loader2, Printer, Trash2 } from 'lucide-react';
+import { Language, StoryData } from '../../types';
+import { deleteStory, listStories, loadStory, type StorySummary } from '../../services/library';
+import PrintPreviewModal from '../story/PrintPreviewModal';
 
 interface Props {
   language: Language;
   onOpen: (id: string) => void;
 }
 
-// رف كتب محلي: كل قصة محفوظة بصورها وصوتها وتعمل بدون إنترنت
+// رف كتب محلي: كل قصة محفوظة بصورها وصوتها وتعمل بدون إنترنت، مع زر «معاينة الطباعة» مباشرة (ب4)
 export default function Library({ language, onOpen }: Props) {
   const ar = language === 'Arabic';
   const [items, setItems] = useState<StorySummary[] | null>(null);
   const [confirmId, setConfirmId] = useState<string | null>(null);
+  const [printStory, setPrintStory] = useState<StoryData | null>(null);
+  const [loadingPrintId, setLoadingPrintId] = useState<string | null>(null);
 
   const refresh = () => listStories().then(setItems);
   useEffect(() => {
@@ -23,6 +26,18 @@ export default function Library({ language, onOpen }: Props) {
     await deleteStory(id);
     setConfirmId(null);
     refresh();
+  };
+
+  const handleOpenPrintPreview = async (id: string) => {
+    setLoadingPrintId(id);
+    try {
+      const fullStory = await loadStory(id);
+      if (fullStory) {
+        setPrintStory(fullStory);
+      }
+    } finally {
+      setLoadingPrintId(null);
+    }
   };
 
   if (!items) {
@@ -83,14 +98,26 @@ export default function Library({ language, onOpen }: Props) {
                 </button>
               </div>
             ) : (
-              <button
-                type="button"
-                onClick={() => setConfirmId(s.id)}
-                className="absolute top-2 end-2 flex h-11 w-11 items-center justify-center rounded-full bg-black/45 text-white opacity-90 backdrop-blur transition active:scale-95"
-                aria-label={ar ? 'حذف القصة' : 'Delete story'}
-              >
-                <Trash2 size={16} />
-              </button>
+              <div className="absolute top-2 end-2 flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => handleOpenPrintPreview(s.id)}
+                  disabled={loadingPrintId === s.id}
+                  title={ar ? 'معاينة الطباعة' : 'Print Preview'}
+                  aria-label={ar ? 'معاينة الطباعة' : 'Print Preview'}
+                  className="flex h-11 w-11 items-center justify-center rounded-full bg-black/55 text-amber-200 opacity-95 backdrop-blur transition hover:bg-lantern hover:text-ink active:scale-95"
+                >
+                  {loadingPrintId === s.id ? <Loader2 size={16} className="animate-spin" /> : <Printer size={16} />}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setConfirmId(s.id)}
+                  className="flex h-11 w-11 items-center justify-center rounded-full bg-black/45 text-white opacity-90 backdrop-blur transition active:scale-95"
+                  aria-label={ar ? 'حذف القصة' : 'Delete story'}
+                >
+                  <Trash2 size={16} />
+                </button>
+              </div>
             )}
           </li>
         ))}
@@ -98,6 +125,19 @@ export default function Library({ language, onOpen }: Props) {
       <p className="text-center text-xs text-ink/45 dark:text-moonlight/45">
         {ar ? 'محفوظة على هذا الجهاز فقط' : 'Saved on this device only'}
       </p>
+
+      {printStory && (
+        <PrintPreviewModal
+          story={printStory}
+          ar={ar}
+          onClose={() => setPrintStory(null)}
+          onStoryUpdated={(updated) => {
+            setPrintStory(updated);
+            refresh();
+          }}
+        />
+      )}
     </div>
   );
 }
+
