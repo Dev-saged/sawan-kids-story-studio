@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Check, ChevronLeft, ChevronRight, Feather, Mic, Palette, Sparkles, X } from 'lucide-react';
 import { APP_VERSION, BRAND } from '../../config';
 import type { Language } from '../../types';
@@ -32,36 +33,36 @@ const SLIDES = [
     step: 1,
     icon: Feather,
     title: {
-      ar: '1. الفكرة والبطل والهوية السريعة',
-      en: '1. Idea, Hero & Quick Identity',
+      ar: '1. الفكرة: البطل والأوضاع الخاصة',
+      en: '1. Idea: Plot, Hero & Special Modes',
     },
     desc: {
-      ar: 'اختر هوية جاهزة بضغطة واحدة أو اكتب فكرة قصتك بحرية، وحدد نوع القصة من بين 16 نوعاً سردياً، واجعل طفلك بطل الحكاية بصورته أو من ألبوم الشخصيات المحفوظة.',
-      en: 'Pick a one-click identity preset or write your own idea, select from 16 narrative genres, and make your child the hero with their photo or saved character album.',
+      ar: 'اكتب فكرة قصتك أولاً أو استعن بالإملاء الصوتي، واجعل طفلك بطل الحكاية بصورته أو من ألبوم الشخصيات، واستكشف القوالب الجاهزة ودراما المراهقين وفواكه الفانتازيا.',
+      en: 'Write your story idea first or use voice dictation, make your child the hero with their photo or character album, and explore templates, Teen Drama, and Fruit Fantasy modes.',
     },
   },
   {
     step: 2,
     icon: Palette,
     title: {
-      ar: '2. الأسلوب الفني وتصميم الغلاف الحي',
-      en: '2. Art Style & Live Cover Typography',
+      ar: '2. الشكل: الهوية والأسلوب ومعاينة الغلاف',
+      en: '2. Style: Identity, Genre & Live Cover',
     },
     desc: {
-      ar: 'استعرض 18 أسلوباً فنياً بمعاينات مرسومة، واضبط أبعاد الصفحات وعددها (حتى 40 صفحة)، وعاين غلاف كتابك مباشرة بـ 12 خطاً عربياً أصيلاً و4 تأثيرات بصرية.',
-      en: 'Browse 18 illustrated art styles, choose aspect ratio and page count (up to 40 pages), and preview your cover live with 12 Arabic calligraphic fonts and 4 text effects.',
+      ar: 'اختر هوية سريعة من 16 هوية، وحدد نوع القصة من 16 نوعاً سردياً، واستعرض 18 أسلوباً فنياً مرسوماً مع معاينة حية مباشرة للغلاف تجمع العنوان والأسلوب والخط.',
+      en: 'Pick from 16 quick identities, choose from 16 story genres, browse 18 illustrated art styles, and see a live cover preview combining title, art style, and Arabic typography.',
     },
   },
   {
     step: 3,
     icon: Mic,
     title: {
-      ar: '3. السرد الصوتي وبوابة المعاينة الذكية',
-      en: '3. Voice Narration & Smart Preview Gate',
+      ar: '3. التفاصيل: اللهجة والصوت والانطلاق',
+      en: '3. Details: Dialect, Voice & Launch',
     },
     desc: {
-      ar: 'اختر من 19 لهجة عربية والفصحى المشكّلة، وحدد صوت الراوي أو سجّل صوت العائلة، مع ميزة معاينة الغلاف والصفحة الأولى قبل إكمال رسم باقي الكتاب.',
-      en: 'Select from 19 Arabic dialects and Fusha, pick a narrator or record family voice, and review the cover and Page 1 before painting the rest of the book.',
+      ar: 'اختر من 19 لهجة عربية والفصحى المشكّلة، وحدد صوت الراوي والفئة العمرية وطول القصة ونسبة الأبعاد والخيارات المتقدمة، ثم راجع الملخص وأنشئ قصتك.',
+      en: 'Select from 19 Arabic dialects and Fusha, choose narrator voice, age group, page count, aspect ratio, and advanced options, then review your summary and create.',
     },
   },
 ];
@@ -77,15 +78,15 @@ export default function OnboardingModal({ language, onClose }: OnboardingModalPr
     onClose();
   };
 
-  return (
+  const modalContent = (
     <div
       dir={ar ? 'rtl' : 'ltr'}
       role="dialog"
       aria-modal="true"
       aria-labelledby="onboarding-title"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 p-4 backdrop-blur-sm animate-[fadeUp_220ms_ease-out]"
+      className="fixed inset-0 top-0 right-0 bottom-0 left-0 z-[100] flex min-h-screen min-h-dvh w-full items-center justify-center bg-black/75 p-4 pb-[calc(1rem+env(safe-area-inset-bottom,0px))] backdrop-blur-md"
     >
-      <div className="luxury-card relative w-full max-w-lg overflow-hidden border border-lantern/35 bg-moonlight p-6 shadow-2xl dark:bg-dusk sm:p-7">
+      <div className="luxury-card relative w-full max-w-lg overflow-hidden border border-lantern/35 bg-moonlight p-6 shadow-2xl animate-[fadeUp_220ms_ease-out] dark:bg-dusk sm:p-7">
         <div className="flex items-center justify-between gap-3 border-b border-dream/20 pb-4">
           <div className="flex items-center gap-2.5">
             <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-lantern text-ink shadow-xs">
@@ -191,4 +192,6 @@ export default function OnboardingModal({ language, onClose }: OnboardingModalPr
       </div>
     </div>
   );
+
+  return typeof document !== 'undefined' ? createPortal(modalContent, document.body) : modalContent;
 }

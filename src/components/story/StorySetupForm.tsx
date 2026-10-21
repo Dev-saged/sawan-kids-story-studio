@@ -1,4 +1,4 @@
-import { useState, useEffect, type FormEvent } from 'react';
+import { useState, useEffect, useRef, type FormEvent, type TouchEvent } from 'react';
 import {
   BookmarkPlus,
   Check,
@@ -22,6 +22,7 @@ import {
   Palette,
   PenTool,
   Rocket,
+  Settings2,
   ShieldCheck,
   Smile,
   Smartphone,
@@ -248,6 +249,49 @@ export const FRUIT_FANTASY_TEMPLATES: FruitFantasyTemplate[] = [
 
 export type WizardStep = 1 | 2 | 3;
 
+export const WIZARD_STATE_STORAGE_KEY = 'sajed_wizard_state_v3';
+
+interface PersistedWizardState {
+  wizardStep: WizardStep;
+  idea: string;
+  dialect: ArabicDialect;
+  ageGroup: AgeGroup;
+  storyType: StoryType;
+  pageCount: number;
+  artStyle: ArtStyle;
+  aspectRatio: AspectRatio;
+  presetId: string;
+  coverFontStyle: CoverFontStyle;
+  coverTextEffect: CoverTextEffect;
+  ambientPreset: AmbientPresetId;
+  selectedVoice: NarratorVoice;
+  isTeenDrama: boolean;
+  selectedTeenTemplate: string | null;
+  isFruitFantasy: boolean;
+  selectedFruitTemplate: string | null;
+  hero: ChildProfile | null;
+  selectedAlbumCharIds: string[];
+}
+
+const loadPersistedWizardState = (): Partial<PersistedWizardState> | null => {
+  try {
+    const raw = localStorage.getItem(WIZARD_STATE_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<PersistedWizardState>;
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch {
+    return null;
+  }
+};
+
+const savePersistedWizardState = (state: PersistedWizardState): void => {
+  try {
+    localStorage.setItem(WIZARD_STATE_STORAGE_KEY, JSON.stringify(state));
+  } catch {
+    // ignore storage errors
+  }
+};
+
 interface Props {
   initialIdea?: string;
   language: Language;
@@ -273,46 +317,108 @@ const countWords = (text: string): number => text.trim().split(/\s+/).filter(Boo
 
 export default function StorySetupForm({ initialIdea, language, onSubmit, onLoadStory, canLoadStory, disabled, series, onCancelSeries }: Props) {
   const ar = language === 'Arabic';
-  const [wizardStep, setWizardStep] = useState<WizardStep>(1);
+  const savedWizard = !initialIdea && !series ? loadPersistedWizardState() : null;
+
+  const [wizardStep, setWizardStep] = useState<WizardStep>(() => {
+    const st = savedWizard?.wizardStep;
+    return st === 1 || st === 2 || st === 3 ? st : 1;
+  });
   const [showAllSteps, setShowAllSteps] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(() => !hasSeenOnboarding());
+  const [stepValidationError, setStepValidationError] = useState(false);
+  const [showAdvancedOptions, setShowAdvancedOptions] = useState(false);
 
-  const [idea, setIdea] = useState(() => (initialIdea ?? '').slice(0, MAX_IDEA_LENGTH));
-  const [dialect, setDialect] = useState<ArabicDialect>(() => series?.dialect ?? readPreset().dialect);
-  const [ageGroup, setAgeGroup] = useState<AgeGroup>(() => series?.ageGroup ?? '4-6');
-  const [storyType, setStoryType] = useState<StoryType>('Bedtime');
-  const [pageCount, setPageCount] = useState(6);
-  const [artStyle, setArtStyle] = useState<ArtStyle>(() => series?.artStyle ?? readPreset().artStyle);
-  const [aspectRatio, setAspectRatio] = useState<AspectRatio>(() => series?.aspectRatio ?? '4:3');
-  const [hero, setHero] = useState<ChildProfile | null>(null);
-  const [presetId, setPresetId] = useState<string>(() => readPreset().id);
-  const [coverFontStyle, setCoverFontStyle] = useState<CoverFontStyle>(() => readPreset().coverFont ?? 'kufi');
-  const [coverTextEffect, setCoverTextEffect] = useState<CoverTextEffect>('gold');
-  const [ambientPreset, setAmbientPreset] = useState<AmbientPresetId>(() => readPreset().ambientPreset ?? 'night');
-  const [selectedVoice, setSelectedVoice] = useState<NarratorVoice>(() => getVoice());
+  const [idea, setIdea] = useState(() => (initialIdea ?? savedWizard?.idea ?? '').slice(0, MAX_IDEA_LENGTH));
+  const [dialect, setDialect] = useState<ArabicDialect>(() => series?.dialect ?? savedWizard?.dialect ?? readPreset().dialect);
+  const [ageGroup, setAgeGroup] = useState<AgeGroup>(() => series?.ageGroup ?? savedWizard?.ageGroup ?? '4-6');
+  const [storyType, setStoryType] = useState<StoryType>(() => savedWizard?.storyType ?? 'Bedtime');
+  const [pageCount, setPageCount] = useState<number>(() => savedWizard?.pageCount ?? 6);
+  const [artStyle, setArtStyle] = useState<ArtStyle>(() => series?.artStyle ?? savedWizard?.artStyle ?? readPreset().artStyle);
+  const [aspectRatio, setAspectRatio] = useState<AspectRatio>(() => series?.aspectRatio ?? savedWizard?.aspectRatio ?? '4:3');
+  const [hero, setHero] = useState<ChildProfile | null>(() => savedWizard?.hero ?? null);
+  const [presetId, setPresetId] = useState<string>(() => savedWizard?.presetId ?? readPreset().id);
+  const [coverFontStyle, setCoverFontStyle] = useState<CoverFontStyle>(() => savedWizard?.coverFontStyle ?? readPreset().coverFont ?? 'kufi');
+  const [coverTextEffect, setCoverTextEffect] = useState<CoverTextEffect>(() => savedWizard?.coverTextEffect ?? 'gold');
+  const [ambientPreset, setAmbientPreset] = useState<AmbientPresetId>(() => savedWizard?.ambientPreset ?? readPreset().ambientPreset ?? 'night');
+  const [selectedVoice, setSelectedVoice] = useState<NarratorVoice>(() => savedWizard?.selectedVoice ?? getVoice());
   const [showMoreStoryTypes, setShowMoreStoryTypes] = useState(false);
   const [customPresets, setCustomPresets] = useState<BrandPreset[]>([]);
   const [showSaveIdentity, setShowSaveIdentity] = useState(false);
   const [customIdentityName, setCustomIdentityName] = useState('');
   const [albumCharacters, setAlbumCharacters] = useState<SavedCharacter[]>([]);
-  const [selectedAlbumCharIds, setSelectedAlbumCharIds] = useState<string[]>([]);
+  const [selectedAlbumCharIds, setSelectedAlbumCharIds] = useState<string[]>(() => savedWizard?.selectedAlbumCharIds ?? []);
   const [studioSettings, setStudioSettings] = useState(() => getStudioSettings());
   const [showVoiceModal, setShowVoiceModal] = useState(false);
   const [showTemplates, setShowTemplates] = useState(false);
   const [availableDraft, setAvailableDraft] = useState<ReturnType<typeof getStoryDraft>>(null);
-  const [isTeenDrama, setIsTeenDrama] = useState(() => (series?.ageGroup ?? ageGroup) === '13-18');
-  const [selectedTeenTemplate, setSelectedTeenTemplate] = useState<string | null>('fruit-kingdom-saga');
-  const [isFruitFantasy, setIsFruitFantasy] = useState(false);
-  const [selectedFruitTemplate, setSelectedFruitTemplate] = useState<string | null>('pomegranate-knight-citadel');
+  const [isTeenDrama, setIsTeenDrama] = useState<boolean>(() => savedWizard?.isTeenDrama ?? (series?.ageGroup ?? ageGroup) === '13-18');
+  const [selectedTeenTemplate, setSelectedTeenTemplate] = useState<string | null>(
+    () => savedWizard?.selectedTeenTemplate ?? TEEN_DRAMA_TEMPLATES[0].id
+  );
+  const [isFruitFantasy, setIsFruitFantasy] = useState<boolean>(() => savedWizard?.isFruitFantasy ?? false);
+  const [selectedFruitTemplate, setSelectedFruitTemplate] = useState<string | null>(
+    () => savedWizard?.selectedFruitTemplate ?? FRUIT_FANTASY_TEMPLATES[0].id
+  );
+
+  const ideaInputRef = useRef<HTMLTextAreaElement | null>(null);
+  const touchStartXRef = useRef<number | null>(null);
 
   useEffect(() => {
     listCustomPresets().then(setCustomPresets).catch(() => undefined);
     listAlbumCharacters().then(setAlbumCharacters).catch(() => undefined);
   }, []);
 
+  // البند 5: حفظ حالة المعالج (الخطوة الحالية وقيم الحقول) في localStorage داخل try/catch
+  useEffect(() => {
+    if (series) return;
+    savePersistedWizardState({
+      wizardStep,
+      idea,
+      dialect,
+      ageGroup,
+      storyType,
+      pageCount,
+      artStyle,
+      aspectRatio,
+      presetId,
+      coverFontStyle,
+      coverTextEffect,
+      ambientPreset,
+      selectedVoice,
+      isTeenDrama,
+      selectedTeenTemplate,
+      isFruitFantasy,
+      selectedFruitTemplate,
+      hero,
+      selectedAlbumCharIds,
+    });
+  }, [
+    wizardStep,
+    idea,
+    dialect,
+    ageGroup,
+    storyType,
+    pageCount,
+    artStyle,
+    aspectRatio,
+    presetId,
+    coverFontStyle,
+    coverTextEffect,
+    ambientPreset,
+    selectedVoice,
+    isTeenDrama,
+    selectedTeenTemplate,
+    isFruitFantasy,
+    selectedFruitTemplate,
+    hero,
+    selectedAlbumCharIds,
+    series,
+  ]);
+
   const handleSelectTeenTemplate = (tmpl: TeenDramaTemplate) => {
     setSelectedTeenTemplate(tmpl.id);
     setIdea(tmpl.defaultIdea[ar ? 'ar' : 'en']);
+    setStepValidationError(false);
     setAgeGroup('13-18');
     setIsTeenDrama(true);
     setArtStyle(tmpl.artStyle);
@@ -323,6 +429,7 @@ export default function StorySetupForm({ initialIdea, language, onSubmit, onLoad
   const handleSelectFruitTemplate = (tmpl: FruitFantasyTemplate) => {
     setSelectedFruitTemplate(tmpl.id);
     setIdea(tmpl.defaultIdea[ar ? 'ar' : 'en']);
+    setStepValidationError(false);
     setIsFruitFantasy(true);
     setArtStyle(tmpl.artStyle);
     setStoryType(tmpl.storyType);
@@ -367,6 +474,7 @@ export default function StorySetupForm({ initialIdea, language, onSubmit, onLoad
     if (!availableDraft) return;
     const p = availableDraft.params;
     setIdea(p.idea);
+    setStepValidationError(false);
     if (p.dialect) setDialect(p.dialect as ArabicDialect);
     if (p.ageGroup) setAgeGroup(p.ageGroup);
     if (p.storyType) setStoryType(p.storyType);
@@ -378,6 +486,7 @@ export default function StorySetupForm({ initialIdea, language, onSubmit, onLoad
 
   const handleApplyTemplate = (tmpl: BookTemplate) => {
     setIdea(tmpl.defaultIdea[ar ? 'ar' : 'en']);
+    setStepValidationError(false);
     setDialect(tmpl.dialect);
     setAgeGroup(tmpl.ageGroup);
     setArtStyle(tmpl.artStyle);
@@ -467,14 +576,63 @@ export default function StorySetupForm({ initialIdea, language, onSubmit, onLoad
   const readingMinutes = Math.max(1, Math.ceil((pageCount * SECONDS_PER_PAGE) / 60));
   const canSubmit = words >= minWords && !disabled;
 
+  const transitionToStep = (targetStep: WizardStep) => {
+    // التحقق من الفكرة (حد أدنى للكلمات) قبل الانتقال من الخطوة 1
+    if (wizardStep === 1 && targetStep > 1 && words < minWords) {
+      setStepValidationError(true);
+      ideaInputRef.current?.focus();
+      return;
+    }
+    setStepValidationError(false);
+    const applyChange = () => setWizardStep(targetStep);
+    const docWithVT = typeof document !== 'undefined' ? (document as Document & { startViewTransition?: (cb: () => void) => void }) : null;
+    if (docWithVT?.startViewTransition) {
+      try {
+        docWithVT.startViewTransition(applyChange);
+        return;
+      } catch {
+        // fallback below
+      }
+    }
+    applyChange();
+  };
+
+  const handleTouchStart = (e: TouchEvent<HTMLFormElement>) => {
+    touchStartXRef.current = e.touches[0]?.clientX ?? null;
+  };
+
+  const handleTouchEnd = (e: TouchEvent<HTMLFormElement>) => {
+    if (showAllSteps || touchStartXRef.current === null) return;
+    const endX = e.changedTouches[0]?.clientX ?? touchStartXRef.current;
+    const deltaX = endX - touchStartXRef.current;
+    touchStartXRef.current = null;
+    if (Math.abs(deltaX) < 70) return;
+    // في الواجهة العربية RTL: السحب لليمين (deltaX > 0) ينقل للخطوة التالية، ولليسار للسابقة
+    const isNextSwipe = ar ? deltaX > 0 : deltaX < 0;
+    if (isNextSwipe && wizardStep < 3) {
+      transitionToStep((wizardStep + 1) as WizardStep);
+    } else if (!isNextSwipe && wizardStep > 1) {
+      transitionToStep((wizardStep - 1) as WizardStep);
+    }
+  };
+
   const surprise = () => {
     const pool = SURPRISE_PROMPTS[language];
     setIdea(pool[Math.floor(Math.random() * pool.length)].slice(0, MAX_IDEA_LENGTH));
+    setStepValidationError(false);
   };
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
-    if (!canSubmit) return;
+    if (!showAllSteps && wizardStep < 3) {
+      transitionToStep((wizardStep + 1) as WizardStep);
+      return;
+    }
+    if (!canSubmit) {
+      setStepValidationError(true);
+      if (wizardStep !== 1) setWizardStep(1);
+      return;
+    }
     clearStoryDraft();
     const chosenAlbumChars = albumCharacters.filter((c) => selectedAlbumCharIds.includes(c.id));
     const params: StoryParams = {
@@ -501,56 +659,59 @@ export default function StorySetupForm({ initialIdea, language, onSubmit, onLoad
   const currentStyleLabel = ART_STYLE_OPTIONS.find((s) => s.value === artStyle)?.labelAr ?? artStyle;
   const currentDialectLabel = DIALECT_OPTIONS.find((d) => d.value === dialect)?.label ?? dialect;
   const currentVoiceLabel = VOICE_OPTIONS.find((v) => v.value === selectedVoice)?.label[ar ? 'ar' : 'en'] ?? selectedVoice;
+  const allStoryTypes = [...PRIMARY_STORY_TYPES, ...EXTRA_STORY_TYPES];
+  const currentStoryTypeObj = allStoryTypes.find((t) => t.value === storyType);
+  const currentStoryTypeLabel = currentStoryTypeObj ? (ar ? currentStoryTypeObj.label.ar : currentStoryTypeObj.label.en) : storyType;
+  const currentPresetObj = allPresets.find((p) => p.id === presetId);
+  const currentPresetLabel = currentPresetObj ? (ar ? currentPresetObj.label.ar : currentPresetObj.label.en) : presetId;
+  const currentFontObj = COVER_FONT_OPTIONS.find((f) => f.value === coverFontStyle);
+  const currentFontLabel = currentFontObj ? (ar ? currentFontObj.label.ar : currentFontObj.label.en) : coverFontStyle;
 
-  const STEPS: { id: WizardStep; icon: typeof PenTool; title: { ar: string; en: string }; sub: { ar: string; en: string } }[] = [
-    {
-      id: 1,
-      icon: PenTool,
-      title: { ar: '1. الفكرة والبطل', en: '1. Idea & Hero' },
-      sub: { ar: words >= minWords ? `${words} كلمة جاهزة` : 'اكتب الفكرة واختر البطل', en: words >= minWords ? `${words} words ready` : 'Write idea & pick hero' },
-    },
-    {
-      id: 2,
-      icon: Palette,
-      title: { ar: '2. الأسلوب والغلاف', en: '2. Style & Cover' },
-      sub: { ar: currentStyleLabel, en: artStyle },
-    },
-    {
-      id: 3,
-      icon: Volume2,
-      title: { ar: '3. الصوت والانطلاق', en: '3. Voice & Launch' },
-      sub: { ar: `${currentDialectLabel} · ${pageCount} ص`, en: `${pageCount} pages` },
-    },
+  // البند 2: أسماء الخطوات في الشريط العلوي قصيرة («الفكرة»، «الشكل»، «التفاصيل») مع الرقم في دائرة ولا تُقصّ
+  const STEPS: { id: WizardStep; title: { ar: string; en: string } }[] = [
+    { id: 1, title: { ar: 'الفكرة', en: 'Idea' } },
+    { id: 2, title: { ar: 'الشكل', en: 'Style' } },
+    { id: 3, title: { ar: 'التفاصيل', en: 'Details' } },
   ];
 
+  const liveCoverTitle = idea.trim()
+    ? idea.trim().split(/\s+/).slice(0, 7).join(' ')
+    : ar
+      ? 'حكاية النجوم في بستان الأحلام'
+      : 'The Secret of the Starlit Orchard';
+
   return (
-    <form onSubmit={handleSubmit} className="space-y-5" dir={ar ? 'rtl' : 'ltr'}>
+    <form
+      onSubmit={handleSubmit}
+      onTouchStart={handleTouchStart}
+      onTouchEnd={handleTouchEnd}
+      className="space-y-4"
+      dir={ar ? 'rtl' : 'ltr'}
+    >
       {showOnboarding && <OnboardingModal language={language} onClose={() => setShowOnboarding(false)} />}
 
-      {/* شريط معالج الاستوديو من 3 خطوات (v3.0.0 Studio Wizard) */}
-      <div className="luxury-card p-3.5 sm:p-4 space-y-3">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
-            <span className="font-display text-xs sm:text-sm font-extrabold text-ink dark:text-moonlight">
-              {ar ? 'معالج صناعة القصة (3 خطوات)' : 'Story Studio Wizard (3 Steps)'}
-            </span>
-          </div>
-          <div className="flex items-center gap-2">
+      {/* شريط معالج الاستوديو العلوي من 3 خطوات («الفكرة»، «الشكل»، «التفاصيل») */}
+      <div className="luxury-card p-3 sm:p-4 space-y-2.5">
+        <div className="flex items-center justify-between gap-2">
+          <span className="font-display text-xs sm:text-sm font-extrabold text-ink dark:text-moonlight">
+            {ar ? 'معالج صناعة القصة' : 'Story Studio Wizard'}
+          </span>
+          <div className="flex items-center gap-1.5">
             <button
               type="button"
               onClick={() => setShowAllSteps((v) => !v)}
-              className="inline-flex min-h-11 items-center gap-1.5 rounded-xl border border-dream/30 bg-white/70 px-3 text-xs font-bold text-ink transition hover:border-lantern dark:border-white/15 dark:bg-white/5 dark:text-moonlight"
+              className="inline-flex min-h-11 items-center gap-1.5 rounded-xl border border-dream/30 bg-white/70 px-2.5 text-xs font-bold text-ink transition hover:border-lantern dark:border-white/15 dark:bg-white/5 dark:text-moonlight"
             >
               <Layers size={14} className="text-lantern" aria-hidden />
-              <span>{showAllSteps ? (ar ? 'وضع الخطوات' : 'Step mode') : (ar ? 'عرض كل الخيارات' : 'Show all')}</span>
+              <span>{showAllSteps ? (ar ? 'وضع الخطوات' : 'Steps') : (ar ? 'كل الخيارات' : 'All')}</span>
             </button>
             <button
               type="button"
               onClick={() => setShowOnboarding(true)}
-              className="inline-flex min-h-11 items-center gap-1.5 rounded-xl border border-dream/30 bg-white/70 px-3 text-xs font-bold text-ink transition hover:border-lantern dark:border-white/15 dark:bg-white/5 dark:text-moonlight"
+              className="inline-flex min-h-11 min-w-11 items-center justify-center gap-1.5 rounded-xl border border-dream/30 bg-white/70 px-2.5 text-xs font-bold text-ink transition hover:border-lantern dark:border-white/15 dark:bg-white/5 dark:text-moonlight"
               aria-label={ar ? 'دليل استخدام الاستوديو' : 'Studio guide'}
             >
-              <HelpCircle size={14} className="text-lantern" aria-hidden />
+              <HelpCircle size={15} className="text-lantern" aria-hidden />
               <span className="hidden sm:inline">{ar ? 'كيف يعمل؟' : 'Guide'}</span>
             </button>
           </div>
@@ -559,33 +720,36 @@ export default function StorySetupForm({ initialIdea, language, onSubmit, onLoad
         {!showAllSteps && (
           <div className="grid grid-cols-3 gap-2" role="tablist" aria-label={ar ? 'خطوات إعداد القصة' : 'Story setup steps'}>
             {STEPS.map((st) => {
-              const Icon = st.icon;
               const active = wizardStep === st.id;
-              const completed = st.id === 1 ? words >= minWords : st.id < wizardStep;
+              const completed = st.id === 1 ? words >= minWords && wizardStep > 1 : st.id < wizardStep;
               return (
                 <button
                   key={st.id}
                   type="button"
                   role="tab"
                   aria-selected={active}
-                  onClick={() => setWizardStep(st.id)}
-                  className={`flex min-h-12 flex-col items-start justify-center rounded-2xl border px-3 py-2 text-start transition-transform active:scale-98 ${
+                  onClick={() => transitionToStep(st.id)}
+                  className={`flex min-h-11 items-center justify-center gap-2 rounded-2xl border px-2 py-2 transition-transform active:scale-98 ${
                     active
                       ? 'border-lantern bg-lantern text-ink shadow-xs'
                       : completed
-                        ? 'border-lantern/45 bg-lantern/10 text-ink dark:text-moonlight'
-                        : 'border-dream/25 bg-white/60 text-ink/75 hover:border-lantern/40 dark:border-white/10 dark:bg-white/5 dark:text-moonlight/75'
+                        ? 'border-lantern/45 bg-lantern/15 text-ink dark:text-moonlight'
+                        : 'border-dream/25 bg-white/65 text-ink/80 hover:border-lantern/40 dark:border-white/10 dark:bg-white/5 dark:text-moonlight/80'
                   }`}
                 >
-                  <div className="flex w-full items-center justify-between gap-1">
-                    <span className="flex items-center gap-1.5 font-display text-xs font-extrabold truncate">
-                      <Icon size={14} aria-hidden className={active ? 'text-ink' : 'text-lantern'} />
-                      <span className="truncate">{ar ? st.title.ar : st.title.en}</span>
-                    </span>
-                    {completed && !active && <Check size={13} className="shrink-0 text-emerald-600 dark:text-emerald-400" aria-hidden />}
-                  </div>
-                  <span className={`mt-0.5 block w-full truncate text-[10px] font-medium ${active ? 'text-ink/80' : 'text-ink/55 dark:text-moonlight/55'}`}>
-                    {ar ? st.sub.ar : st.sub.en}
+                  <span
+                    className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full font-mono text-xs font-extrabold ${
+                      active
+                        ? 'bg-ink text-lantern'
+                        : completed
+                          ? 'bg-emerald-600 text-white'
+                          : 'bg-lantern/20 text-ink dark:text-amber-200'
+                    }`}
+                  >
+                    {completed ? <Check size={13} aria-hidden /> : st.id}
+                  </span>
+                  <span className="font-display text-xs sm:text-sm font-extrabold whitespace-nowrap">
+                    {ar ? st.title.ar : st.title.en}
                   </span>
                 </button>
               );
@@ -596,7 +760,7 @@ export default function StorySetupForm({ initialIdea, language, onSubmit, onLoad
 
       {/* استعادة المسودة السابقة المحفوظة بدون إنترنت */}
       {availableDraft && (
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-dream/40 bg-dream/10 p-3 text-xs">
+        <div className="flex flex-wrap items-center justify-between gap-2.5 rounded-2xl border border-dream/40 bg-dream/10 p-3 text-xs">
           <div className="flex items-center gap-2">
             <FileText size={16} className="text-lantern shrink-0" />
             <span className="font-semibold text-ink dark:text-moonlight">
@@ -648,143 +812,36 @@ export default function StorySetupForm({ initialIdea, language, onSubmit, onLoad
       )}
 
       {/* ═══════════════════════════════════════════════════════════════════
-          الخطوة 1: الفكرة والبطل والهوية السريعة
+          الخطوة 1: «الفكرة»
+          1) حقل الفكرة أول عنصر بعد شريط الخطوات (قبل الهوية والقوالب)
+          2) الطفل البطل (HeroPicker + ألبوم الشخصيات)
+          3) صف «أوضاع خاصة» مضغوط (القوالب، دراما المراهقين، فواكه الفانتازيا)
          ═══════════════════════════════════════════════════════════════════ */}
       {(wizardStep === 1 || showAllSteps) && (
-        <div className="space-y-5 animate-[fadeUp_250ms_ease-out]">
-          {/* شريط الهوية السريعة للقصة */}
-          {!series && (
-            <div className="luxury-card p-4 sm:p-5 space-y-3">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <span className="font-display text-xs sm:text-sm font-extrabold text-ink dark:text-moonlight">
-                  {ar
-                    ? `الهوية السريعة للقصة (${allPresets.length} هوية تضبط الأسلوب والراوي واللهجة والخط والصوت المحيطي)`
-                    : `Quick Story Identity (${allPresets.length} Presets)`}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setShowSaveIdentity((v) => !v)}
-                  className="inline-flex min-h-11 items-center gap-1.5 rounded-full border border-lantern/45 bg-lantern/15 px-3.5 py-1.5 text-xs font-bold text-ink transition hover:bg-lantern/25 active:scale-95 dark:text-amber-200"
-                >
-                  <BookmarkPlus size={14} className="text-lantern" />
-                  <span>{ar ? 'احفظ هويتي' : 'Save My Identity'}</span>
-                </button>
-              </div>
-
-              {showSaveIdentity && (
-                <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-lantern/35 bg-lantern/10 p-2.5">
-                  <input
-                    type="text"
-                    value={customIdentityName}
-                    onChange={(e) => setCustomIdentityName(e.target.value.slice(0, 40))}
-                    placeholder={ar ? 'اسم الهوية (مثلاً: هويتي المسائية)...' : 'Identity name...'}
-                    className="min-h-11 flex-1 rounded-xl border border-dream/30 bg-white/90 px-3 text-xs text-ink outline-none focus:border-lantern dark:border-white/15 dark:bg-black/30 dark:text-moonlight"
-                  />
-                  <button
-                    type="button"
-                    onClick={handleSaveCustomIdentity}
-                    className="min-h-11 rounded-xl bg-lantern px-4 text-xs font-extrabold text-ink shadow-2xs active:scale-95"
-                  >
-                    {ar ? 'حفظ' : 'Save'}
-                  </button>
-                </div>
-              )}
-
-              <div role="radiogroup" aria-label={ar ? 'هوية القصة' : 'Story identity'} className="-mx-1 flex snap-x gap-2.5 overflow-x-auto px-1 pb-2 custom-scrollbar">
-                {allPresets.map((p) => {
-                  const isSelected = presetId === p.id;
-                  return (
-                    <div
-                      key={p.id}
-                      className={`relative min-h-14 min-w-[10.5rem] shrink-0 snap-start rounded-2xl border px-3.5 py-2.5 text-start transition-transform ${
-                        isSelected
-                          ? 'border-lantern bg-gradient-to-br from-lantern/25 via-lantern/10 to-transparent shadow-sm ring-1 ring-lantern/40'
-                          : 'border-dream/25 bg-white/65 hover:border-lantern/50 dark:border-white/10 dark:bg-white/[0.05]'
-                      }`}
-                    >
-                      <button
-                        type="button"
-                        role="radio"
-                        aria-checked={isSelected}
-                        onClick={() => applyPreset(p.id)}
-                        className="w-full text-start"
-                      >
-                        <span className="block font-display text-xs sm:text-sm font-extrabold text-ink dark:text-moonlight pe-5">
-                          {ar ? p.label.ar : p.label.en}
-                        </span>
-                        <span className="mt-0.5 block text-[11px] leading-snug text-ink/60 dark:text-moonlight/60">
-                          {ar ? p.desc.ar : p.desc.en}
-                        </span>
-                      </button>
-                      {p.isCustom && (
-                        <button
-                          type="button"
-                          onClick={() => handleDeleteCustomIdentity(p.id)}
-                          className="absolute top-1.5 end-1.5 flex h-8 w-8 items-center justify-center rounded-full text-ink/45 hover:text-coral dark:text-moonlight/45"
-                          aria-label={ar ? 'حذف الهوية' : 'Delete preset'}
-                        >
-                          <X size={12} />
-                        </button>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-          {/* زر تصفح القوالب الجاهزة */}
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-lantern/35 bg-gradient-to-r from-lantern/15 via-dream/10 to-transparent p-3.5 shadow-xs">
-            <div className="flex items-center gap-2.5">
-              <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-lantern/20 text-lantern">
-                <Sparkles size={18} />
-              </span>
-              <div>
-                <p className="font-display text-xs font-bold text-ink dark:text-moonlight">
-                  {ar ? 'قوالب قصصية جاهزة: فلسطينية، شامية، مصرية، بدوية، فضاء، قبل النوم' : 'Ready Story Themes: Palestinian, Syrian, Space, Dino & Bedtime'}
-                </p>
-                <p className="text-[11px] text-ink/65 dark:text-moonlight/65">
-                  {ar ? '16 قالباً ثقافياً وتعليمياً بلهجات وأساليب فنية متناسقة' : '16 rich cultural and educational story templates'}
-                </p>
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={() => setShowTemplates(!showTemplates)}
-              className="inline-flex min-h-11 items-center gap-1.5 rounded-full bg-lantern px-4 text-xs font-bold text-ink shadow-xs transition hover:brightness-105 active:scale-95 shrink-0"
-            >
-              <Compass size={14} />
-              <span>{showTemplates ? (ar ? 'إخفاء القوالب' : 'Hide templates') : (ar ? 'تصفح القوالب' : 'Browse templates')}</span>
-            </button>
-          </div>
-
-          {showTemplates && (
-            <BookTemplateBrowser ar={ar} onSelectTemplate={handleApplyTemplate} onClose={() => setShowTemplates(false)} />
-          )}
-
-          {/* قسم فكرة القصة والإلهام */}
-          <div className="luxury-card p-4 sm:p-6 space-y-3">
-            <div className="flex flex-wrap items-center justify-between gap-2.5">
+        <div className="space-y-4 animate-[fadeUp_220ms_ease-out]">
+          {/* 1. حقل الفكرة والإلهام (أول عنصر بعد شريط الخطوات) */}
+          <div className="luxury-card p-4 sm:p-5 space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <label className="font-display text-sm sm:text-base font-extrabold text-ink dark:text-moonlight flex items-center gap-2" htmlFor="idea">
                 <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-lantern/20 text-sm text-lantern">
                   <PenTool size={15} />
                 </span>
                 <span>{ar ? 'فكرة القصة وأحداثها' : 'Story Idea & Plot'}</span>
               </label>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1.5">
                 <button
                   type="button"
                   onClick={() => setShowVoiceModal(true)}
-                  className="inline-flex min-h-11 items-center gap-1.5 rounded-full border border-dream/35 bg-dream/10 px-3.5 py-1.5 text-xs font-bold text-ink transition hover:border-lantern hover:bg-dream/20 active:scale-95 dark:text-moonlight"
+                  className="inline-flex min-h-11 items-center gap-1.5 rounded-full border border-dream/35 bg-dream/10 px-3 py-1.5 text-xs font-bold text-ink transition hover:border-lantern hover:bg-dream/20 active:scale-95 dark:text-moonlight"
                   title={ar ? 'تسجيل فكرة القصة بصوتك وتفريغها تلقائياً' : 'Speak your story idea with smart voice dictation'}
                 >
                   <Mic size={14} className="text-lantern" />
-                  <span>{ar ? 'إملاء صوتي' : 'Voice Dictation'}</span>
+                  <span>{ar ? 'إملاء صوتي' : 'Voice'}</span>
                 </button>
                 <button
                   type="button"
                   onClick={surprise}
-                  className="inline-flex min-h-11 items-center gap-1.5 rounded-full border border-lantern/40 bg-lantern/15 px-3.5 py-1.5 text-xs font-bold text-ink transition hover:bg-lantern/25 active:scale-95 dark:text-amber-200"
+                  className="inline-flex min-h-11 items-center gap-1.5 rounded-full border border-lantern/40 bg-lantern/15 px-3 py-1.5 text-xs font-bold text-ink transition hover:bg-lantern/25 active:scale-95 dark:text-amber-200"
                 >
                   <Sparkles size={14} aria-hidden className="text-lantern" />
                   <span>{ar ? 'فاجئني بفكرة' : 'Surprise Me'}</span>
@@ -793,26 +850,48 @@ export default function StorySetupForm({ initialIdea, language, onSubmit, onLoad
             </div>
 
             <textarea
+              ref={ideaInputRef}
               id="idea"
               value={idea}
-              onChange={(e) => setIdea(e.target.value.slice(0, MAX_IDEA_LENGTH))}
+              onChange={(e) => {
+                setIdea(e.target.value.slice(0, MAX_IDEA_LENGTH));
+                if (stepValidationError) setStepValidationError(false);
+              }}
               rows={3}
               placeholder={ar ? 'أرنب صغير شجاع يكتشف سر النجوم المضيئة في البستان...' : 'A brave little rabbit who discovers the secret of glowing stars...'}
-              aria-invalid={tooShort}
-              className="w-full rounded-2xl border border-dream/30 bg-white/90 px-4 py-3 text-sm sm:text-base leading-relaxed text-ink outline-none transition focus:border-lantern focus:ring-2 focus:ring-lantern/30 dark:border-white/15 dark:bg-white/[0.06] dark:text-moonlight resize-none"
+              aria-invalid={tooShort || stepValidationError}
+              className={`w-full rounded-2xl border bg-white/90 px-3.5 py-2.5 text-sm sm:text-base leading-relaxed text-ink outline-none transition focus:ring-2 dark:bg-white/[0.06] dark:text-moonlight resize-none ${
+                tooShort || stepValidationError
+                  ? 'border-coral focus:border-coral focus:ring-coral/30'
+                  : 'border-dream/30 focus:border-lantern focus:ring-lantern/30 dark:border-white/15'
+              }`}
             />
 
-            <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-ink/60 dark:text-moonlight/60">
-              <span className={tooShort ? 'font-bold text-coral' : 'font-medium text-emerald-600 dark:text-emerald-400'}>
-                {tooShort
+            <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+              <span
+                className={
+                  words === 0
+                    ? stepValidationError
+                      ? 'font-bold text-coral'
+                      : 'font-medium text-ink/65 dark:text-moonlight/65'
+                    : tooShort
+                      ? 'font-bold text-coral'
+                      : 'font-bold text-emerald-700 dark:text-emerald-400'
+                }
+              >
+                {words === 0
                   ? ar
-                    ? `أضف تفاصيل أكثر: ${words} من ${minWords} كلمات على الأقل`
-                    : `Add more detail: ${words} of at least ${minWords} words`
-                  : ar
-                    ? `عدد الكلمات ممتاز (${words} كلمة)`
-                    : `Great detail (${words} words)`}
+                    ? `اكتب فكرتك (${minWords} كلمات على الأقل للانتقال للخطوة التالية)`
+                    : `Write your idea (at least ${minWords} words to continue)`
+                  : tooShort
+                    ? ar
+                      ? `أضف تفاصيل أكثر: ${words} من ${minWords} كلمات على الأقل`
+                      : `Add more detail: ${words} of at least ${minWords} words`
+                    : ar
+                      ? `عدد الكلمات ممتاز (${words} كلمة)`
+                      : `Great detail (${words} words)`}
               </span>
-              <span className="font-mono text-[11px]">
+              <span className="font-mono text-[11px] text-ink/60 dark:text-moonlight/60">
                 {idea.length}/{MAX_IDEA_LENGTH}
               </span>
             </div>
@@ -823,121 +902,27 @@ export default function StorySetupForm({ initialIdea, language, onSubmit, onLoad
             </p>
           </div>
 
-          {/* ب1: 16 نوع قصص + الفئة العمرية */}
-          <div className="luxury-card p-4 sm:p-6 space-y-4">
-            <div className="space-y-2.5">
-              <div className="flex items-center justify-between gap-2">
-                <label className="font-display text-xs sm:text-sm font-extrabold text-ink dark:text-moonlight">
-                  {ar ? 'نوع القصة والبنية السردية (16 نوعاً)' : 'Story Genre & Narrative Arc (16 Types)'}
-                </label>
-                <button
-                  type="button"
-                  onClick={() => setShowMoreStoryTypes((v) => !v)}
-                  className="inline-flex min-h-11 items-center gap-1 rounded-full border border-dream/35 bg-dream/10 px-3.5 py-1.5 text-xs font-bold text-ink transition hover:border-lantern dark:text-moonlight"
-                >
-                  <span>
-                    {showMoreStoryTypes
-                      ? ar
-                        ? 'إخفاء الأنواع الإضافية'
-                        : 'Show fewer'
-                      : ar
-                        ? `المزيد (+${EXTRA_STORY_TYPES.length})`
-                        : `More (+${EXTRA_STORY_TYPES.length})`}
-                  </span>
-                  {showMoreStoryTypes ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-                </button>
-              </div>
-
-              <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
-                {(showMoreStoryTypes ? [...PRIMARY_STORY_TYPES, ...EXTRA_STORY_TYPES] : PRIMARY_STORY_TYPES).map((t) => {
-                  const active = storyType === t.value;
-                  return (
-                    <button
-                      key={t.value}
-                      type="button"
-                      onClick={() => setStoryType(t.value)}
-                      aria-pressed={active}
-                      className={`flex min-h-14 flex-col items-start justify-between rounded-2xl border p-2.5 text-start transition-transform active:scale-95 ${
-                        active
-                          ? 'border-lantern bg-lantern/20 text-ink shadow-xs ring-1 ring-lantern/40 dark:text-moonlight'
-                          : 'border-dream/25 bg-white/65 text-ink/80 hover:border-lantern/45 dark:border-white/10 dark:bg-white/5 dark:text-moonlight/85'
-                      }`}
-                    >
-                      <span className="font-display text-xs font-extrabold">{ar ? t.label.ar : t.label.en}</span>
-                      <span className="mt-1 text-[10px] leading-snug text-ink/60 dark:text-moonlight/60 line-clamp-2">
-                        {ar ? t.desc.ar : t.desc.en}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-
-              {STORY_TYPE_SPECS[storyType] && (
-                <div className="rounded-xl border border-dream/20 bg-dream/5 px-3 py-2 text-[11px] text-ink/70 dark:text-moonlight/70">
-                  <span className="font-bold text-lantern">{ar ? 'قوس السرد: ' : 'Narrative Arc: '}</span>
-                  <span>
-                    {STORY_TYPE_SPECS[storyType].arc.beginning} ← {STORY_TYPE_SPECS[storyType].arc.middle} ←{' '}
-                    {STORY_TYPE_SPECS[storyType].arc.climax} ← {STORY_TYPE_SPECS[storyType].arc.ending}
-                  </span>
-                </div>
-              )}
-            </div>
-
-            <LuxurySelect<AgeGroup>
-              id="ageGroup"
-              ar={ar}
-              disabled={Boolean(series)}
-              label={ar ? 'الفئة العمرية' : 'Age Group'}
-              value={ageGroup}
-              onChange={(val) => {
-                setAgeGroup(val);
-                setIsTeenDrama(val === '13-18');
-              }}
-              searchable={false}
-              options={AGE_GROUPS.map((g): LuxuryOption<AgeGroup> => ({
-                value: g.value,
-                label: g.label,
-                sublabel: ar ? g.desc.ar : g.desc.en,
-                icon: (
-                  <span className="text-lantern">
-                    {g.value === '3-4' ? (
-                      <Smile size={15} />
-                    ) : g.value === '4-6' ? (
-                      <Sparkles size={15} />
-                    ) : g.value === '7-9' ? (
-                      <Users size={15} />
-                    ) : g.value === '9-12' ? (
-                      <Rocket size={15} />
-                    ) : (
-                      <Compass size={15} />
-                    )}
-                  </span>
-                ),
-              }))}
-            />
-          </div>
-
-          {/* اختيار الطفل كبطل + ألبوم الشخصيات المحفوظة */}
+          {/* 2. الطفل البطل + ألبوم الشخصيات المحفوظة */}
           {!series && <HeroPicker ar={ar} selectedId={hero?.id ?? null} onSelect={setHero} />}
 
           {!series && albumCharacters.length > 0 && (
-            <div className="luxury-card p-4 sm:p-5 space-y-3">
+            <div className="luxury-card p-3.5 sm:p-4 space-y-2.5">
               <div className="flex items-center justify-between gap-2">
-                <span className="font-display text-sm font-extrabold text-ink dark:text-moonlight flex items-center gap-2">
-                  <Users size={16} className="text-lantern" />
-                  <span>{ar ? 'من ألبومي (شخصيات محفوظة جاهزة للمشاركة)' : 'From My Character Album'}</span>
+                <span className="font-display text-xs sm:text-sm font-extrabold text-ink dark:text-moonlight flex items-center gap-1.5">
+                  <Users size={15} className="text-lantern" />
+                  <span>{ar ? 'من ألبومي (شخصيات محفوظة)' : 'From My Character Album'}</span>
                 </span>
                 <span className="text-[11px] font-semibold text-ink/60 dark:text-moonlight/60">
-                  {ar ? `اختر حتى 3 شخصيات (${selectedAlbumCharIds.length}/3)` : `Pick up to 3 (${selectedAlbumCharIds.length}/3)`}
+                  {ar ? `${selectedAlbumCharIds.length}/3` : `${selectedAlbumCharIds.length}/3`}
                 </span>
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 {albumCharacters.map((c) => {
                   const selected = selectedAlbumCharIds.includes(c.id);
                   return (
                     <div
                       key={c.id}
-                      className={`flex items-center justify-between gap-2 rounded-2xl border p-3 transition ${
+                      className={`flex items-center justify-between gap-2 rounded-2xl border p-2.5 transition ${
                         selected
                           ? 'border-lantern bg-lantern/15 shadow-xs'
                           : 'border-dream/25 bg-white/60 dark:border-white/10 dark:bg-white/5'
@@ -946,7 +931,7 @@ export default function StorySetupForm({ initialIdea, language, onSubmit, onLoad
                       <button
                         type="button"
                         onClick={() => toggleAlbumCharacter(c.id)}
-                        className="flex min-h-11 flex-1 items-center gap-2.5 text-start"
+                        className="flex min-h-11 flex-1 items-center gap-2 text-start"
                       >
                         <span
                           className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full border text-xs font-bold ${
@@ -975,161 +960,380 @@ export default function StorySetupForm({ initialIdea, language, onSubmit, onLoad
             </div>
           )}
 
-          {/* مفتاح ونموذج دراما اليافعين + فواكه الفانتازيا */}
-          <div className="grid grid-cols-1 gap-3">
-            <div className="space-y-3 rounded-2xl border border-rose-500/35 bg-gradient-to-r from-rose-950/25 via-purple-950/20 to-slate-900/15 p-4 shadow-sm">
-              <div className="flex items-center justify-between gap-3">
-                <div className="flex items-center gap-2.5">
-                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-rose-500/20 text-rose-300">
-                    <Compass size={20} />
-                  </span>
-                  <div>
-                    <h3 className="font-display text-xs sm:text-sm font-bold text-ink dark:text-moonlight">
-                      {ar ? 'وضع دراما اليافعين (12-18 سنة)' : 'Teen Drama Mode (12-18 yrs)'}
-                    </h3>
-                    <p className="text-[11px] text-ink/70 dark:text-moonlight/70">
-                      {ar ? 'تفعيل 4 عوالم وجدانية وصراعات درامية عميقة تناسب الفئة العمرية 12-18' : 'Enable 4 distinct emotional world templates suitable for 12-18 year olds'}
-                    </p>
-                  </div>
-                </div>
-                <label className="relative inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center shrink-0">
-                  <input
-                    type="checkbox"
-                    checked={isTeenDrama}
-                    onChange={(e) => {
-                      const checked = e.target.checked;
-                      setIsTeenDrama(checked);
-                      if (checked) {
-                        setAgeGroup('13-18');
-                        if (!selectedTeenTemplate) {
-                          handleSelectTeenTemplate(TEEN_DRAMA_TEMPLATES[0]);
-                        }
-                      }
-                    }}
-                    className="peer sr-only"
-                  />
-                  <div className="peer h-6 w-11 rounded-full bg-slate-700/70 after:absolute after:start-[2px] after:top-[10px] after:h-5 after:w-5 after:rounded-full after:bg-white after:transition-transform after:content-[''] peer-checked:bg-rose-600 peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-focus-visible:ring-2 peer-focus-visible:ring-rose-400" />
-                </label>
-              </div>
-
-              {isTeenDrama && (
-                <div className="pt-2 border-t border-rose-500/20 grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                  {TEEN_DRAMA_TEMPLATES.map((tmpl) => {
-                    const active = selectedTeenTemplate === tmpl.id;
-                    return (
-                      <button
-                        key={tmpl.id}
-                        type="button"
-                        onClick={() => handleSelectTeenTemplate(tmpl)}
-                        className={`flex flex-col text-start p-3.5 rounded-xl border transition-transform active:scale-[0.98] ${
-                          active
-                            ? 'border-rose-500 bg-rose-500/20 ring-2 ring-rose-500/50 shadow-md text-ink dark:text-moonlight'
-                            : 'border-rose-500/25 bg-black/25 hover:bg-black/40 text-ink/80 dark:text-moonlight/80'
-                        }`}
-                      >
-                        <span className="flex items-center gap-1.5 font-bold text-xs text-rose-300 mb-1">
-                          <TemplateIconSvg name={tmpl.icon} className="w-4 h-4 shrink-0" />
-                          <span>{ar ? tmpl.title.ar : tmpl.title.en}</span>
-                        </span>
-                        <p className="text-[11px] font-semibold text-amber-300/90 dark:text-amber-200/90 mb-1">
-                          {ar ? `الجو الوجداني: ${tmpl.emotionalWorld.ar}` : `Emotional World: ${tmpl.emotionalWorld.en}`}
-                        </p>
-                        <p className="text-[11px] text-ink/70 dark:text-moonlight/70 leading-relaxed line-clamp-2">
-                          {ar ? tmpl.tagline.ar : tmpl.tagline.en}
-                        </p>
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
+          {/* 3. صف «أوضاع خاصة» مضغوط (القوالب، دراما المراهقين، فواكه الفانتازيا) */}
+          <div className="luxury-card p-3.5 sm:p-4 space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <span className="font-display text-xs sm:text-sm font-extrabold text-ink dark:text-moonlight flex items-center gap-1.5">
+                <Sparkles size={15} className="text-lantern" aria-hidden />
+                <span>{ar ? 'أوضاع خاصة وقوالب جاهزة' : 'Special Modes & Templates'}</span>
+              </span>
             </div>
 
-            <div className="space-y-3 rounded-2xl border border-amber-500/35 bg-gradient-to-r from-amber-950/25 via-orange-950/20 to-slate-900/15 p-4 shadow-sm">
-              <div className="flex items-center justify-between gap-3">
-                <div className="flex items-center gap-2.5">
-                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-amber-500/20 text-amber-300">
-                    <TemplateIconSvg name="apple" className="w-5 h-5" />
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+              {/* القوالب الجاهزة */}
+              <div className="flex items-center justify-between gap-2 rounded-2xl border border-lantern/40 bg-lantern/10 px-3 py-2">
+                <div className="min-w-0">
+                  <span className="block font-display text-xs font-extrabold text-ink dark:text-moonlight">
+                    {ar ? 'القوالب الجاهزة' : 'Story Templates'}
                   </span>
-                  <div>
-                    <h3 className="font-display text-xs sm:text-sm font-bold text-ink dark:text-moonlight">
-                      {ar ? 'وضع فواكه الفانتازيا (شخصيات الفواكه الملونة)' : 'Fruit Fantasy Mode (Anthropomorphic Fruits)'}
-                    </h3>
-                    <p className="text-[11px] text-ink/70 dark:text-moonlight/70">
-                      {ar ? 'تفعيل 4 عوالم وجدانية لشخصيات الفواكه الملونة ذات السمات البطولية' : 'Enable 4 emotional world templates featuring anthropomorphic fruit heroes'}
-                    </p>
-                  </div>
+                  <span className="block text-[10px] font-semibold text-ink/70 dark:text-moonlight/75">
+                    {ar ? '16 قالباً ثقافياً وتعليمياً' : '16 cultural & learning themes'}
+                  </span>
                 </div>
-                <label className="relative inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center shrink-0">
-                  <input
-                    type="checkbox"
-                    checked={isFruitFantasy}
-                    onChange={(e) => {
-                      const checked = e.target.checked;
-                      setIsFruitFantasy(checked);
-                      if (checked && !selectedFruitTemplate) {
-                        handleSelectFruitTemplate(FRUIT_FANTASY_TEMPLATES[0]);
-                      }
-                    }}
-                    className="peer sr-only"
-                  />
-                  <div className="peer h-6 w-11 rounded-full bg-slate-700/70 after:absolute after:start-[2px] after:top-[10px] after:h-5 after:w-5 after:rounded-full after:bg-white after:transition-transform after:content-[''] peer-checked:bg-amber-600 peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-focus-visible:ring-2 peer-focus-visible:ring-amber-400" />
-                </label>
+                <button
+                  type="button"
+                  onClick={() => setShowTemplates((v) => !v)}
+                  className="inline-flex min-h-11 shrink-0 items-center gap-1 rounded-xl bg-lantern px-3 text-xs font-extrabold text-ink shadow-2xs transition hover:brightness-105 active:scale-95"
+                >
+                  <Compass size={14} aria-hidden />
+                  <span>{showTemplates ? (ar ? 'إخفاء' : 'Hide') : (ar ? 'تصفح' : 'Browse')}</span>
+                </button>
               </div>
 
-              {isFruitFantasy && (
-                <div className="pt-2 border-t border-amber-500/20 grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                  {FRUIT_FANTASY_TEMPLATES.map((tmpl) => {
-                    const active = selectedFruitTemplate === tmpl.id;
-                    return (
-                      <button
-                        key={tmpl.id}
-                        type="button"
-                        onClick={() => handleSelectFruitTemplate(tmpl)}
-                        className={`flex flex-col text-start p-3.5 rounded-xl border transition-transform active:scale-[0.98] ${
-                          active
-                            ? 'border-amber-500 bg-amber-500/20 ring-2 ring-amber-500/50 shadow-md text-ink dark:text-moonlight'
-                            : 'border-amber-500/25 bg-black/25 hover:bg-black/40 text-ink/80 dark:text-moonlight/80'
-                        }`}
-                      >
-                        <span className="flex items-center gap-1.5 font-bold text-xs text-amber-300 mb-1">
-                          <TemplateIconSvg name={tmpl.icon} className="w-4 h-4 shrink-0" />
-                          <span>{ar ? tmpl.title.ar : tmpl.title.en}</span>
-                        </span>
-                        <p className="text-[11px] font-semibold text-rose-300/90 dark:text-rose-200/90 mb-1">
-                          {ar ? `الشخصية: ${tmpl.characterPersona.ar}` : `Hero: ${tmpl.characterPersona.en}`}
-                        </p>
-                        <p className="text-[11px] text-ink/70 dark:text-moonlight/70 leading-relaxed line-clamp-2">
-                          {ar ? tmpl.tagline.ar : tmpl.tagline.en}
-                        </p>
-                      </button>
-                    );
-                  })}
+              {/* دراما المراهقين (YA Drama) - تباين >= 4.5:1 ومفتاح مطفأ بلون محايد فاتح ومنطقة لمس >= 44px */}
+              <label className="flex min-h-11 cursor-pointer items-center justify-between gap-2 rounded-2xl border border-rose-500/40 bg-rose-500/10 px-3 py-2 dark:bg-rose-950/35">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-1.5">
+                    <span className="font-display text-xs font-extrabold text-ink dark:text-moonlight">
+                      {ar ? 'دراما المراهقين' : 'Teen Drama'}
+                    </span>
+                    <span className="rounded-md bg-rose-800 px-1.5 py-0.5 text-[10px] font-extrabold text-white">
+                      12-18
+                    </span>
+                  </div>
+                  <span className="block text-[10px] font-semibold text-ink/75 dark:text-moonlight/80">
+                    {ar ? '4 عوالم وجدانية عميقة' : '4 YA emotional worlds'}
+                  </span>
                 </div>
-              )}
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={isTeenDrama}
+                  aria-label={ar ? 'تفعيل وضع دراما المراهقين' : 'Toggle Teen Drama mode'}
+                  onClick={() => {
+                    const next = !isTeenDrama;
+                    setIsTeenDrama(next);
+                    if (next) {
+                      setAgeGroup('13-18');
+                      if (!selectedTeenTemplate) {
+                        handleSelectTeenTemplate(TEEN_DRAMA_TEMPLATES[0]);
+                      }
+                    }
+                  }}
+                  className="inline-flex min-h-11 min-w-12 shrink-0 items-center justify-center rounded-xl px-1 focus-visible:outline focus-visible:outline-2 focus-visible:outline-rose-500"
+                >
+                  <span
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full border transition-colors ${
+                      isTeenDrama
+                        ? 'border-rose-700 bg-rose-600'
+                        : 'border-stone-400 bg-stone-200 dark:border-stone-500 dark:bg-stone-300'
+                    }`}
+                  >
+                    <span
+                      className={`inline-block h-5 w-5 rounded-full bg-white shadow-xs transition-transform ${
+                        isTeenDrama
+                          ? ar
+                            ? '-translate-x-5'
+                            : 'translate-x-5'
+                          : 'translate-x-0.5 rtl:-translate-x-0.5'
+                      }`}
+                    />
+                  </span>
+                </button>
+              </label>
+
+              {/* فواكه الفانتازيا (Fruit Fantasy) - تباين >= 4.5:1 ومفتاح مطفأ بلون محايد فاتح ومنطقة لمس >= 44px */}
+              <label className="flex min-h-11 cursor-pointer items-center justify-between gap-2 rounded-2xl border border-amber-500/45 bg-amber-500/10 px-3 py-2 dark:bg-amber-950/35">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-1.5">
+                    <span className="font-display text-xs font-extrabold text-ink dark:text-moonlight">
+                      {ar ? 'فواكه الفانتازيا' : 'Fruit Fantasy'}
+                    </span>
+                    <span className="rounded-md bg-amber-900 px-1.5 py-0.5 text-[10px] font-extrabold text-white">
+                      {ar ? 'فانتازيا' : 'Fruit'}
+                    </span>
+                  </div>
+                  <span className="block text-[10px] font-semibold text-ink/75 dark:text-moonlight/80">
+                    {ar ? 'أبطال الفواكه المجسدة' : 'Anthropomorphic heroes'}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={isFruitFantasy}
+                  aria-label={ar ? 'تفعيل وضع فواكه الفانتازيا' : 'Toggle Fruit Fantasy mode'}
+                  onClick={() => {
+                    const next = !isFruitFantasy;
+                    setIsFruitFantasy(next);
+                    if (next && !selectedFruitTemplate) {
+                      handleSelectFruitTemplate(FRUIT_FANTASY_TEMPLATES[0]);
+                    }
+                  }}
+                  className="inline-flex min-h-11 min-w-12 shrink-0 items-center justify-center rounded-xl px-1 focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-500"
+                >
+                  <span
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full border transition-colors ${
+                      isFruitFantasy
+                        ? 'border-amber-700 bg-amber-600'
+                        : 'border-stone-400 bg-stone-200 dark:border-stone-500 dark:bg-stone-300'
+                    }`}
+                  >
+                    <span
+                      className={`inline-block h-5 w-5 rounded-full bg-white shadow-xs transition-transform ${
+                        isFruitFantasy
+                          ? ar
+                            ? '-translate-x-5'
+                            : 'translate-x-5'
+                          : 'translate-x-0.5 rtl:-translate-x-0.5'
+                      }`}
+                    />
+                  </span>
+                </button>
+              </label>
             </div>
+
+            {showTemplates && (
+              <BookTemplateBrowser ar={ar} onSelectTemplate={handleApplyTemplate} onClose={() => setShowTemplates(false)} />
+            )}
+
+            {isTeenDrama && (
+              <div className="pt-2 border-t border-rose-500/20 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {TEEN_DRAMA_TEMPLATES.map((tmpl) => {
+                  const active = selectedTeenTemplate === tmpl.id;
+                  return (
+                    <button
+                      key={tmpl.id}
+                      type="button"
+                      onClick={() => handleSelectTeenTemplate(tmpl)}
+                      className={`flex min-h-11 flex-col text-start p-3 rounded-xl border transition-transform active:scale-[0.98] ${
+                        active
+                          ? 'border-rose-500 bg-rose-500/20 ring-1 ring-rose-500/50 text-ink dark:text-moonlight'
+                          : 'border-rose-500/25 bg-white/70 hover:bg-white dark:bg-black/25 dark:hover:bg-black/40 text-ink/85 dark:text-moonlight/85'
+                      }`}
+                    >
+                      <span className="flex items-center gap-1.5 font-bold text-xs text-rose-700 dark:text-rose-300">
+                        <TemplateIconSvg name={tmpl.icon} className="w-4 h-4 shrink-0" />
+                        <span>{ar ? tmpl.title.ar : tmpl.title.en}</span>
+                      </span>
+                      <p className="mt-0.5 text-[11px] text-ink/70 dark:text-moonlight/70 line-clamp-1">
+                        {ar ? tmpl.tagline.ar : tmpl.tagline.en}
+                      </p>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            {isFruitFantasy && (
+              <div className="pt-2 border-t border-amber-500/20 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {FRUIT_FANTASY_TEMPLATES.map((tmpl) => {
+                  const active = selectedFruitTemplate === tmpl.id;
+                  return (
+                    <button
+                      key={tmpl.id}
+                      type="button"
+                      onClick={() => handleSelectFruitTemplate(tmpl)}
+                      className={`flex min-h-11 flex-col text-start p-3 rounded-xl border transition-transform active:scale-[0.98] ${
+                        active
+                          ? 'border-amber-500 bg-amber-500/20 ring-1 ring-amber-500/50 text-ink dark:text-moonlight'
+                          : 'border-amber-500/25 bg-white/70 hover:bg-white dark:bg-black/25 dark:hover:bg-black/40 text-ink/85 dark:text-moonlight/85'
+                      }`}
+                    >
+                      <span className="flex items-center gap-1.5 font-bold text-xs text-amber-800 dark:text-amber-300">
+                        <TemplateIconSvg name={tmpl.icon} className="w-4 h-4 shrink-0" />
+                        <span>{ar ? tmpl.title.ar : tmpl.title.en}</span>
+                      </span>
+                      <p className="mt-0.5 text-[11px] text-ink/70 dark:text-moonlight/70 line-clamp-1">
+                        {ar ? tmpl.tagline.ar : tmpl.tagline.en}
+                      </p>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </div>
         </div>
       )}
 
       {/* ═══════════════════════════════════════════════════════════════════
-          الخطوة 2: الأسلوب الفني، معاينات StyleThumb SVG، وتصميم الغلاف الحي
+          الخطوة 2: «الشكل»
+          1) الهوية السريعة (مع StyleThumb + الاسم + 3 رموز: راوٍ، لهجة، خط)
+          2) نوع القصة (5 ظاهرة + «المزيد»)
+          3) الأسلوب الفني (18 أسلوباً بمعاينات StyleThumb SVG)
+          4) خط الغلاف وتأثيره مع المعاينة المباشرة الحية للغلاف (تجمع العنوان والأسلوب والخط)
          ═══════════════════════════════════════════════════════════════════ */}
       {(wizardStep === 2 || showAllSteps) && (
-        <div className="luxury-card p-4 sm:p-6 space-y-5 animate-[fadeUp_250ms_ease-out]">
-          <div className="space-y-3">
+        <div className="space-y-4 animate-[fadeUp_220ms_ease-out]">
+          {/* 1. الهوية السريعة للقصة */}
+          {!series && (
+            <div className="luxury-card p-3.5 sm:p-4 space-y-2.5">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="font-display text-xs sm:text-sm font-extrabold text-ink dark:text-moonlight">
+                  {ar ? `الهوية السريعة (${allPresets.length} هوية جاهزة)` : `Quick Identity (${allPresets.length} Presets)`}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setShowSaveIdentity((v) => !v)}
+                  className="inline-flex min-h-11 items-center gap-1.5 rounded-full border border-lantern/45 bg-lantern/15 px-3 py-1 text-xs font-bold text-ink transition hover:bg-lantern/25 active:scale-95 dark:text-amber-200"
+                >
+                  <BookmarkPlus size={14} className="text-lantern" />
+                  <span>{ar ? 'احفظ هويتي' : 'Save Identity'}</span>
+                </button>
+              </div>
+
+              {showSaveIdentity && (
+                <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-lantern/35 bg-lantern/10 p-2">
+                  <input
+                    type="text"
+                    value={customIdentityName}
+                    onChange={(e) => setCustomIdentityName(e.target.value.slice(0, 40))}
+                    placeholder={ar ? 'اسم الهوية (مثلاً: هويتي المسائية)...' : 'Identity name...'}
+                    className="min-h-11 flex-1 rounded-xl border border-dream/30 bg-white/90 px-3 text-xs text-ink outline-none focus:border-lantern dark:border-white/15 dark:bg-black/30 dark:text-moonlight"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleSaveCustomIdentity}
+                    className="min-h-11 rounded-xl bg-lantern px-4 text-xs font-extrabold text-ink shadow-2xs active:scale-95"
+                  >
+                    {ar ? 'حفظ' : 'Save'}
+                  </button>
+                </div>
+              )}
+
+              <div
+                role="radiogroup"
+                aria-label={ar ? 'هوية القصة' : 'Story identity'}
+                className="-mx-1 flex snap-x gap-2 overflow-x-auto px-1 pb-1.5 custom-scrollbar"
+              >
+                {allPresets.map((p) => {
+                  const isSelected = presetId === p.id;
+                  const presetDialectInfo = DIALECT_OPTIONS.find((d) => d.value === p.dialect);
+                  const presetFontInfo = COVER_FONT_OPTIONS.find((f) => f.value === (p.coverFont ?? 'kufi'));
+                  const presetVoiceInfo = VOICE_OPTIONS.find((v) => v.value === p.voice);
+                  return (
+                    <div
+                      key={p.id}
+                      className={`relative min-w-[11.5rem] shrink-0 snap-start rounded-2xl border p-2.5 text-start transition-transform ${
+                        isSelected
+                          ? 'border-lantern bg-gradient-to-br from-lantern/25 via-lantern/10 to-transparent shadow-xs ring-1 ring-lantern/40'
+                          : 'border-dream/25 bg-white/65 hover:border-lantern/50 dark:border-white/10 dark:bg-white/[0.05]'
+                      }`}
+                    >
+                      <button
+                        type="button"
+                        role="radio"
+                        aria-checked={isSelected}
+                        onClick={() => applyPreset(p.id)}
+                        className="flex min-h-14 w-full flex-col justify-between gap-2 text-start"
+                      >
+                        <div className="flex items-center gap-2">
+                          <StyleThumb style={p.artStyle} className="h-9 w-12 shrink-0 rounded-lg shadow-2xs" />
+                          <span className="font-display text-xs font-extrabold text-ink dark:text-moonlight leading-snug line-clamp-2">
+                            {ar ? p.label.ar : p.label.en}
+                          </span>
+                        </div>
+                        {/* 3 رموز صغيرة: أيقونة راوٍ + شارة اللهجة + عيّنة الخط */}
+                        <div className="flex items-center justify-between gap-1 border-t border-dream/15 pt-1.5 text-[10px] font-bold text-ink/75 dark:text-moonlight/75">
+                          <span className="inline-flex items-center gap-1 truncate">
+                            <Volume2 size={11} className="text-lantern shrink-0" aria-hidden />
+                            <span className="truncate">{presetVoiceInfo ? (ar ? presetVoiceInfo.label.ar.split(' ')[0] : presetVoiceInfo.value) : p.voice}</span>
+                          </span>
+                          <DialectBadgeSvg code={presetDialectInfo?.flag ?? 'MSA'} />
+                          <span className={`rounded bg-lantern/15 px-1.5 py-0.5 text-[10px] text-ink dark:text-amber-200 ${presetFontInfo?.className ?? ''}`}>
+                            {ar ? 'أبجد' : 'Aa'}
+                          </span>
+                        </div>
+                      </button>
+                      {p.isCustom && (
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteCustomIdentity(p.id)}
+                          className="absolute top-1 end-1 flex min-h-11 min-w-11 items-center justify-center rounded-full text-ink/45 hover:text-coral dark:text-moonlight/45"
+                          aria-label={ar ? 'حذف الهوية' : 'Delete preset'}
+                        >
+                          <X size={13} />
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* 2. نوع القصة (5 ظاهرة + «المزيد») */}
+          <div className="luxury-card p-3.5 sm:p-4 space-y-2.5">
             <div className="flex items-center justify-between gap-2">
-              <label className="font-display text-sm font-extrabold text-ink dark:text-moonlight flex items-center gap-2">
-                <Palette size={16} className="text-lantern" aria-hidden />
-                <span>{ar ? 'الأسلوب الفني للرسومات (18 أسلوباً بمعاينة مرسومة)' : 'Illustration Art Style (18 Visual Styles)'}</span>
+              <label className="font-display text-xs sm:text-sm font-extrabold text-ink dark:text-moonlight">
+                {ar ? 'نوع القصة (16 نوعاً)' : 'Story Genre (16 Types)'}
+              </label>
+              <button
+                type="button"
+                onClick={() => setShowMoreStoryTypes((v) => !v)}
+                className="inline-flex min-h-11 items-center gap-1 rounded-full border border-dream/35 bg-dream/10 px-3 py-1 text-xs font-bold text-ink transition hover:border-lantern dark:text-moonlight"
+              >
+                <span>
+                  {showMoreStoryTypes
+                    ? ar
+                      ? 'إخفاء الإضافية'
+                      : 'Fewer'
+                    : ar
+                      ? `المزيد (+${EXTRA_STORY_TYPES.length})`
+                      : `More (+${EXTRA_STORY_TYPES.length})`}
+                </span>
+                {showMoreStoryTypes ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+              </button>
+            </div>
+
+            <div className="grid grid-cols-3 sm:grid-cols-5 gap-1.5">
+              {(showMoreStoryTypes ? [...PRIMARY_STORY_TYPES, ...EXTRA_STORY_TYPES] : PRIMARY_STORY_TYPES).map((t) => {
+                const active = storyType === t.value;
+                return (
+                  <button
+                    key={t.value}
+                    type="button"
+                    onClick={() => setStoryType(t.value)}
+                    aria-pressed={active}
+                    className={`flex min-h-12 flex-col items-start justify-center rounded-xl border p-2 text-start transition-transform active:scale-95 ${
+                      active
+                        ? 'border-lantern bg-lantern/20 text-ink shadow-2xs ring-1 ring-lantern/40 dark:text-moonlight'
+                        : 'border-dream/25 bg-white/65 text-ink/80 hover:border-lantern/45 dark:border-white/10 dark:bg-white/5 dark:text-moonlight/85'
+                    }`}
+                  >
+                    <span className="font-display text-xs font-extrabold leading-tight">{ar ? t.label.ar : t.label.en}</span>
+                    <span className="mt-0.5 text-[10px] leading-tight text-ink/60 dark:text-moonlight/60 line-clamp-1">
+                      {ar ? t.desc.ar : t.desc.en}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {STORY_TYPE_SPECS[storyType] && (
+              <div className="rounded-xl border border-dream/20 bg-dream/5 px-3 py-1.5 text-[11px] text-ink/75 dark:text-moonlight/75">
+                <span className="font-bold text-lantern">{ar ? 'قوس السرد: ' : 'Arc: '}</span>
+                <span>
+                  {STORY_TYPE_SPECS[storyType].arc.beginning} ← {STORY_TYPE_SPECS[storyType].arc.middle} ←{' '}
+                  {STORY_TYPE_SPECS[storyType].arc.climax} ← {STORY_TYPE_SPECS[storyType].arc.ending}
+                </span>
+              </div>
+            )}
+          </div>
+
+          {/* 3. الأسلوب الفني (18 أسلوباً بمعاينات StyleThumb SVG مضغوطة لتناسب موبايل 390px) */}
+          <div className="luxury-card p-3.5 sm:p-4 space-y-2.5">
+            <div className="flex items-center justify-between gap-2">
+              <label className="font-display text-xs sm:text-sm font-extrabold text-ink dark:text-moonlight flex items-center gap-1.5">
+                <Palette size={15} className="text-lantern" aria-hidden />
+                <span>{ar ? 'الأسلوب الفني (18 أسلوباً)' : 'Art Style (18 Styles)'}</span>
               </label>
               <span className="text-xs font-bold text-lantern">{ar ? currentStyleLabel : artStyle}</span>
             </div>
 
-            {/* شبكة المعاينة البصرية بالـ SVG لكل أسلوب فني عبر StyleThumb */}
             <div
               role="radiogroup"
               aria-label={ar ? 'الأسلوب الفني' : 'Art style'}
-              className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2.5"
+              className="grid grid-cols-3 sm:grid-cols-6 gap-1.5"
             >
               {ART_STYLE_OPTIONS.map((s) => {
                 const active = artStyle === s.value;
@@ -1141,14 +1345,14 @@ export default function StorySetupForm({ initialIdea, language, onSubmit, onLoad
                     aria-checked={active}
                     disabled={Boolean(series)}
                     onClick={() => setArtStyle(s.value)}
-                    className={`flex min-h-20 flex-col items-center justify-between gap-1.5 rounded-2xl border p-2 text-center transition-transform active:scale-95 ${
+                    className={`flex min-h-14 flex-col items-center justify-center gap-1 rounded-xl border p-1.5 text-center transition-transform active:scale-95 ${
                       active
-                        ? 'border-lantern bg-lantern/20 text-ink shadow-xs ring-2 ring-lantern/45 dark:text-moonlight'
+                        ? 'border-lantern bg-lantern/20 text-ink shadow-2xs ring-2 ring-lantern/45 dark:text-moonlight'
                         : 'border-dream/25 bg-white/65 text-ink/80 hover:border-lantern/45 dark:border-white/10 dark:bg-white/5 dark:text-moonlight/85'
                     }`}
                   >
-                    <StyleThumb style={s.value} className="h-11 w-14 shrink-0 rounded-lg shadow-2xs" />
-                    <span className="font-display text-[11px] font-extrabold leading-tight line-clamp-1">
+                    <StyleThumb style={s.value} className="h-8 w-11 shrink-0 rounded-md shadow-2xs" />
+                    <span className="font-display text-[10px] font-extrabold leading-tight line-clamp-1">
                       {ar ? s.labelAr : s.value}
                     </span>
                   </button>
@@ -1157,297 +1361,411 @@ export default function StorySetupForm({ initialIdea, language, onSubmit, onLoad
             </div>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2 border-t border-dream/20 dark:border-white/10">
-            <LuxurySelect<CoverFontStyle>
-              id="coverFontStyle"
-              ar={ar}
-              label={ar ? 'خط عنوان الغلاف (12 خطاً عربياً)' : 'Cover Title Font (12 Fonts)'}
-              value={coverFontStyle}
-              onChange={setCoverFontStyle}
-              searchable
-              options={COVER_FONT_OPTIONS.map((f): LuxuryOption<CoverFontStyle> => ({
-                value: f.value,
-                label: ar ? f.label.ar : f.label.en,
-                sublabel: ar ? f.sublabel.ar : f.sublabel.en,
-                fontClassName: f.className,
-                icon: <Feather size={15} className="text-lantern" />,
-              }))}
-            />
+          {/* 4. خط الغلاف وتأثيره مع المعاينة المباشرة للغلاف (تجمع العنوان والأسلوب والخط بـ SVG/CSS) */}
+          <div className="luxury-card p-3.5 sm:p-4 space-y-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-end">
+              <LuxurySelect<CoverFontStyle>
+                id="coverFontStyle"
+                ar={ar}
+                label={ar ? 'خط عنوان الغلاف (12 خطاً عربياً)' : 'Cover Title Font (12 Fonts)'}
+                value={coverFontStyle}
+                onChange={setCoverFontStyle}
+                searchable
+                options={COVER_FONT_OPTIONS.map((f): LuxuryOption<CoverFontStyle> => ({
+                  value: f.value,
+                  label: ar ? f.label.ar : f.label.en,
+                  sublabel: ar ? f.sublabel.ar : f.sublabel.en,
+                  fontClassName: f.className,
+                  icon: <Feather size={15} className="text-lantern" />,
+                }))}
+              />
 
-            <LuxurySelect<AspectRatio>
-              id="aspectRatio"
-              ar={ar}
-              disabled={Boolean(series)}
-              label={ar ? 'أبعاد وشكل لوحة الرسم' : 'Illustration Aspect Ratio'}
-              value={aspectRatio}
-              onChange={setAspectRatio}
-              searchable={false}
-              options={ASPECT_RATIO_OPTIONS.map((r): LuxuryOption<AspectRatio> => ({
-                value: r.value,
-                label: ar ? r.label.ar : r.label.en,
-                badge: r.value,
-                icon: (
-                  <span className="text-lantern">
-                    {r.value === '1:1' ? (
-                      <Square size={15} />
-                    ) : r.value === '16:9' ? (
-                      <Film size={15} />
-                    ) : r.value === '9:16' ? (
-                      <Smartphone size={15} />
-                    ) : (
-                      <Frame size={15} />
-                    )}
-                  </span>
-                ),
-              }))}
-            />
-          </div>
-
-          {/* ب2: تأثيرات النص (ذهبي / ظل / حدود / عادي) + معاينة حية للعنوان أثناء الاختيار */}
-          <div className="rounded-2xl border border-dream/25 bg-gradient-to-br from-[#1b1533] via-[#261c47] to-[#120e24] p-4 text-white space-y-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <span className="text-xs font-bold text-amber-200 flex items-center gap-1.5">
-                <Crown size={14} className="text-lantern" />
-                <span>{ar ? 'تأثير نص الغلاف ومعاينة الخط الحية' : 'Cover Title Effect & Live Preview'}</span>
-              </span>
-              <div className="flex flex-wrap items-center gap-1.5" role="radiogroup" aria-label={ar ? 'تأثير العنوان' : 'Title effect'}>
-                {COVER_EFFECT_OPTIONS.map((ef) => {
-                  const active = coverTextEffect === ef.value;
-                  return (
-                    <button
-                      key={ef.value}
-                      type="button"
-                      onClick={() => setCoverTextEffect(ef.value)}
-                      aria-pressed={active}
-                      className={`min-h-11 rounded-xl px-3.5 py-1.5 text-xs font-bold transition ${
-                        active
-                          ? 'bg-lantern text-ink shadow-xs'
-                          : 'bg-white/10 text-white/85 hover:bg-white/20'
-                      }`}
-                    >
-                      {ar ? ef.label.ar : ef.label.en}
-                    </button>
-                  );
-                })}
+              <div className="space-y-1.5">
+                <span className="block font-display text-xs font-extrabold text-ink dark:text-moonlight">
+                  {ar ? 'تأثير نص العنوان' : 'Cover Title Effect'}
+                </span>
+                <div className="grid grid-cols-4 gap-1.5" role="radiogroup" aria-label={ar ? 'تأثير العنوان' : 'Title effect'}>
+                  {COVER_EFFECT_OPTIONS.map((ef) => {
+                    const active = coverTextEffect === ef.value;
+                    return (
+                      <button
+                        key={ef.value}
+                        type="button"
+                        role="radio"
+                        aria-checked={active}
+                        onClick={() => setCoverTextEffect(ef.value)}
+                        className={`min-h-11 rounded-xl border px-2 py-1.5 text-xs font-bold transition ${
+                          active
+                            ? 'border-lantern bg-lantern text-ink shadow-2xs'
+                            : 'border-dream/30 bg-white/70 text-ink/80 hover:border-lantern/50 dark:border-white/15 dark:bg-white/5 dark:text-moonlight'
+                        }`}
+                      >
+                        {ar ? ef.label.ar : ef.label.en}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
             </div>
-            <div className="rounded-xl border border-white/10 bg-black/30 px-4 py-4 text-center">
-              <p className={`text-xl sm:text-2xl leading-relaxed ${getCoverTitleClasses(coverFontStyle, coverTextEffect)}`}>
-                {idea.trim()
-                  ? idea.trim().split(/\s+/).slice(0, 6).join(' ')
-                  : ar
-                    ? 'حكاية النجوم في بستان الأحلام'
-                    : 'The Secret of the Starlit Orchard'}
-              </p>
+
+            {/* البند 5: معاينة مباشرة للغلاف تجمع العنوان والأسلوب والخط (SVG/CSS بلا صور خارجية) */}
+            <div
+              data-testid="live-cover-preview"
+              className="relative overflow-hidden rounded-2xl border border-lantern/40 bg-gradient-to-br from-[#1b1533] via-[#261c47] to-[#120e24] p-3.5 text-white shadow-md"
+            >
+              <div className="flex items-center justify-between gap-2 pb-2 text-[11px] font-bold text-amber-200/90">
+                <span className="inline-flex items-center gap-1.5">
+                  <Crown size={13} className="text-lantern" aria-hidden />
+                  <span>{ar ? 'معاينة حية للغلاف (العنوان + الأسلوب + الخط)' : 'Live Cover Preview (Title + Art Style + Font)'}</span>
+                </span>
+                <span className="rounded-full border border-lantern/40 bg-lantern/20 px-2 py-0.5 text-[10px] text-amber-200">
+                  {ar ? `${currentStyleLabel} · ${currentFontLabel}` : `${artStyle} · ${currentFontLabel}`}
+                </span>
+              </div>
+
+              <div className="relative flex items-center gap-3 rounded-xl border border-white/15 bg-black/35 p-3">
+                {/* الرسم المصغر للأسلوب الفني المختار كإطار كتاب مصور بـ SVG */}
+                <div className="relative shrink-0 overflow-hidden rounded-xl border-2 border-lantern/50 shadow-md">
+                  <StyleThumb style={artStyle} className="h-20 w-24 sm:h-24 sm:w-28" />
+                </div>
+
+                {/* العنوان الحي بالخط والتأثير المختارين مع شارات النوع والبطل */}
+                <div className="min-w-0 flex-1 text-center sm:text-start space-y-1.5">
+                  <p className={`text-base sm:text-xl leading-relaxed break-words ${getCoverTitleClasses(coverFontStyle, coverTextEffect)}`}>
+                    {liveCoverTitle}
+                  </p>
+                  <div className="flex flex-wrap items-center justify-center sm:justify-start gap-1.5 text-[10px] font-semibold text-white/80">
+                    <span className="rounded-md bg-white/10 px-2 py-0.5">{currentStoryTypeLabel}</span>
+                    {hero?.name && (
+                      <span className="rounded-md bg-lantern/25 px-2 py-0.5 text-amber-200">
+                        {ar ? `البطل: ${hero.name}` : `Hero: ${hero.name}`}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         </div>
       )}
 
       {/* ═══════════════════════════════════════════════════════════════════
-          الخطوة 3: اللهجة، صوت الراوي، عدد الصفحات، وإعدادات الاستوديو
+          الخطوة 3: «التفاصيل»
+          1) اللهجة والصوت
+          2) الفئة العمرية + النسبة (AspectRatio)
+          3) طول القصة (عدد الصفحات)
+          4) «خيارات متقدمة» مطوية افتراضياً (معاينة الغلاف أولاً، العلامة المفرغة، نص العلامة)
+          5) بطاقة الملخص + زر «أنشئ القصة» (يظهر في الخطوة 3 فقط)
          ═══════════════════════════════════════════════════════════════════ */}
       {(wizardStep === 3 || showAllSteps) && (
-        <div className="luxury-card p-4 sm:p-6 space-y-5 animate-[fadeUp_250ms_ease-out]">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {ar && !series && (
-              <LuxurySelect<ArabicDialect>
-                id="dialect"
-                ar={ar}
-                label="اللهجة العربية المفضلة للسرد والحوار"
-                value={dialect}
-                onChange={setDialect}
-                searchable
-                options={DIALECT_OPTIONS.map((d): LuxuryOption<ArabicDialect> => ({
-                  value: d.value,
-                  label: d.label,
-                  icon: <DialectBadgeSvg code={d.flag} />,
-                  badge: d.value === 'Modern Standard' ? 'فصحى' : undefined,
-                }))}
-              />
-            )}
-
-            <LuxurySelect<NarratorVoice>
-              id="narratorVoice"
-              ar={ar}
-              label={ar ? 'صوت الراوي (القراءة الصوتية)' : 'Narrator Voice'}
-              value={selectedVoice}
-              onChange={handleVoiceChange}
-              searchable={false}
-              options={VOICE_OPTIONS.map((v): LuxuryOption<NarratorVoice> => ({
-                value: v.value,
-                label: ar ? v.label.ar : v.label.en,
-                icon: <Volume2 size={15} className="text-lantern" />,
-              }))}
-            />
-          </div>
-
-          {/* طول القصة وعدد الصفحات */}
-          <div className="pt-2 border-t border-dream/20 dark:border-white/10">
-            <div className="mb-2 flex items-center justify-between">
-              <label className="font-display text-xs sm:text-sm font-extrabold text-ink dark:text-moonlight" htmlFor="length">
-                {ar ? `طول القصة: ${pageCount} صفحة` : `Story Length: ${pageCount} pages`}
-              </label>
-              <span className="inline-flex items-center gap-1 text-xs font-bold text-ink/70 dark:text-amber-200">
-                <Clock size={13} className="text-lantern" aria-hidden />
-                <span>{ar ? `~${readingMinutes} دقائق قراءة` : `~${readingMinutes} min read`}</span>
-              </span>
-            </div>
-
-            <div className="mb-3 grid grid-cols-2 sm:grid-cols-4 gap-2" role="group" aria-label={ar ? 'أطوال جاهزة' : 'Length presets'}>
-              {STORY_LENGTHS.map((l) => {
-                const active = pageCount === l.pages;
-                return (
-                  <button
-                    key={l.value}
-                    type="button"
-                    onClick={() => setPageCount(l.pages)}
-                    aria-pressed={active}
-                    className={`min-h-11 rounded-xl border px-3 py-2 text-xs font-bold transition-transform active:scale-95 ${
-                      active
-                        ? 'border-lantern bg-lantern text-ink shadow-xs'
-                        : 'border-dream/30 bg-white/70 text-ink/80 hover:border-lantern/50 dark:border-white/15 dark:bg-white/5 dark:text-moonlight/85'
-                    }`}
-                  >
-                    {ar ? l.label.ar : l.label.en}
-                  </button>
-                );
-              })}
-            </div>
-
-            <input
-              id="length"
-              type="range"
-              min={MIN_STORY_PAGES}
-              max={MAX_STORY_PAGES}
-              step={1}
-              value={pageCount}
-              onChange={(e) => setPageCount(Number(e.target.value))}
-              className="h-11 w-full cursor-pointer accent-lantern"
-            />
-            {pageCount > FIRST_BATCH_PAGES && (
-              <p className="mt-1 text-[11px] text-ink/60 dark:text-moonlight/60">
-                {ar ? 'تُكتب القصة الطويلة على دفعات بفصول متتابعة، ويمكن استئنافها في أي وقت.' : 'Long stories are generated in chapters and can be resumed anytime.'}
-              </p>
-            )}
-          </div>
-
-          {/* ب4 + ب8: إعدادات توفير الحصة (معاينة الغلاف والصفحة 1) وعلامة الحقوق المفرغة عند التصدير */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-dream/20 dark:border-white/10">
-            <label className="flex min-h-14 cursor-pointer items-center justify-between gap-3 rounded-2xl border border-dream/25 bg-white/55 p-3 dark:border-white/10 dark:bg-white/5">
-              <div className="flex items-start gap-2">
-                <Eye size={16} className="mt-0.5 text-lantern shrink-0" />
-                <div>
-                  <p className="font-display text-xs font-bold text-ink dark:text-moonlight">
-                    {ar ? 'معاينة الغلاف والصفحة 1 أولاً' : 'Preview Cover & Page 1 First'}
-                  </p>
-                  <p className="text-[11px] text-ink/60 dark:text-moonlight/60">
-                    {ar ? 'يتوقف بعد الصفحة 1 لتوفير الحصة حتى تضغط «أكمل»' : 'Pauses after page 1 to save quota until you confirm'}
-                  </p>
-                </div>
-              </div>
-              <input
-                type="checkbox"
-                checked={studioSettings.previewFirstGate}
-                onChange={(e) => updateSettings({ previewFirstGate: e.target.checked })}
-                className="h-5 w-5 accent-lantern cursor-pointer shrink-0"
-                aria-label={ar ? 'معاينة الغلاف والصفحة 1 أولاً' : 'Preview Cover & Page 1 First'}
-              />
-            </label>
-
-            <div className="rounded-2xl border border-dream/25 bg-white/55 p-3 space-y-2 dark:border-white/10 dark:bg-white/5">
-              <label className="flex min-h-11 cursor-pointer items-center justify-between gap-3">
-                <div className="flex items-start gap-2">
-                  <ShieldCheck size={16} className="mt-0.5 text-lantern shrink-0" />
-                  <div>
-                    <p className="font-display text-xs font-bold text-ink dark:text-moonlight">
-                      {ar ? 'علامة حقوق مفرغة عند التصدير' : 'Hollow Watermark on Export'}
-                    </p>
-                    <p className="text-[11px] text-ink/60 dark:text-moonlight/60">
-                      {ar ? 'تُضاف عند التصدير فقط وتبقى الصور الأصلية نظيفة' : 'Applied only on export; DB images stay clean'}
-                    </p>
-                  </div>
-                </div>
-                <input
-                  type="checkbox"
-                  checked={studioSettings.watermarkEnabled}
-                  onChange={(e) => updateSettings({ watermarkEnabled: e.target.checked })}
-                  className="h-5 w-5 accent-lantern cursor-pointer shrink-0"
-                  aria-label={ar ? 'تفعيل العلامة المائية عند التصدير' : 'Enable export watermark'}
-                />
-              </label>
-              {studioSettings.watermarkEnabled && (
-                <input
-                  type="text"
-                  value={studioSettings.watermarkText}
-                  onChange={(e) => updateSettings({ watermarkText: e.target.value.slice(0, 50) })}
-                  placeholder={ar ? `النص الافتراضي: ${BRAND.name.ar}` : `Default: ${BRAND.name.en}`}
-                  className="min-h-11 w-full rounded-xl border border-dream/30 bg-white/85 px-3 py-1.5 text-xs text-ink outline-none focus:border-lantern dark:border-white/15 dark:bg-black/30 dark:text-moonlight"
+        <div className="space-y-4 animate-[fadeUp_220ms_ease-out]">
+          <div className="luxury-card p-3.5 sm:p-5 space-y-4">
+            {/* 1. اللهجة والصوت */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {ar && !series && (
+                <LuxurySelect<ArabicDialect>
+                  id="dialect"
+                  ar={ar}
+                  label="اللهجة العربية للسرد والحوار"
+                  value={dialect}
+                  onChange={setDialect}
+                  searchable
+                  options={DIALECT_OPTIONS.map((d): LuxuryOption<ArabicDialect> => ({
+                    value: d.value,
+                    label: d.label,
+                    icon: <DialectBadgeSvg code={d.flag} />,
+                    badge: d.value === 'Modern Standard' ? 'فصحى' : undefined,
+                  }))}
                 />
               )}
+
+              <LuxurySelect<NarratorVoice>
+                id="narratorVoice"
+                ar={ar}
+                label={ar ? 'صوت الراوي (القراءة الصوتية)' : 'Narrator Voice'}
+                value={selectedVoice}
+                onChange={handleVoiceChange}
+                searchable={false}
+                options={VOICE_OPTIONS.map((v): LuxuryOption<NarratorVoice> => ({
+                  value: v.value,
+                  label: ar ? v.label.ar : v.label.en,
+                  icon: <Volume2 size={15} className="text-lantern" />,
+                }))}
+              />
+            </div>
+
+            {/* 2. الفئة العمرية + النسبة */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-dream/20 dark:border-white/10">
+              <LuxurySelect<AgeGroup>
+                id="ageGroup"
+                ar={ar}
+                disabled={Boolean(series)}
+                label={ar ? 'الفئة العمرية' : 'Age Group'}
+                value={ageGroup}
+                onChange={(val) => {
+                  setAgeGroup(val);
+                  setIsTeenDrama(val === '13-18');
+                }}
+                searchable={false}
+                options={AGE_GROUPS.map((g): LuxuryOption<AgeGroup> => ({
+                  value: g.value,
+                  label: g.label,
+                  sublabel: ar ? g.desc.ar : g.desc.en,
+                  icon: (
+                    <span className="text-lantern">
+                      {g.value === '3-4' ? (
+                        <Smile size={15} />
+                      ) : g.value === '4-6' ? (
+                        <Sparkles size={15} />
+                      ) : g.value === '7-9' ? (
+                        <Users size={15} />
+                      ) : g.value === '9-12' ? (
+                        <Rocket size={15} />
+                      ) : (
+                        <Compass size={15} />
+                      )}
+                    </span>
+                  ),
+                }))}
+              />
+
+              <LuxurySelect<AspectRatio>
+                id="aspectRatio"
+                ar={ar}
+                disabled={Boolean(series)}
+                label={ar ? 'نسبة أبعاد الصفحات' : 'Illustration Aspect Ratio'}
+                value={aspectRatio}
+                onChange={setAspectRatio}
+                searchable={false}
+                options={ASPECT_RATIO_OPTIONS.map((r): LuxuryOption<AspectRatio> => ({
+                  value: r.value,
+                  label: ar ? r.label.ar : r.label.en,
+                  badge: r.value,
+                  icon: (
+                    <span className="text-lantern">
+                      {r.value === '1:1' ? (
+                        <Square size={15} />
+                      ) : r.value === '16:9' ? (
+                        <Film size={15} />
+                      ) : r.value === '9:16' ? (
+                        <Smartphone size={15} />
+                      ) : (
+                        <Frame size={15} />
+                      )}
+                    </span>
+                  ),
+                }))}
+              />
+            </div>
+
+            {/* 3. طول القصة وعدد الصفحات */}
+            <div className="pt-2 border-t border-dream/20 dark:border-white/10">
+              <div className="mb-2 flex items-center justify-between">
+                <label className="font-display text-xs sm:text-sm font-extrabold text-ink dark:text-moonlight" htmlFor="length">
+                  {ar ? `طول القصة: ${pageCount} صفحة` : `Story Length: ${pageCount} pages`}
+                </label>
+                <span className="inline-flex items-center gap-1 text-xs font-bold text-ink/70 dark:text-amber-200">
+                  <Clock size={13} className="text-lantern" aria-hidden />
+                  <span>{ar ? `~${readingMinutes} دقائق قراءة` : `~${readingMinutes} min read`}</span>
+                </span>
+              </div>
+
+              <div className="mb-2 grid grid-cols-2 sm:grid-cols-4 gap-1.5" role="group" aria-label={ar ? 'أطوال جاهزة' : 'Length presets'}>
+                {STORY_LENGTHS.map((l) => {
+                  const active = pageCount === l.pages;
+                  return (
+                    <button
+                      key={l.value}
+                      type="button"
+                      onClick={() => setPageCount(l.pages)}
+                      aria-pressed={active}
+                      className={`min-h-11 rounded-xl border px-2.5 py-1.5 text-xs font-bold transition-transform active:scale-95 ${
+                        active
+                          ? 'border-lantern bg-lantern text-ink shadow-2xs'
+                          : 'border-dream/30 bg-white/70 text-ink/80 hover:border-lantern/50 dark:border-white/15 dark:bg-white/5 dark:text-moonlight/85'
+                      }`}
+                    >
+                      {ar ? l.label.ar : l.label.en}
+                    </button>
+                  );
+                })}
+              </div>
+
+              <input
+                id="length"
+                type="range"
+                min={MIN_STORY_PAGES}
+                max={MAX_STORY_PAGES}
+                step={1}
+                value={pageCount}
+                onChange={(e) => setPageCount(Number(e.target.value))}
+                className="h-11 w-full cursor-pointer accent-lantern"
+              />
+              {pageCount > FIRST_BATCH_PAGES && (
+                <p className="mt-0.5 text-[11px] text-ink/60 dark:text-moonlight/60">
+                  {ar ? 'تُكتب القصة الطويلة على دفعات بفصول متتابعة، ويمكن استئنافها في أي وقت.' : 'Long stories are generated in chapters and can be resumed anytime.'}
+                </p>
+              )}
+            </div>
+
+            {/* 4. قسم «خيارات متقدمة» مطوي افتراضياً (معاينة الغلاف أولاً، العلامة المفرغة، نص العلامة) */}
+            <div className="pt-2 border-t border-dream/20 dark:border-white/10">
+              <button
+                type="button"
+                aria-expanded={showAdvancedOptions}
+                onClick={() => setShowAdvancedOptions((v) => !v)}
+                className="flex min-h-11 w-full items-center justify-between gap-2 rounded-2xl border border-dream/25 bg-white/60 px-3.5 py-2 text-xs font-extrabold text-ink transition hover:border-lantern dark:border-white/10 dark:bg-white/5 dark:text-moonlight"
+              >
+                <span className="flex items-center gap-2">
+                  <Settings2 size={15} className="text-lantern" aria-hidden />
+                  <span>{ar ? 'خيارات متقدمة (معاينة الغلاف أولاً والعلامة المفرغة)' : 'Advanced Options (Preview Gate & Watermark)'}</span>
+                </span>
+                {showAdvancedOptions ? <ChevronUp size={16} aria-hidden /> : <ChevronDown size={16} aria-hidden />}
+              </button>
+
+              {showAdvancedOptions && (
+                <div className="mt-2.5 grid grid-cols-1 sm:grid-cols-2 gap-2.5 animate-[fadeUp_180ms_ease-out]">
+                  {/* مربعا الاختيار داخل label بـ min-height: 44px وبحجم لمس 44x44px */}
+                  <label className="flex min-h-14 cursor-pointer items-center justify-between gap-3 rounded-2xl border border-dream/25 bg-white/65 p-3 dark:border-white/10 dark:bg-white/5">
+                    <div className="flex items-start gap-2">
+                      <Eye size={16} className="mt-0.5 text-lantern shrink-0" />
+                      <div>
+                        <p className="font-display text-xs font-bold text-ink dark:text-moonlight">
+                          {ar ? 'معاينة الغلاف والصفحة 1 أولاً' : 'Preview Cover & Page 1 First'}
+                        </p>
+                        <p className="text-[11px] text-ink/60 dark:text-moonlight/60">
+                          {ar ? 'يتوقف بعد الصفحة 1 لتوفير الحصة حتى تضغط «أكمل»' : 'Pauses after page 1 to save quota until you confirm'}
+                        </p>
+                      </div>
+                    </div>
+                    <span className="flex min-h-11 min-w-11 shrink-0 items-center justify-center">
+                      <input
+                        type="checkbox"
+                        checked={studioSettings.previewFirstGate}
+                        onChange={(e) => updateSettings({ previewFirstGate: e.target.checked })}
+                        className="h-6 w-6 cursor-pointer accent-lantern"
+                        aria-label={ar ? 'معاينة الغلاف والصفحة 1 أولاً' : 'Preview Cover & Page 1 First'}
+                      />
+                    </span>
+                  </label>
+
+                  <div className="rounded-2xl border border-dream/25 bg-white/65 p-3 space-y-2 dark:border-white/10 dark:bg-white/5">
+                    <label className="flex min-h-11 cursor-pointer items-center justify-between gap-3">
+                      <div className="flex items-start gap-2">
+                        <ShieldCheck size={16} className="mt-0.5 text-lantern shrink-0" />
+                        <div>
+                          <p className="font-display text-xs font-bold text-ink dark:text-moonlight">
+                            {ar ? 'علامة حقوق مفرغة عند التصدير' : 'Hollow Watermark on Export'}
+                          </p>
+                          <p className="text-[11px] text-ink/60 dark:text-moonlight/60">
+                            {ar ? 'تُضاف عند التصدير فقط وتبقى الصور الأصلية نظيفة' : 'Applied only on export; DB images stay clean'}
+                          </p>
+                        </div>
+                      </div>
+                      <span className="flex min-h-11 min-w-11 shrink-0 items-center justify-center">
+                        <input
+                          type="checkbox"
+                          checked={studioSettings.watermarkEnabled}
+                          onChange={(e) => updateSettings({ watermarkEnabled: e.target.checked })}
+                          className="h-6 w-6 cursor-pointer accent-lantern"
+                          aria-label={ar ? 'تفعيل العلامة المائية عند التصدير' : 'Enable export watermark'}
+                        />
+                      </span>
+                    </label>
+                    {studioSettings.watermarkEnabled && (
+                      <input
+                        type="text"
+                        value={studioSettings.watermarkText}
+                        onChange={(e) => updateSettings({ watermarkText: e.target.value.slice(0, 50) })}
+                        placeholder={ar ? `النص الافتراضي: ${BRAND.name.ar}` : `Default: ${BRAND.name.en}`}
+                        className="min-h-11 w-full rounded-xl border border-dream/30 bg-white/85 px-3 py-1.5 text-xs text-ink outline-none focus:border-lantern dark:border-white/15 dark:bg-black/30 dark:text-moonlight"
+                      />
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* 5. بطاقة الملخص (الفكرة، الهوية، النوع، الطول، الأسلوب، اللهجة) */}
+            <div className="rounded-2xl border border-lantern/35 bg-lantern/10 p-3.5 text-xs space-y-1.5">
+              <div className="font-display font-extrabold text-ink dark:text-amber-200">
+                {ar ? 'ملخص إعدادات القصة:' : 'Story Summary:'}
+              </div>
+              <p className="text-ink/85 dark:text-moonlight/85 line-clamp-2">
+                <span className="font-bold">{ar ? 'الفكرة: ' : 'Idea: '}</span>
+                <span>{idea.trim() || (ar ? 'لم تُكتب بعد' : 'Not written yet')}</span>
+              </p>
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] font-semibold text-ink/80 dark:text-moonlight/80">
+                <span>{ar ? `الهوية: ${currentPresetLabel}` : `Identity: ${currentPresetLabel}`}</span>
+                <span aria-hidden="true">·</span>
+                <span>{ar ? `النوع: ${currentStoryTypeLabel}` : `Genre: ${currentStoryTypeLabel}`}</span>
+                <span aria-hidden="true">·</span>
+                <span>{ar ? `الأسلوب: ${currentStyleLabel}` : `Style: ${artStyle}`}</span>
+                <span aria-hidden="true">·</span>
+                <span>{ar ? `${currentDialectLabel} (${currentVoiceLabel})` : `${currentVoiceLabel}`}</span>
+                <span aria-hidden="true">·</span>
+                <span>{ar ? `الطول: ${pageCount} صفحات (${aspectRatio})` : `Length: ${pageCount}p (${aspectRatio})`}</span>
+              </div>
             </div>
           </div>
+        </div>
+      )}
 
-          {/* ملخص سريع للإعدادات المختارة قبل الانطلاق */}
-          <div className="rounded-2xl border border-lantern/30 bg-lantern/10 px-4 py-3 text-xs text-ink/80 dark:text-moonlight/85">
-            <span className="font-display font-bold text-ink dark:text-amber-200">{ar ? 'ملخص قصتك: ' : 'Story Summary: '}</span>
-            <span>{ar ? currentStyleLabel : artStyle}</span>
-            <span aria-hidden="true"> · </span>
-            <span>{ar ? currentDialectLabel : dialect}</span>
-            <span aria-hidden="true"> · </span>
-            <span>{currentVoiceLabel}</span>
-            <span aria-hidden="true"> · </span>
-            <span>{ar ? `${pageCount} صفحات` : `${pageCount} pages`}</span>
+      {/* شريط سفلي ثابت للتنقل بين الخطوات (position: sticky مع مراعاة الشريط السفلي للتنقل و safe-area)
+          البند 2: زر «أنشئ القصة» يظهر في الخطوة 3 فقط، وفي الخطوتين 1 و2 يظهر «التالي» فقط */}
+      <div className="sticky bottom-[calc(4.35rem+env(safe-area-inset-bottom,0px))] md:bottom-3 z-30 rounded-2xl border border-dream/30 bg-moonlight/95 p-2.5 pb-[calc(0.625rem+env(safe-area-inset-bottom,0px))] md:pb-2.5 shadow-lg backdrop-blur-xl dark:border-white/15 dark:bg-dusk/95">
+        {!showAllSteps ? (
+          <div className="flex items-center justify-between gap-2.5">
+            {wizardStep > 1 && (
+              <button
+                type="button"
+                onClick={() => transitionToStep((wizardStep - 1) as WizardStep)}
+                className="inline-flex min-h-12 items-center justify-center gap-1.5 rounded-xl border border-dream/35 bg-white/80 px-4 text-xs sm:text-sm font-bold text-ink transition hover:border-lantern dark:border-white/15 dark:bg-white/10 dark:text-moonlight"
+              >
+                {ar ? <ChevronRight size={16} aria-hidden /> : <ChevronLeft size={16} aria-hidden />}
+                <span>{ar ? 'السابق' : 'Previous'}</span>
+              </button>
+            )}
+
+            {wizardStep < 3 ? (
+              <button
+                type="button"
+                onClick={() => transitionToStep((wizardStep + 1) as WizardStep)}
+                className="inline-flex min-h-12 flex-1 items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-lantern via-amber-400 to-lantern px-5 font-display text-sm sm:text-base font-extrabold text-ink shadow-md shadow-lantern/25 transition hover:brightness-105 active:scale-[0.99]"
+              >
+                <span>
+                  {wizardStep === 1
+                    ? ar
+                      ? 'التالي: الشكل والأسلوب'
+                      : 'Next: Style & Cover'
+                    : ar
+                      ? 'التالي: التفاصيل والإنشاء'
+                      : 'Next: Details & Create'}
+                </span>
+                {ar ? <ChevronLeft size={18} aria-hidden /> : <ChevronRight size={18} aria-hidden />}
+              </button>
+            ) : (
+              <button
+                type="submit"
+                disabled={!canSubmit}
+                className="animate-lantern inline-flex min-h-12 flex-1 items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-lantern via-amber-400 to-lantern px-5 py-3 font-display text-sm sm:text-base font-extrabold text-ink shadow-lg shadow-lantern/30 transition hover:brightness-105 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50 disabled:shadow-none"
+              >
+                <Wand2 size={20} aria-hidden />
+                <span>{ar ? 'أنشئ القصة المصورة الآن' : 'Create Illustrated Story Now'}</span>
+              </button>
+            )}
           </div>
-        </div>
-      )}
-
-      {/* أزرار التنقل بين خطوات المعالج + زر الإنشاء الفوري */}
-      {!showAllSteps && (
-        <div className="flex items-center justify-between gap-3">
-          {wizardStep > 1 ? (
-            <button
-              type="button"
-              onClick={() => setWizardStep((s) => (s > 1 ? ((s - 1) as WizardStep) : s))}
-              className="inline-flex min-h-11 items-center gap-1.5 rounded-2xl border border-dream/35 bg-white/75 px-4 text-xs font-bold text-ink transition hover:border-lantern dark:border-white/15 dark:bg-white/5 dark:text-moonlight"
-            >
-              {ar ? <ChevronRight size={16} aria-hidden /> : <ChevronLeft size={16} aria-hidden />}
-              <span>{ar ? 'الخطوة السابقة' : 'Previous step'}</span>
-            </button>
-          ) : (
-            <div />
-          )}
-
-          {wizardStep < 3 && (
-            <button
-              type="button"
-              onClick={() => setWizardStep((s) => (s < 3 ? ((s + 1) as WizardStep) : s))}
-              className="inline-flex min-h-11 items-center gap-1.5 rounded-2xl border border-lantern/50 bg-lantern/20 px-5 font-display text-xs font-extrabold text-ink transition hover:bg-lantern/30 dark:text-amber-200"
-            >
-              <span>
-                {wizardStep === 1
-                  ? ar
-                    ? 'التالي: الأسلوب والغلاف'
-                    : 'Next: Style & Cover'
-                  : ar
-                    ? 'التالي: الصوت والانطلاق'
-                    : 'Next: Voice & Launch'}
-              </span>
-              {ar ? <ChevronLeft size={16} aria-hidden /> : <ChevronRight size={16} aria-hidden />}
-            </button>
-          )}
-        </div>
-      )}
-
-      {/* زر الإنشاء الملكي (متاح دائماً بمجرد اكتمال فكرة القصة) */}
-      <button
-        type="submit"
-        disabled={!canSubmit}
-        className="animate-lantern flex min-h-14 w-full items-center justify-center gap-2.5 rounded-2xl bg-gradient-to-r from-lantern via-amber-400 to-lantern py-4 font-display text-base sm:text-lg font-extrabold text-ink shadow-xl shadow-lantern/30 transition hover:brightness-105 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50 disabled:shadow-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink"
-      >
-        <Wand2 size={22} aria-hidden />
-        <span>{ar ? 'أنشئ القصة المصورة الآن' : 'Create Illustrated Story Now'}</span>
-      </button>
+        ) : (
+          <button
+            type="submit"
+            disabled={!canSubmit}
+            className="animate-lantern flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-lantern via-amber-400 to-lantern py-3 font-display text-sm sm:text-base font-extrabold text-ink shadow-lg shadow-lantern/30 transition hover:brightness-105 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50 disabled:shadow-none"
+          >
+            <Wand2 size={20} aria-hidden />
+            <span>{ar ? 'أنشئ القصة المصورة الآن' : 'Create Illustrated Story Now'}</span>
+          </button>
+        )}
+      </div>
 
       {canLoadStory && (
         <button
@@ -1465,6 +1783,7 @@ export default function StorySetupForm({ initialIdea, language, onSubmit, onLoad
           language={language}
           onApplyText={(spokenText) => {
             setIdea((prev) => (prev ? `${prev} ${spokenText}` : spokenText).slice(0, MAX_IDEA_LENGTH));
+            setStepValidationError(false);
           }}
           onClose={() => setShowVoiceModal(false)}
         />

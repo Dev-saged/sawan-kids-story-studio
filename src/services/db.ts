@@ -66,18 +66,28 @@ export const upgradeDbSchema = (db: IDBDatabase, tx: IDBTransaction | null): voi
     const existingAudio = tx.objectStore('audio');
     if (existingAudio.keyPath !== 'id') {
       const getAllReq = existingAudio.getAll();
+      const getAllKeysReq = existingAudio.getAllKeys();
       getAllReq.onsuccess = () => {
         const legacyRecords = (getAllReq.result ?? []) as Array<Record<string, unknown>>;
+        const legacyKeys = (getAllKeysReq.result ?? []) as IDBValidKey[];
+        const preparedRecords = legacyRecords.map((rec, idx) => {
+          const fallbackKey = legacyKeys[idx];
+          const resolvedId = String(rec.id ?? rec.key ?? fallbackKey ?? newId());
+          const migrated: Record<string, unknown> = {};
+          for (const [k, v] of Object.entries(rec)) {
+            if (k !== 'key') {
+              migrated[k] = v;
+            }
+          }
+          migrated.id = resolvedId;
+          migrated.createdAt = typeof rec.createdAt === 'number' ? rec.createdAt : Date.now();
+          return migrated;
+        });
+
         db.deleteObjectStore('audio');
         const recreatedAudio = db.createObjectStore('audio', { keyPath: 'id' });
-        for (const rec of legacyRecords) {
-          const resolvedId = String(rec.id ?? rec.key ?? newId());
-          const { key: _oldKey, ...rest } = rec;
-          recreatedAudio.put({
-            ...rest,
-            id: resolvedId,
-            createdAt: typeof rec.createdAt === 'number' ? rec.createdAt : Date.now(),
-          });
+        for (const item of preparedRecords) {
+          recreatedAudio.put(item);
         }
       };
     }

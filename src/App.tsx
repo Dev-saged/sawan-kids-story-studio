@@ -207,7 +207,7 @@ export default function App() {
   };
 
   return (
-    <div className="flex min-h-screen flex-col">
+    <div className="flex min-h-screen flex-col pb-[calc(4.75rem+env(safe-area-inset-bottom,0px))] md:pb-0">
       <NavBar
         active={section}
         onNavigate={setSection}
@@ -217,7 +217,7 @@ export default function App() {
         onToggleTheme={toggleTheme}
       />
 
-      <main className="mx-auto w-full max-w-4xl flex-1 px-3.5 pb-28 pt-5 sm:px-6 md:pb-16">
+      <main className="mx-auto w-full max-w-4xl flex-1 px-3.5 pb-[calc(5.5rem+env(safe-area-inset-bottom,0px))] pt-4 sm:px-6 md:pb-16">
         <Suspense fallback={<SectionFallback />}>
           {section === 'studio' && !hasKey && <ApiKeyGate language={language} onSaved={handleKeySaved} noKey={noKey} />}
 

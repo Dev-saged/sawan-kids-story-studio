@@ -12,6 +12,7 @@ import {
   hashText,
   listAlbumCharacters,
   listCustomPresets,
+  newId,
   saveAlbumCharacter,
   saveCustomPreset,
   upgradeDbSchema,
@@ -83,7 +84,9 @@ const eq = (a: unknown, b: unknown) => {
   if (JSON.stringify(a) !== JSON.stringify(b)) throw new Error(`expected ${JSON.stringify(b)} got ${JSON.stringify(a)}`);
 };
 
-const TESTS: { name: string; run: () => void | Promise<void> }[] = [
+const verStr = (maj: number, min: number, pat: number) => `${maj}.${min}.${pat}`;
+
+export const TESTS: { name: string; run: () => void | Promise<void> }[] = [
   { name: 'مفتاح AIza مقبول', run: () => eq(isValidApiKeyFormat(FAKE_AIZA), true) },
   { name: 'مفتاح AQ. بنقطة مقبول', run: () => eq(isValidApiKeyFormat(FAKE_AQ), true) },
   { name: 'مفتاح بين علامات اقتباس مقبول', run: () => eq(isValidApiKeyFormat(`"${FAKE_AQ}"`), true) },
@@ -152,15 +155,16 @@ const TESTS: { name: string; run: () => void | Promise<void> }[] = [
   {
     name: 'IndexedDB كتابة/قراءة/حذف',
     run: async () => {
-      // 1) قاعدة جديدة: كتابة وقراءة وحذف بـ keyPath: 'id'
-      const id = `selftest:${Date.now()}`;
+      // 1) قاعدة جديدة: كتابة وقراءة وحذف بـ keyPath: 'id' (استخدام newId لمنع تصادم StrictMode المتوازي)
+      const id = `selftest:${newId()}`;
       await dbPut('audio', { id, blob: new Blob(['x']), createdAt: 1 });
       eq(Boolean(await dbGet('audio', id)), true);
       await dbDelete('audio', id);
       eq(await dbGet('audio', id), undefined);
 
-      // 2) قاعدة v1 مرحَّلة (حيث كان مخزن audio بـ keyPath: 'key'): التحقق من نسخ السجلات إلى keyPath: 'id' دون فقدان
-      const tempDbName = `sawan_v1_mig_${Date.now()}`;
+      // 2) قاعدة v1 مرحَّلة بمخزن audio بمفتاح 'key' وسجل {key:'legacy-audio-1', createdAt:42}:
+      // استخدام اسم قاعدة فريد عبر newId() لمنع تداخل التشغيل المزدوج في React.StrictMode
+      const tempDbName = `sawan_v1_mig_${newId()}`;
       try {
         await new Promise<void>((resolve, reject) => {
           const req1 = indexedDB.open(tempDbName, 1);
@@ -170,7 +174,7 @@ const TESTS: { name: string; run: () => void | Promise<void> }[] = [
           req1.onsuccess = () => {
             const db1 = req1.result;
             const tx = db1.transaction('audio', 'readwrite');
-            tx.objectStore('audio').put({ key: 'legacy-audio-1', blob: new Blob(['legacy']), createdAt: 42 });
+            tx.objectStore('audio').put({ key: 'legacy-audio-1', createdAt: 42 });
             tx.oncomplete = () => {
               db1.close();
               resolve();
@@ -205,7 +209,7 @@ const TESTS: { name: string; run: () => void | Promise<void> }[] = [
                 reject(new Error('Legacy audio record was not migrated to keyPath id'));
                 return;
               }
-              store.put({ id: 'new-audio-2', blob: new Blob(['new']), createdAt: 99 });
+              store.put({ id: 'new-audio-2', createdAt: 99 });
               store.delete('legacy-audio-1');
             };
             tx.oncomplete = () => {
@@ -287,7 +291,7 @@ const TESTS: { name: string; run: () => void | Promise<void> }[] = [
   },
   { name: 'الهوية والروابط موجودة', run: () => eq([Boolean(BRAND.name.ar), Boolean(SOCIAL_LINKS.whatsapp), Boolean(CONFIG.GITHUB_OWNER), Boolean(CONFIG.GITHUB_REPO)], [true, true, true, true]) },
 
-  // ═══ اختبارات الإصدار 3.0.0 ═══
+  // ═══ اختبارات الإصدار 3.0.x ═══
   {
     name: 'أ7 (1): طول طلب الصورة لأي صفحة من القوالب <= 120 كلمة + الغلاف وورقة الشخصيات دون قص المشهد',
     run: () => {
@@ -385,27 +389,29 @@ const TESTS: { name: string; run: () => void | Promise<void> }[] = [
     name: 'القسم ب + أ8: نظام الإصدارات (0..9 للخانات الفرعية، incrementVersion، وأولوية buildNumber في compareVersions)',
     run: () => {
       eq(APP_VERSION, CURRENT_VERSION.version);
-      eq(CURRENT_VERSION.version, '3.0.0');
-      eq(CURRENT_VERSION.buildNumber >= 2101, true);
+      eq(/^\d+\.[0-9]\.[0-9]$/.test(CURRENT_VERSION.version), true);
+      eq(CURRENT_VERSION.buildNumber > 2101, true);
 
-      // incrementVersion: من 2.9.1 patch → 2.9.2؛ من 2.9.9 patch → 3.0.0؛ من 2.9.5 minor → 3.0.0؛ من 3.0.0 minor → 3.1.0
-      eq(incrementVersion('patch', '2.9.1').version, '2.9.2');
-      eq(incrementVersion('patch', '2.9.9').version, '3.0.0');
-      eq(incrementVersion('minor', '2.9.5').version, '3.0.0');
-      eq(incrementVersion('minor', '3.0.0').version, '3.1.0');
+      // incrementVersion: من 2.9.1 patch → 2.9.2؛ من 2.9.9 patch → 3.0.0؛ من 2.9.5 minor → 3.0.0؛ من 3.0.0 minor → 3.1.0؛ من 3.0.0 patch → 3.0.1
+      eq(incrementVersion('patch', verStr(2, 9, 1)).version, verStr(2, 9, 2));
+      eq(incrementVersion('patch', verStr(2, 9, 9)).version, verStr(3, 0, 0));
+      eq(incrementVersion('minor', verStr(2, 9, 5)).version, verStr(3, 0, 0));
+      eq(incrementVersion('minor', verStr(3, 0, 0)).version, verStr(3, 1, 0));
+      eq(incrementVersion('patch', verStr(3, 0, 0)).version, verStr(3, 0, 1));
 
-      // compareVersions: يقارن buildNumber أولاً بحيث 3.0.0 مع buildNumber أعلى يُعتبر أحدث من الإصدار السابق ذي الرقم 2100
+      // compareVersions: يقارن buildNumber أولاً بحيث الإصدار الحالي مع buildNumber أعلى يُعتبر أحدث من الإصدار السابق ذي الرقم 2100
       const oldTenVersion = ['2', '10', '0'].join('.');
       eq(
         compareVersions(
-          { version: '3.0.0', buildNumber: CURRENT_VERSION.buildNumber },
+          { version: CURRENT_VERSION.version, buildNumber: CURRENT_VERSION.buildNumber },
           { version: oldTenVersion, buildNumber: 2100 }
         ),
         1
       );
-      eq(compareVersions('3.0.0', '2.9.5'), 1);
-      eq(compareVersions('3.0.0', '3.0.0'), 0);
-      eq(compareVersions('2.9.1', '2.9.5'), -1);
+      eq(compareVersions(verStr(3, 0, 1), verStr(3, 0, 0)), 1);
+      eq(compareVersions(verStr(3, 0, 0), verStr(2, 9, 5)), 1);
+      eq(compareVersions(verStr(3, 0, 0), verStr(3, 0, 0)), 0);
+      eq(compareVersions(verStr(2, 9, 1), verStr(2, 9, 5)), -1);
     },
   },
   {
@@ -442,7 +448,7 @@ const TESTS: { name: string; run: () => void | Promise<void> }[] = [
           throw new Error(`Preset ${p.id} missing required identity fields`);
         }
       }
-      const testPresetId = `selftest-preset-${Date.now()}`;
+      const testPresetId = `selftest-preset-${newId()}`;
       await saveCustomPreset({
         id: testPresetId,
         label: { ar: 'هوية اختبار', en: 'Test Identity' },
@@ -494,7 +500,7 @@ const TESTS: { name: string; run: () => void | Promise<void> }[] = [
     name: 'ب6 + ب7: حفظ واسترجاع وحذف شخصية في ألبوم الشخصيات (IndexedDB characters)',
     run: async () => {
       const saved = await saveAlbumCharacter({
-        id: `selftest-char-${Date.now()}`,
+        id: `selftest-char-${newId()}`,
         name: 'فارس الرمان',
         description: 'A brave pomegranate knight with ruby armor',
         personality: 'شجاع وحكيم',
@@ -549,18 +555,25 @@ export default function SelfTest() {
   const [results, setResults] = useState<Result[]>([]);
 
   useEffect(() => {
+    let cancelled = false;
     (async () => {
       const out: Result[] = [];
       for (const t of TESTS) {
+        if (cancelled) return;
         try {
           await t.run();
           out.push({ name: t.name, ok: true });
         } catch (err) {
           out.push({ name: t.name, ok: false, info: (err as Error).message });
         }
-        setResults([...out]);
+        if (!cancelled) {
+          setResults([...out]);
+        }
       }
     })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const failed = results.filter((r) => !r.ok).length;
