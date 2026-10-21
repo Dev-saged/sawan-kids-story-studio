@@ -44,7 +44,7 @@ export const isArabicStory = (story: StoryData): boolean => /arab|عرب/i.test(
 const cached = async (id: string, make: () => Promise<Blob>): Promise<Blob> => {
   try {
     const hit = await dbGet<AudioRecord>('audio', id);
-    if (hit?.blob) return hit.blob;
+    if (hit?.blob && (!id.startsWith('tts:') || hit.blob.type.includes('wav'))) return hit.blob;
   } catch {
     // ignore
   }
@@ -53,8 +53,8 @@ const cached = async (id: string, make: () => Promise<Blob>): Promise<Blob> => {
   return blob;
 };
 
-// كل صفحة تُولَّد مرة واحدة لكل صوت، ثم تُقرأ من القاعدة
-const audioId = (page: StoryPage, voice: NarratorVoice) => `tts:${voice}:${hashText(page.narration || page.text)}`;
+// كل صفحة تُولَّد مرة واحدة لكل صوت بجودة HQ مع توجيه ثبات طبقة الصوت والإلقاء، ثم تُقرأ من القاعدة
+const audioId = (page: StoryPage, voice: NarratorVoice) => `tts:hq:${voice}:${hashText(page.narration || page.text)}`;
 
 // ===== صوت العائلة: تسجيل الأب أو الأم لكل صفحة، محفوظ مع القصة =====
 const familyId = (storyId: string | undefined, pageNo: number) => `fam:${storyId ?? 'draft'}:${pageNo}`;

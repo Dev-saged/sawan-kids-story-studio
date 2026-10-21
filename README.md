@@ -5,14 +5,14 @@ with natural narration, read-along, story videos, science games and learning art
 
 **Designed & developed by Eng. Sajed Al-Abadlah — تصميم وتطوير المهندس ساجد العبادلة**
 
-## Stack (v3.0.1 — Single Version Source: `src/version.ts` & `src/config.ts`)
+## Stack (v3.0.3 — Single Version Source: `src/version.ts` & `src/config.ts`)
 
 - Vite 6 + React 18 + TypeScript (strict), Tailwind CSS v4 (RTL logical properties)
 - `server.ts` (Express 5) — thin Gemini proxy required by Google AI Studio hosting
 - `@google/genai` model chains (strongest first, each with its own quota, defined in `server.ts` & `shared/config.ts`):
   - Text: `gemini-3-flash-preview` → `gemini-2.5-flash` → `gemini-2.5-pro` → `gemini-2.5-flash-lite`
   - Images: `gemini-2.5-flash-image` → `gemini-3.1-flash-image-preview` → `gemini-3.1-pro-image-preview`
-  - Narration: `gemini-2.5-flash-preview-tts` → `gemini-2.5-pro-preview-tts`
+  - Narration: `gemini-2.5-flash-preview-tts` → `gemini-2.5-pro-preview-tts` → `gemini-3.8-flash-tts` → `gemini-3.1-flash-tts-preview` → `gemini-3.8-flash-lite-tts`
   - Music: `lyria-realtime-exp` / `lyria-3-clip-preview` (with WebAudio procedural lullaby fallback)
 - IndexedDB v4 (versioned schema with automatic legacy audio keyPath migration) for the library, 2048px print-grade images, audio cache, child profiles, saved character album (`characters`), and custom story identities (`custom_presets`)
 - WebCodecs + `mp4-muxer` for MP4 video export (MediaRecorder fallback)
@@ -22,6 +22,8 @@ with natural narration, read-along, story videos, science games and learning art
 
 | الإصدار | التاريخ | أهم التغييرات |
 | --- | --- | --- |
+| **v3.0.3** | 2026-10-21 | استعادة إعدادات الصوت عالية الجودة (`NARRATION_SYSTEM_INSTRUCTION`) لضبط طبقة الصوت وسرعة الإلقاء الدافئة والنطق السليم على نماذج `gemini-2.5-flash-preview-tts` و`gemini-2.5-pro-preview-tts` أولاً، مع تحديث مفتاح الكاش الصوتي (`tts:hq:`) لتجاوز أي مقاطع قديمة منخفضة الجودة وتفعيل `preservesPitch`. |
+| **v3.0.2** | 2026-10-21 | استعادة الصوت الأصلي الفخم للراوي عبر تفعيل سلسلة نماذج Gemini TTS الكاملة (5 نماذج)، إزالة المحرك الصوتي البديل، وحماية تصدير الفيديو من التوقف أو إظهار خطأ حصة الصور `BILLING`. |
 | **v3.0.1** | 2026-10-21 | تحسين معالج الاستوديو من 3 خطوات («الفكرة»، «الشكل»، «التفاصيل») مع شريط تنقل سفلي ثابت يحترم `safe-area`، معاينة حية متكاملة للغلاف في الخطوة 2 تجمع العنوان والأسلوب والخط بـ SVG/CSS، حفظ واستعادة حالة المعالج تلقائياً، ضمان منطقة لمس 44px لجميع مفاتيح التبديل ومربعات الاختيار، وتثبيت ترحيل مخزن الصوت القديم `audio` في IndexedDB. |
 | **v3.0.0** | 2026-10-20 | إعادة تصميم الاستوديو كمعالج من 3 خطوات، مكون `StyleThumb` المرسوم بـ SVG لكل أسلوب فني، نافذة ترحيب تعريفية (Onboarding)، هياكل تحميل (Skeletons)، إصلاح مفتاح مخزن الصوت `audio` في IndexedDB إلى `id` مع ترحيل سجلات القواعد القديمة تلقائياً، فحص التحديث الصامت من `public/version.json` عبر `CONFIG`، ونظام الإصدارات الجديد (`0..9` للخانات الفرعية مع أولوية `buildNumber`). |
 | **v2.9.5 (كان يسمى 2.10.0)** | 2026-10-20 | إعادة هيكلة طلبات الصور لتبدأ بالمشهد (`Scene:`) بسقف صارم 120 كلمة، توسيع أنواع القصص إلى 16 نوعاً ببنية سردية متكاملة، 12 خطاً عربياً للغلاف مع 4 تأثيرات بصرية ومعاينة حية، 16 هوية جاهزة مع حفظ الهويات المخصصة، بوابة معاينة الغلاف والصفحة الأولى، تصحيح المشهد لكل صفحة، ألبوم الشخصيات المحفوظة، والعلامة المائية المفرغة الذكية عند التصدير فقط. |

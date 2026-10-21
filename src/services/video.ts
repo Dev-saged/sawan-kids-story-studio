@@ -570,6 +570,24 @@ class Renderer {
   }
 }
 
+// بناء مقطع صوتي احتياطي صامت بمدة القراءة الطبيعية في حال تعذر جلب صوت الراوي أو العمل بدون اتصال
+const createFallbackPageAudio = (actx: BaseAudioContext, wordsCount: number): AudioBuffer => {
+  const durationSec = Math.min(14, Math.max(3.8, wordsCount * 0.45));
+  const length = Math.ceil(durationSec * SR);
+  const buf = actx.createBuffer(2, length, SR);
+  const L = buf.getChannelData(0);
+  const R = buf.getChannelData(1);
+  const chimeLen = Math.min(length, Math.floor(SR * 0.7));
+  for (let i = 0; i < chimeLen; i++) {
+    const t = i / SR;
+    const env = Math.exp(-t * 6) * Math.min(1, t / 0.015) * 0.06;
+    const s = env * (Math.sin(2 * Math.PI * 523.25 * t) + 0.5 * Math.sin(2 * Math.PI * 659.25 * t));
+    L[i] = s;
+    R[i] = s;
+  }
+  return buf;
+};
+
 const buildSegments = async (story: StoryData, voice: NarratorVoice, actx: BaseAudioContext, size: { w: number; h: number }, onProgress: Progress, signal: AbortSignal): Promise<Segment[]> => {
   const segs: Segment[] = [];
   const cover = await loadBitmap(story.coverImage || story.pages[0]?.generatedImage, size.w, size.h);
@@ -579,13 +597,28 @@ const buildSegments = async (story: StoryData, voice: NarratorVoice, actx: BaseA
   for (let i = 0; i < story.pages.length; i++) {
     if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
     const page = story.pages[i];
+    const words = page.text.split(/\s+/).filter(Boolean);
     onProgress(0.05 + (i / story.pages.length) * 0.4, `${i + 1}/${story.pages.length}`);
-    const audio = await decode(actx, await getPageAudio(story.id, page, voice, signal));
+    let audio: AudioBuffer;
+    try {
+      let blob: Blob;
+      try {
+        blob = await getPageAudio(story.id, page, voice, signal);
+      } catch (firstErr) {
+        if ((firstErr as Error).name === 'AbortError' || signal.aborted) throw firstErr;
+        await new Promise((r) => setTimeout(r, 1500));
+        blob = await getPageAudio(story.id, page, voice, signal);
+      }
+      audio = await decode(actx, blob);
+    } catch (err) {
+      if ((err as Error).name === 'AbortError' || signal.aborted) throw new DOMException('Aborted', 'AbortError');
+      audio = createFallbackPageAudio(actx, words.length);
+    }
     const image = (await loadBitmap(page.generatedImage, size.w, size.h)) ?? lastImage;
     lastImage = image;
     const voiceStart = TRANSITION * 0.7;
     const dur = voiceStart + audio.duration + 0.9;
-    segs.push({ kind: 'page', start: t, dur, image, words: page.text.split(/\s+/).filter(Boolean), audio, voiceStart, dir: i % 2 ? -1 : 1 });
+    segs.push({ kind: 'page', start: t, dur, image, words, audio, voiceStart, dir: i % 2 ? -1 : 1 });
     t += dur;
   }
   segs.push({ kind: 'end', start: t, dur: END_DUR, image: lastImage, words: [], voiceStart: 0, dir: -1 });

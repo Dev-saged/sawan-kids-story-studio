@@ -39,6 +39,9 @@ const MODELS = {
   tts: [
     'gemini-2.5-flash-preview-tts',
     'gemini-2.5-pro-preview-tts',
+    'gemini-3.8-flash-tts',
+    'gemini-3.1-flash-tts-preview',
+    'gemini-3.8-flash-lite-tts',
   ],
   music: ['lyria-3-clip-preview'],
 };
@@ -155,14 +158,14 @@ const classify = (err: any): ErrorKind => {
   return 'skip';
 };
 
-// حصة صفرية = النموذج غير مشمول بالخطة المجانية (يحتاج فوترة)، وليست حصة مؤقتة
-const isZeroQuota = (msg: string) => /limit:\s*0\b|free_?tier/i.test(msg);
+// حصة صفرية = النموذج غير مشمول بالخطة المجانية (limit: 0 صراحةً)، وليست حصة مؤقتة
+const isZeroQuota = (msg: string) => /limit:\s*0\b/i.test(msg);
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // الفحص على الرسالة الكاملة قبل القص: عبارة limit: 0 أو daily limit تأتي في الرسالة
 const isDailyQuota = (msg: string) =>
-  /daily limit|limit:\s*0\b|free_?tier|requests today|limit of requests|tomorrow|select a different model/i.test(msg);
+  /daily limit|limit:\s*0\b|requests today|limit of requests|tomorrow|select a different model/i.test(msg);
 
 // كوتا الدقيقة (RPM / TPM): الانتقال الفوري للنموذج التالي أفضل من الانتظار وتكرار الضرب على نفس النموذج
 const isMinuteQuota = (msg: string) =>
@@ -192,11 +195,11 @@ const trailItem = (model: string, err: any): TrailItem => {
   return { model, kind: classify(err), status: Number(err?.status ?? err?.code ?? 0) || 0, message: full.slice(0, 480), zero: isZeroQuota(full) };
 };
 
-// يحدد الرمز الأدق للمستخدم من سجل محاولات كل النماذج
+// يحدد الرمز الأدق للمستخدم من سجل محاولات كل النماذج (BILLING خاص بالصور فقط حتى لا يظهر خطأ الصور في الصوت أو النص)
 const failure = (label: string, trail: TrailItem[], last: any): Error => {
   const quota = trail.filter((t) => t.kind === 'quota');
   let code: ErrorCode = 'FAILED';
-  if (quota.length) code = quota.every((t) => t.zero) ? 'BILLING' : 'QUOTA';
+  if (quota.length) code = label === 'image' && quota.every((t) => t.zero) ? 'BILLING' : 'QUOTA';
   else if (trail.length && trail.every((t) => t.kind === 'missing')) code = 'NOMODEL';
   else if (trail.some((t) => t.kind === 'busy')) code = 'BUSY';
   return Object.assign(last instanceof Error ? last : new Error(`${label}: no model returned output`), { code, trail });
@@ -235,7 +238,6 @@ async function runChain<T>(
         } catch (err: any) {
           lastError = err;
           const item = trailItem(model, err);
-          console.warn(`[${label}] ${model} (${fp}) #${i + 1}: ${item.kind} ${item.status} — ${item.message.slice(0, 160)}`);
           if (item.kind === 'auth') {
             // إذا كان هناك مفتاح بيئة احتياطي بعد مفتاح الزائر، ننتقل إليه بدل الإيقاف الفوري
             if (sessionsToTry.length > 1 && sess?.source === 'user') {
@@ -254,7 +256,6 @@ async function runChain<T>(
           // حصة يومية أو صفرية: تبريد 30 دقيقة وانتقال فوري للنموذج التالي
           if (item.kind === 'quota' && isDailyQuota(item.message)) {
             markModelCooldown(fp, model, DAILY_COOLDOWN_MS);
-            console.warn(`[${label}] Model ${model} reached daily/zero quota. Cooling down 30m and switching to next model...`);
             trail.push(item);
             break;
           }
@@ -262,22 +263,20 @@ async function runChain<T>(
           // كوتا الدقيقة (TPM / RPM): تبريد 75 ثانية وانتقال فوري للنموذج التالي بدل تكرار الطلب على نفس النموذج
           if (item.kind === 'quota' && isMinuteQuota(item.message)) {
             markModelCooldown(fp, model, MINUTE_COOLDOWN_MS);
-            console.warn(`[${label}] Model ${model} hit per-minute quota. Cooling down 75s and switching to next model...`);
             trail.push(item);
             break;
           }
 
-          // خطأ بوابة مؤقت ("Failed to call the Gemini API. Please try again.") أو انشغال:
-          // إذا توفرت نماذج أخرى في السلسلة ننتقل إليها فوراً بعد تبريد قصير
+          // خطأ بوابة مؤقت (500 / انشغال): نعيد المحاولة مرة واحدة على نفس النموذج أولاً (مهم جداً لثبات صوت الراوي في TTS) ثم ننتقل للنموذج التالي
           if (item.kind === 'busy' || item.kind === 'skip') {
+            if (item.kind === 'busy' && i < 1) {
+              await sleep(900 + Math.random() * 300);
+              continue;
+            }
             markModelCooldown(fp, model, BUSY_COOLDOWN_MS);
             if (orderedModels.length > 1) {
               trail.push(item);
               break;
-            }
-            if (i < 1) {
-              await sleep(1000 + Math.random() * 400);
-              continue;
             }
           }
 
@@ -719,7 +718,6 @@ app.post('/api/generate-story', async (req: Request, res: Response) => {
   } catch (err: any) {
     const info = errorInfo(err, 'Failed to generate story');
     if (info.body.code !== 'AUTH' && info.body.code !== 'NOKEY') {
-      console.warn(`[story] All Gemini text models exhausted (${info.body.code}), trying free text fallback...`);
       send({ t: 'reset' });
       const fallbackJson = await runFreeTextJson(
         SYSTEM_INSTRUCTION,
@@ -1020,7 +1018,6 @@ app.post('/api/generate-image', async (req: Request, res: Response) => {
               } catch (err: any) {
                 const msg = String(err?.message || '');
                 if (/could not be decoded|source image/i.test(msg) && currentRefs.length > 0) {
-                  console.warn(`[image] Reference image decode issue on ${m}, retrying without reference...`);
                   currentRefs = [];
                   continue;
                 }
@@ -1039,7 +1036,6 @@ app.post('/api/generate-image', async (req: Request, res: Response) => {
         if (errCode === 'QUOTA' || errCode === 'BILLING' || errCode === 'NOMODEL') {
           imageBlocked.set(session.fp, Date.now() + BLOCK_TTL);
         }
-        console.warn(`[image] Gemini image models unavailable (${geminiErr?.message?.slice(0, 100)}), trying fallback engines...`);
       }
     }
 
@@ -1055,8 +1051,8 @@ app.post('/api/generate-image', async (req: Request, res: Response) => {
           engine: 'flux',
           promptSnippet: cfPrompt.slice(0, 300),
         });
-      } catch (cfErr: any) {
-        console.warn(`[image] Cloudflare Flux failed (${cfErr?.message?.slice(0, 100)}), falling back to Pollinations...`);
+      } catch {
+        // fallback to Pollinations
       }
     }
     const fallback = await runAiFallback(prompt, aspectRatio);
@@ -1140,7 +1136,46 @@ const toWavPayload = (base64: string, mimeType = ''): { base64: string; mimeType
   return { base64: pcmToWav(Buffer.from(base64, 'base64'), rate).toString('base64'), mimeType: 'audio/wav' };
 };
 
-// النص فقط بلا أي تعليمات: أي جملة إضافية قد ينطقها النموذج بصوت عالٍ (كانت تظهر بالإنجليزية)
+const musicBlocked = new Map<string, number>();
+
+// توليد موسيقى صندوق موسيقى هادئة (WAV) على الخادم عند عدم توفر نماذج Lyria
+const buildProceduralLullabyWav = (sampleRate = 24000, durationSec = 16): Buffer => {
+  const totalSamples = Math.ceil(durationSec * sampleRate);
+  const pcm = Buffer.alloc(totalSamples * 2);
+  const notes = [261.63, 293.66, 329.63, 392.0, 440.0, 523.25, 587.33, 659.25, 783.99];
+  const melody = [
+    { n: 2, t: 0.0, d: 1.2 }, { n: 4, t: 0.8, d: 1.2 }, { n: 5, t: 1.6, d: 1.5 }, { n: 4, t: 2.6, d: 1.0 },
+    { n: 3, t: 3.4, d: 1.4 }, { n: 1, t: 4.4, d: 1.2 }, { n: 2, t: 5.2, d: 2.2 },
+    { n: 5, t: 7.0, d: 1.2 }, { n: 6, t: 7.8, d: 1.2 }, { n: 7, t: 8.6, d: 1.6 }, { n: 5, t: 9.8, d: 1.2 },
+    { n: 4, t: 10.8, d: 1.5 }, { n: 2, t: 12.0, d: 1.2 }, { n: 0, t: 13.0, d: 2.8 },
+  ];
+
+  for (let i = 0; i < totalSamples; i++) {
+    const t = i / sampleRate;
+    const fade = Math.min(1, t / 1.2, (durationSec - t) / 1.2);
+    // Warm ambient pad
+    let val =
+      0.03 *
+      fade *
+      (Math.sin(2 * Math.PI * 130.81 * t) +
+        0.8 * Math.sin(2 * Math.PI * 164.81 * t) +
+        0.7 * Math.sin(2 * Math.PI * 196.0 * t));
+
+    for (const m of melody) {
+      if (t >= m.t && t < m.t + m.d) {
+        const dt = t - m.t;
+        const f = notes[m.n % notes.length];
+        const env = Math.min(1, dt / 0.02) * Math.exp(-dt * (3.2 / m.d));
+        val += 0.11 * env * (Math.sin(2 * Math.PI * f * t) + 0.3 * Math.sin(2 * Math.PI * f * 2 * t));
+      }
+    }
+    const clamped = Math.max(-1, Math.min(1, val));
+    pcm.writeInt16LE(Math.round(clamped * 32767), i * 2);
+  }
+  return pcmToWav(pcm, sampleRate, 1, 16);
+};
+
+// توجيه صارم لثبات طبقة الصوت وسرعة الإلقاء الدافئة والنطق العربي السليم بالتشكيل
 app.post('/api/narrate', async (req: Request, res: Response) => {
   try {
     const text = clip(req.body?.text, 4000);
@@ -1153,17 +1188,47 @@ app.post('/api/narrate', async (req: Request, res: Response) => {
       'tts',
       await chainFor(req, 'tts'),
       async (m, ai) => {
-        const response = await ai.models.generateContent({
-          model: m,
-          contents: [{ role: 'user', parts: [{ text }] }],
-          config: {
-            systemInstruction: NARRATION_SYSTEM_INSTRUCTION,
-            responseModalities: [Modality.AUDIO],
-            speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voice } } },
-          },
-        });
-        const part = (response.candidates?.[0]?.content?.parts ?? []).find((p) => p.inlineData?.data);
-        return part?.inlineData?.data ? toWavPayload(part.inlineData.data, part.inlineData.mimeType) : null;
+        const supportsDeveloperInstruction = /^gemini-2\.5-/i.test(m);
+        try {
+          const response = await ai.models.generateContent({
+            model: m,
+            contents: [{ role: 'user', parts: [{ text }] }],
+            config: {
+              ...(supportsDeveloperInstruction ? { systemInstruction: NARRATION_SYSTEM_INSTRUCTION } : {}),
+              responseModalities: [Modality.AUDIO],
+              speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voice } } },
+            },
+          });
+          const part = (response.candidates?.[0]?.content?.parts ?? []).find((p) => p.inlineData?.data);
+          if (part?.inlineData?.data) return toWavPayload(part.inlineData.data, part.inlineData.mimeType);
+        } catch (err: any) {
+          // في حال رفض نموذج فرعي لـ systemInstruction نعيد الطلب بدونه فوراً على نفس النموذج
+          if (/Developer instruction is not enabled/i.test(String(err?.message || ''))) {
+            const retryRes = await ai.models.generateContent({
+              model: m,
+              contents: [{ role: 'user', parts: [{ text }] }],
+              config: {
+                responseModalities: [Modality.AUDIO],
+                speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voice } } },
+              },
+            });
+            const retryPart = (retryRes.candidates?.[0]?.content?.parts ?? []).find((p) => p.inlineData?.data);
+            if (retryPart?.inlineData?.data) return toWavPayload(retryPart.inlineData.data, retryPart.inlineData.mimeType);
+          }
+          if (classify(err) === 'auth' || classify(err) === 'quota') throw err;
+          const r: any = await (ai as any).interactions?.create?.({
+            model: m,
+            input: text,
+            config: {
+              responseModalities: ['AUDIO'],
+              speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voice } } },
+            },
+          });
+          const audio = r?.output_audio ?? (Array.isArray(r?.outputs) ? r.outputs.find((o: any) => o?.type === 'audio' || o?.data) : null);
+          if (audio?.data) return toWavPayload(audio.data, audio.mime_type || audio.mimeType);
+          throw err;
+        }
+        return null;
       },
       req
     );
@@ -1174,27 +1239,40 @@ app.post('/api/narrate', async (req: Request, res: Response) => {
   }
 });
 
-// موسيقى خلفية مولّدة بـ Lyria (موسيقى بدون كلمات، بعلامة SynthID)
+// موسيقى خلفية مولّدة بـ Lyria، مع احتياطي موسيقي فوري عند عدم توفر النموذج على المفتاح
 app.post('/api/music', async (req: Request, res: Response) => {
-  try {
-    const mood = clip(req.body?.prompt, 600) || 'A gentle, magical lullaby for a children storybook';
-    const { value, model } = await runChain(
-      'music',
-      await chainFor(req, 'music'),
-      async (m, ai) => {
-        const r: any = await (ai as any).interactions.create({
-          model: m,
-          input: `${mood}. Instrumental only, no vocals, no lyrics. Soft, warm, child friendly, steady and loop-friendly, suitable as a quiet background under narration${m === 'lyria-3.5' ? ', about 60 seconds long' : ''}.`,
-        });
-        const audio = r?.output_audio;
-        return audio?.data ? { base64: audio.data as string, mimeType: (audio.mime_type as string) || 'audio/mpeg' } : null;
-      },
-      req
-    );
-    return res.json({ ...value, model });
-  } catch (err) {
-    return sendError(res, err, 'Failed to generate music');
+  const mood = clip(req.body?.prompt, 600) || 'A gentle, magical lullaby for a children storybook';
+  const session = getSession(req);
+  const isSessionMusicBlocked = (musicBlocked.get(session.fp) ?? 0) > Date.now();
+
+  if (!isSessionMusicBlocked) {
+    try {
+      const { value, model } = await runChain(
+        'music',
+        await chainFor(req, 'music'),
+        async (m, ai) => {
+          const r: any = await (ai as any).interactions.create({
+            model: m,
+            input: `${mood}. Instrumental only, no vocals, no lyrics. Soft, warm, child friendly, steady and loop-friendly, suitable as a quiet background under narration${m === 'lyria-3.5' ? ', about 60 seconds long' : ''}.`,
+          });
+          const audio = r?.output_audio;
+          return audio?.data ? { base64: audio.data as string, mimeType: (audio.mime_type as string) || 'audio/mpeg' } : null;
+        },
+        req
+      );
+      musicBlocked.delete(session.fp);
+      return res.json({ ...value, model });
+    } catch {
+      musicBlocked.set(session.fp, Date.now() + BLOCK_TTL);
+    }
   }
+
+  const wav = buildProceduralLullabyWav();
+  return res.json({
+    base64: wav.toString('base64'),
+    mimeType: 'audio/wav',
+    model: 'procedural-lullaby',
+  });
 });
 
 const CONTINUE_SCHEMA: Schema = {

@@ -11,10 +11,10 @@ export interface VersionComparable {
 }
 
 export const CURRENT_VERSION: VersionInfo = {
-  version: '3.0.1',
-  buildNumber: 2102,
+  version: '3.0.3',
+  buildNumber: 2104,
   releaseDate: '2026-10-21',
-  commitTag: 'v3.0.1-wizard-refinement',
+  commitTag: 'v3.0.3-hq-narration-restore',
 };
 
 type BumpType = 'patch' | 'minor' | 'major';

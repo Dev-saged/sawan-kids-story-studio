@@ -61,6 +61,7 @@ export function useNarration(story: StoryData, pageIndex: number, onAdvance: (ne
         const url = URL.createObjectURL(blob);
         urlRef.current = url;
         const audio = new Audio(url);
+        audio.preservesPitch = true;
         audio.playbackRate = rateRef.current;
         audioRef.current = audio;
         audio.onloadedmetadata = () => {
@@ -80,7 +81,7 @@ export function useNarration(story: StoryData, pageIndex: number, onAdvance: (ne
         setStatus('playing');
         rafRef.current = requestAnimationFrame(tick);
         const next = s.pages[index + 1];
-        if (continuousRef.current && next && voiceRef.current !== 'Family') getPageAudio(s.id, next, voiceRef.current).catch(() => undefined);
+        if (next && voiceRef.current !== 'Family') getPageAudio(s.id, next, voiceRef.current).catch(() => undefined);
       } catch (err) {
         if ((err as Error).name === 'AbortError') return;
         setError((err as Error).message);
