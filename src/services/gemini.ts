@@ -380,7 +380,7 @@ export class StoryGenerator {
     }
 
     const MAX_RETRIES = 3;
-    let res: Response | null = null;
+    let story: StoryData | null = null;
     let lastError: unknown = null;
 
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
@@ -400,7 +400,7 @@ export class StoryGenerator {
 
         this.log('info', 'request', `Sending /api/generate-story request (attempt ${attempt + 1})...`);
         const finishTracking = trackApiCall('/api/generate-story', 'POST', `attempt ${attempt + 1}, pages: ${pageCount}/${total}`);
-        res = await fetch('/api/generate-story', {
+        const res = await fetch('/api/generate-story', {
           method: 'POST',
           headers: authHeaders(),
           body: JSON.stringify({ params, pageCount, totalPages: total }),
@@ -419,7 +419,7 @@ export class StoryGenerator {
           continue;
         }
 
-        if (!res.ok) {
+        if (!res.ok || !res.body) {
           let errorData: any = {};
           try {
             errorData = await res.json();
@@ -432,63 +432,68 @@ export class StoryGenerator {
           throw new ApiError(code, errorData.error, errorData.trail, '/api/generate-story');
         }
 
-        finishTracking(res.status);
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let raw = '';
+        let candidateStory: StoryData | null = null;
+
+        const handle = (line: string) => {
+          if (!line.trim()) return;
+          const msg = JSON.parse(line);
+          if (msg.t === 'chunk') {
+            raw += msg.d;
+            const { count, last } = extractPreview(raw);
+            onProgress({
+              progress: Math.min(94, 12 + Math.round((count / total) * 82)),
+              message: ar ? `نكتب الصفحة ${Math.min(count + 1, pageCount)} من ${total}...` : `Writing page ${Math.min(count + 1, pageCount)} of ${total}...`,
+              preview: last,
+            });
+          } else if (msg.t === 'reset') {
+            raw = '';
+          } else if (msg.t === 'done') {
+            candidateStory = msg.story;
+          } else if (msg.t === 'error') {
+            const errCode = msg.code ?? 'FAILED';
+            finishTracking(errCode === 'QUOTA' ? 429 : 500, msg.error, errCode);
+            throw new ApiError(errCode, msg.error, msg.trail, '/api/generate-story');
+          }
+        };
+
+        for (;;) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() ?? '';
+          lines.forEach(handle);
+          await this.waitIfPaused();
+        }
+        handle(buffer);
+
+        if (!candidateStory) {
+          finishTracking(500, 'Empty story response', 'FAILED');
+          throw new ApiError('FAILED', 'Empty story stream response', undefined, '/api/generate-story');
+        }
+
+        finishTracking(200);
+        story = candidateStory;
         break;
       } catch (err: any) {
         lastError = err;
-        if (err instanceof ApiError && err.code === 'QUOTA' && attempt < MAX_RETRIES) {
+        const retryable = err instanceof ApiError && (err.code === 'QUOTA' || err.code === 'BUSY' || err.code === 'FAILED');
+        if (retryable && attempt < MAX_RETRIES) {
           continue;
         }
-        if (attempt >= MAX_RETRIES) {
-          this.log('error', 'exhausted', `All ${MAX_RETRIES + 1} attempts exhausted.`, err);
+        if (attempt >= MAX_RETRIES || !retryable) {
+          this.log('error', 'exhausted', `Story generation failed after ${attempt + 1} attempt(s).`, err);
           throw err;
         }
       }
     }
 
-    if (!res || !res.ok || !res.body) {
-      throw lastError ?? new ApiError('FAILED', undefined, undefined, '/api/generate-story');
-    }
-
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-    let raw = '';
-    let story: StoryData | null = null;
-
-    const handle = (line: string) => {
-      if (!line.trim()) return;
-      const msg = JSON.parse(line);
-      if (msg.t === 'chunk') {
-        raw += msg.d;
-        const { count, last } = extractPreview(raw);
-        onProgress({
-          progress: Math.min(94, 12 + Math.round((count / total) * 82)),
-          message: ar ? `نكتب الصفحة ${Math.min(count + 1, pageCount)} من ${total}...` : `Writing page ${Math.min(count + 1, pageCount)} of ${total}...`,
-          preview: last,
-        });
-      } else if (msg.t === 'reset') {
-        raw = '';
-      } else if (msg.t === 'done') {
-        story = msg.story;
-      } else if (msg.t === 'error') {
-        throw new ApiError(msg.code ?? 'FAILED', msg.error, msg.trail, '/api/generate-story');
-      }
-    };
-
-    for (;;) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() ?? '';
-      lines.forEach(handle);
-      await this.waitIfPaused();
-    }
-    handle(buffer);
-
     const parsed = story as StoryData | null;
-    if (!parsed?.pages?.length || !parsed?.characters?.length) throw new ApiError('FAILED');
+    if (!parsed?.pages?.length || !parsed?.characters?.length) throw (lastError as Error) ?? new ApiError('FAILED');
 
     const albumRefId = params.customCharacters?.find((c) => c.referenceImageId)?.referenceImageId;
 

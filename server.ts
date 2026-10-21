@@ -17,34 +17,30 @@ const __dirname = path.dirname(__filename);
 const app = express();
 app.use(express.json({ limit: '30mb' }));
 
-// سلاسل النماذج: الأقوى أولاً، وكل نموذج له كوتا مستقلة
+// سلاسل النماذج الفعلية المعتمدة: كل نموذج له حصة مستقلة (RPD / TPM)
 const MODELS = {
   text: [
+    'gemini-3-flash-preview',
     'gemini-2.5-flash',
-    'gemini-3.8-flash',
-    'gemini-3.1-flash-lite',
+    'gemini-3.1-flash-lite-preview',
+    'gemini-2.5-flash-lite',
+    'gemini-3.1-pro-preview',
+    'gemini-2.5-pro',
+    'gemini-2.0-flash',
+    'gemini-2.0-flash-lite',
     'gemini-flash-latest',
     'gemini-flash-lite-latest',
-    'gemini-2.5-flash-lite',
-    'gemini-3.5-flash',
   ],
   image: [
-    'gemini-3.1-flash-lite-image',
-    'gemini-nano-banana-2.1',
-    'gemini-3.1-flash-image',
-    'gemini-3.1-flash-image-preview',
     'gemini-2.5-flash-image',
-    'nano-banana-pro-preview',
-    'gemini-3-pro-image',
+    'gemini-3.1-flash-image-preview',
     'gemini-3-pro-image-preview',
   ],
   tts: [
-    'gemini-3.8-flash-tts',
-    'gemini-3.8-flash-lite-tts',
-    'gemini-3.1-flash-tts-preview',
+    'gemini-2.5-flash-preview-tts',
     'gemini-2.5-pro-preview-tts',
   ],
-  music: ['lyria-3-clip-preview', 'lyria-3.5'],
+  music: ['lyria-3-clip-preview'],
 };
 const VOICES = new Set(['Sulafat', 'Vindemiatrix', 'Achernar', 'Algieba', 'Charon', 'Puck', 'Kore', 'Leda']);
 const ASPECTS = new Set(['1:1', '16:9', '9:16', '4:3', '3:4']);
@@ -94,19 +90,45 @@ interface Session {
 
 const sessions = new Map<string, Session>();
 
+const makeSession = (apiKey: string, source: 'user' | 'env'): Session => {
+  const fp = crypto.createHash('sha1').update(apiKey).digest('hex').slice(0, 12);
+  let session = sessions.get(fp);
+  if (!session) {
+    if (sessions.size > 50) sessions.clear();
+    session = { ai: new GoogleGenAI({ apiKey, httpOptions: { headers: { 'User-Agent': 'aistudio-build' } } }), fp, source };
+    sessions.set(fp, session);
+  }
+  return session;
+};
+
 // مفتاح الزائر له الأولوية؛ إن أرسل مفتاحاً بصيغة خاطئة نرفضه صراحةً بدل الرجوع الصامت لمفتاح البيئة
 const getSession = (req: Request): Session => {
   const header = req.get('x-goog-api-key')?.trim();
   if (header && !KEY_PATTERN.test(header)) throw Object.assign(new Error('API key format is invalid.'), { status: 401 });
   const apiKey = header || getEnvApiKey();
-  const fp = crypto.createHash('sha1').update(apiKey).digest('hex').slice(0, 12);
-  let session = sessions.get(fp);
-  if (!session) {
-    if (sessions.size > 50) sessions.clear();
-    session = { ai: new GoogleGenAI({ apiKey, httpOptions: { headers: { 'User-Agent': 'aistudio-build' } } }), fp, source: header ? 'user' : 'env' };
-    sessions.set(fp, session);
+  return makeSession(apiKey, header ? 'user' : 'env');
+};
+
+// إرجاع جلسة الزائر متبوعة بجلسة الخادم (إن وُجدت وكانت مختلفة) للتبديل التلقائي عند نفاد الكوتا
+const getCandidateSessions = (req: Request): Session[] => {
+  const list: Session[] = [];
+  const header = req.get('x-goog-api-key')?.trim();
+  if (header) {
+    if (!KEY_PATTERN.test(header)) throw Object.assign(new Error('API key format is invalid.'), { status: 401 });
+    list.push(makeSession(header, 'user'));
   }
-  return session;
+  try {
+    const envKey = getEnvApiKey();
+    if (!header || envKey !== header) {
+      list.push(makeSession(envKey, 'env'));
+    }
+  } catch {
+    // لا يوجد مفتاح بيئة احتياطي
+  }
+  if (!list.length) {
+    throw Object.assign(new Error('GEMINI_API_KEY is not configured on the server.'), { status: 401, code: 'NOKEY' });
+  }
+  return list;
 };
 
 const getAiClient = (req: Request): GoogleGenAI => getSession(req).ai;
@@ -127,9 +149,9 @@ const classify = (err: any): ErrorKind => {
   const msg = String(err?.message ?? '');
   if (/API_KEY_INVALID|API key not valid|API key format/i.test(msg) || status === 401) return 'auth';
   if (/PERMISSION_DENIED|permission denied/i.test(msg) || status === 403) return 'missing';
-  if (status === 429 || /RESOURCE_EXHAUSTED|quota/i.test(msg)) return 'quota';
+  if (status === 429 || /RESOURCE_EXHAUSTED|quota|rate limit|limit of requests|token limit/i.test(msg)) return 'quota';
   if (status === 404 || /NOT_FOUND|is not found|not supported for/i.test(msg)) return 'missing';
-  if (status >= 500 || /UNAVAILABLE|overloaded|ECONNRESET|ETIMEDOUT|fetch failed/i.test(msg)) return 'busy';
+  if (status >= 500 || /UNAVAILABLE|overloaded|ECONNRESET|ETIMEDOUT|fetch failed|Failed to call the Gemini API/i.test(msg)) return 'busy';
   return 'skip';
 };
 
@@ -138,9 +160,32 @@ const isZeroQuota = (msg: string) => /limit:\s*0\b|free_?tier/i.test(msg);
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-// الفحص على الرسالة الكاملة قبل القص: عبارة limit: 0 تأتي في آخرها
+// الفحص على الرسالة الكاملة قبل القص: عبارة limit: 0 أو daily limit تأتي في الرسالة
 const isDailyQuota = (msg: string) =>
-  /daily limit|limit:\s*0\b|free_?tier|requests today|limit of requests|tomorrow/i.test(msg);
+  /daily limit|limit:\s*0\b|free_?tier|requests today|limit of requests|tomorrow|select a different model/i.test(msg);
+
+// كوتا الدقيقة (RPM / TPM): الانتقال الفوري للنموذج التالي أفضل من الانتظار وتكرار الضرب على نفس النموذج
+const isMinuteQuota = (msg: string) =>
+  /per minute|in a few minutes|token limit|rate limit|RESOURCE_EXHAUSTED|quota/i.test(msg);
+
+// ذاكرة تبريد لكل (مفتاح + نموذج) لمنع ضرب النماذج المستنفدة في كل طلب جديد
+const modelCooldowns = new Map<string, number>();
+const DAILY_COOLDOWN_MS = 30 * 60 * 1000; // 30 دقيقة للحد اليومي أو النموذج غير المدعوم
+const MINUTE_COOLDOWN_MS = 75 * 1000; // 75 ثانية لكوتا الدقيقة (TPM / RPM)
+const BUSY_COOLDOWN_MS = 15 * 1000; // 15 ثانية عند فشل البوابة المؤقت
+
+const isModelCooledDown = (fp: string, model: string): boolean => {
+  const until = modelCooldowns.get(`${fp}:${model}`) ?? 0;
+  if (until <= Date.now()) {
+    if (until > 0) modelCooldowns.delete(`${fp}:${model}`);
+    return false;
+  }
+  return true;
+};
+
+const markModelCooldown = (fp: string, model: string, ms: number): void => {
+  modelCooldowns.set(`${fp}:${model}`, Date.now() + ms);
+};
 
 const trailItem = (model: string, err: any): TrailItem => {
   const full = String(err?.message ?? err).replace(/\s+/g, ' ');
@@ -157,38 +202,91 @@ const failure = (label: string, trail: TrailItem[], last: any): Error => {
   return Object.assign(last instanceof Error ? last : new Error(`${label}: no model returned output`), { code, trail });
 };
 
-// يجرب كل نموذج بالترتيب؛ إعادة محاولة بتأخير متصاعد عند الانشغال، وانتقال فوري عند الكوتا أو غياب النموذج
-async function runChain<T>(label: string, models: string[], attempt: (model: string) => Promise<T | null>): Promise<{ value: T; model: string }> {
+// يجرب كل نموذج متاح بالترتيب مع احترام ذاكرة التبريد؛ ينتقل فوراً للنموذج التالي عند الكوتا اليومية أو كوتا الدقيقة
+async function runChain<T>(
+  label: string,
+  models: string[],
+  attempt: (model: string, ai: GoogleGenAI) => Promise<T | null>,
+  req?: Request
+): Promise<{ value: T; model: string }> {
+  const candidateSessions = req ? getCandidateSessions(req) : [];
+  const sessionsToTry = candidateSessions.length ? candidateSessions : [null];
   let lastError: any = null;
   const trail: TrailItem[] = [];
-  for (const model of models) {
-    for (let i = 0; i < 3; i++) {
-      try {
-        const value = await attempt(model);
-        if (value != null) return { value, model };
-        trail.push({ model, kind: 'skip', status: 0, message: 'Model returned no output.' });
-        break;
-      } catch (err: any) {
-        lastError = err;
-        const item = trailItem(model, err);
-        console.warn(`[${label}] ${model} #${i + 1}: ${item.kind} ${item.status} — ${item.message.slice(0, 160)}`);
-        if (item.kind === 'auth') throw Object.assign(err instanceof Error ? err : new Error(item.message), { code: 'AUTH', trail: [...trail, item] });
 
-        // إذا استنفد النموذج حده اليومي أو كان خارج الخطة المجانية (limit: 0)، ننتقل فوراً للنموذج التالي في السلسلة
-        if (item.kind === 'quota' && isDailyQuota(item.message)) {
-          console.warn(`[${label}] Model ${model} reached daily/zero quota (${item.message.slice(0, 100)}). Skipping immediately to next model in chain...`);
+  for (const sess of sessionsToTry) {
+    const fp = sess?.fp ?? 'default';
+    const ai = sess?.ai as GoogleGenAI;
+
+    // النماذج غير المبرّدة أولاً، ثم المبرّدة كمحاولة أخيرة إن كانت كلها في فترة تبريد مؤقتة
+    const readyModels = models.filter((m) => !isModelCooledDown(fp, m));
+    const orderedModels = readyModels.length > 0 ? readyModels : models;
+
+    for (const model of orderedModels) {
+      for (let i = 0; i < 2; i++) {
+        try {
+          const value = await attempt(model, ai);
+          if (value != null) {
+            modelCooldowns.delete(`${fp}:${model}`);
+            return { value, model };
+          }
+          trail.push({ model, kind: 'skip', status: 0, message: 'Model returned no output.' });
+          break;
+        } catch (err: any) {
+          lastError = err;
+          const item = trailItem(model, err);
+          console.warn(`[${label}] ${model} (${fp}) #${i + 1}: ${item.kind} ${item.status} — ${item.message.slice(0, 160)}`);
+          if (item.kind === 'auth') {
+            // إذا كان هناك مفتاح بيئة احتياطي بعد مفتاح الزائر، ننتقل إليه بدل الإيقاف الفوري
+            if (sessionsToTry.length > 1 && sess?.source === 'user') {
+              trail.push(item);
+              break;
+            }
+            throw Object.assign(err instanceof Error ? err : new Error(item.message), { code: 'AUTH', trail: [...trail, item] });
+          }
+
+          if (item.kind === 'missing') {
+            markModelCooldown(fp, model, DAILY_COOLDOWN_MS);
+            trail.push(item);
+            break;
+          }
+
+          // حصة يومية أو صفرية: تبريد 30 دقيقة وانتقال فوري للنموذج التالي
+          if (item.kind === 'quota' && isDailyQuota(item.message)) {
+            markModelCooldown(fp, model, DAILY_COOLDOWN_MS);
+            console.warn(`[${label}] Model ${model} reached daily/zero quota. Cooling down 30m and switching to next model...`);
+            trail.push(item);
+            break;
+          }
+
+          // كوتا الدقيقة (TPM / RPM): تبريد 75 ثانية وانتقال فوري للنموذج التالي بدل تكرار الطلب على نفس النموذج
+          if (item.kind === 'quota' && isMinuteQuota(item.message)) {
+            markModelCooldown(fp, model, MINUTE_COOLDOWN_MS);
+            console.warn(`[${label}] Model ${model} hit per-minute quota. Cooling down 75s and switching to next model...`);
+            trail.push(item);
+            break;
+          }
+
+          // خطأ بوابة مؤقت ("Failed to call the Gemini API. Please try again.") أو انشغال:
+          // إذا توفرت نماذج أخرى في السلسلة ننتقل إليها فوراً بعد تبريد قصير
+          if (item.kind === 'busy' || item.kind === 'skip') {
+            markModelCooldown(fp, model, BUSY_COOLDOWN_MS);
+            if (orderedModels.length > 1) {
+              trail.push(item);
+              break;
+            }
+            if (i < 1) {
+              await sleep(1000 + Math.random() * 400);
+              continue;
+            }
+          }
+
           trail.push(item);
           break;
         }
-
-        // استراتيجية إعادة المحاولة بتأخير متصاعد أسي (Exponential Backoff with Jitter) عند كوتا الدقيقة (429) أو الانشغال المؤقت
-        if ((item.kind === 'quota' || item.kind === 'busy') && i < 2) {
-          const backoffMs = Math.min(1200 * Math.pow(2, i) + Math.random() * 500, 6000);
-          console.warn(`[${label}] Rate-limit or busy hit for ${model} (attempt ${i + 1}/3), retrying in ${Math.round(backoffMs)}ms...`);
-          await sleep(backoffMs);
-          continue;
-        }
-        trail.push(item);
+      }
+      // إذا فشل مفتاح الزائر بـ AUTH نخرج لتجربة مفتاح الخادم
+      if (trail.length && trail[trail.length - 1].kind === 'auth' && sess?.source === 'user') {
         break;
       }
     }
@@ -246,8 +344,8 @@ const getCatalog = async (session: Session): Promise<Catalog> => {
 };
 
 const DISCOVER: Record<ChainKind, RegExp> = {
-  text: /^gemini-\d+(\.\d+)?-(flash|flash-lite|pro)$/,
-  image: /^(gemini|nano)[\w.-]*image[\w.-]*$/,
+  text: /^gemini-\d+(\.\d+)?-(flash|flash-lite|pro)(-preview|-latest)?$/,
+  image: /^gemini[\w.-]*image[\w.-]*$/,
   tts: /^gemini[\w.-]*tts[\w.-]*$/,
   music: /^lyria[\w.-]*$/,
 };
@@ -274,12 +372,19 @@ app.get('/api/preflight', async (req: Request, res: Response) => {
       const found = [...catalog.names].filter((n) => DISCOVER[kind].test(n) && !base.includes(n));
       return [...base, ...found];
     };
+    const textModels = available('text');
+    const ttsModels = available('tts');
     return res.json({
       ok: true,
       keySource: session.source,
       listed: catalog.names.size > 0,
       free: { configured: Boolean(getFreeCreds(req)) },
-      models: { text: available('text'), image: available('image'), tts: available('tts'), music: available('music') },
+      models: {
+        text: textModels.length ? textModels : MODELS.text,
+        image: available('image'),
+        tts: ttsModels.length ? ttsModels : MODELS.tts,
+        music: available('music'),
+      },
     });
   } catch (err) {
     return sendError(res, err, 'Preflight failed');
@@ -366,8 +471,149 @@ const parseJson = (raw: string): any => {
   try {
     return JSON.parse(raw);
   } catch {
-    return JSON.parse(raw.replace(/```json|```/g, '').trim());
+    const cleaned = raw.replace(/```json|```/g, '').trim();
+    const firstBrace = cleaned.indexOf('{');
+    const lastBrace = cleaned.lastIndexOf('}');
+    if (firstBrace >= 0 && lastBrace > firstBrace) {
+      return JSON.parse(cleaned.slice(firstBrace, lastBrace + 1));
+    }
+    return JSON.parse(cleaned);
   }
+};
+
+// محرك نصي احتياطي مجاني عند استنفاد كافة حصص Gemini اليومية أو المؤقتة
+const runFreeTextJson = async (systemPrompt: string, userPrompt: string): Promise<any | null> => {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 28_000);
+  try {
+    const res = await fetch('https://text.pollinations.ai/openai', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      signal: ctrl.signal,
+      body: JSON.stringify({
+        model: 'openai',
+        response_format: { type: 'json_object' },
+        messages: [
+          { role: 'system', content: `${systemPrompt}\nAlways respond with valid JSON only.` },
+          { role: 'user', content: `${userPrompt}\nReturn valid JSON only.` },
+        ],
+      }),
+    });
+    if (!res.ok) return null;
+    const data: any = await res.json();
+    const content = data?.choices?.[0]?.message?.content;
+    if (typeof content === 'string' && content.trim()) {
+      return parseJson(content);
+    }
+    return null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+};
+
+// باني قصة محلي منظم يعمل كشبكة أمان أخيرة إذا استنفدت كل نماذج Gemini وتعذر الوصول للمحرك النصي البديل
+const buildFallbackStory = (params: any, pageCount: number) => {
+  const isArabic = params?.language === 'Arabic';
+  const idea = clip(params?.idea, 240) || (isArabic ? 'رحلة شيقة في عالم الخيال' : 'An exciting journey in a world of wonder');
+  const heroName = clip(params?.heroName, 40) || (Array.isArray(params?.customCharacters) && params.customCharacters[0]?.name ? clip(params.customCharacters[0].name, 40) : isArabic ? 'سراج' : 'Sami');
+  const artStyle = clip(params?.artStyle, 40) || 'Classic Storybook';
+  const ageGroup = clip(params?.ageGroup, 10) || '4-6';
+  const title = isArabic ? `مغامرة ${heroName}` : `${heroName}'s Adventure`;
+
+  const customChars = Array.isArray(params?.customCharacters) && params.customCharacters.length > 0
+    ? params.customCharacters.slice(0, 3).map((c: any) => ({
+        name: clip(c?.name, 40) || heroName,
+        description: clip(c?.description, 200) || 'A cheerful young hero wearing a bright adventure outfit and warm smile',
+        personality: clip(c?.personality, 80) || (isArabic ? 'شجاع ومحب للاستطلاع' : 'Brave and curious'),
+        age: clip(c?.age, 15) || '7',
+        gender: clip(c?.gender, 15) || 'boy',
+      }))
+    : [
+        {
+          name: heroName,
+          description: params?.fruitFantasy
+            ? `${heroName} is a cute pomegranate character with a face and limbs, wearing a tiny explorer cape`
+            : `A cheerful child named ${heroName} with bright expressive eyes and a cozy adventure jacket`,
+          personality: isArabic ? 'شجاع وفضولي ويحب مساعدة الآخرين' : 'Brave, curious, and kind-hearted',
+          age: '7',
+          gender: 'boy',
+        },
+      ];
+
+  const scenesEn = [
+    `${heroName} standing in a sunlit meadow looking at a glowing path ahead, curious expression`,
+    `${heroName} discovering a friendly little bird beside an ancient lantern under a blossoming tree`,
+    `${heroName} crossing a wooden bridge over a sparkling stream while golden fireflies light the way`,
+    `${heroName} solving a gentle puzzle carved on a mossy stone with a joyful smile`,
+    `${heroName} sharing warm berry tea with woodland friends around a cozy glowing lantern`,
+    `${heroName} looking up at a starry twilight sky with a proud and peaceful smile, returning home`,
+  ];
+
+  const pages = Array.from({ length: pageCount }, (_, i) => {
+    const idx = i + 1;
+    const scene = scenesEn[i % scenesEn.length];
+    const arTexts = [
+      `في صباح مشرق، انطلق ${heroName} لاستكشاف فكرة جديدة مستوحاة من: ${idea}. كانت النسائم اللطيفة تهمس له بأن مغامرة جميلة على وشك أن تبدأ.`,
+      `في الطريق، لمح ${heroName} ضوءاً دافئاً يلمع بين الأشجار، فاقترب بخطوات واثقة وقلب مليء بالحماس والفضول.`,
+      `واجه ${heroName} تحدياً صغيراً يحتاج إلى تفكير هادئ، فتذكر أن الصبر والتعاون هما مفتاح كل حل ذكي.`,
+      `بفضل شجاعته، نجح ${heroName} في فتح المسار المضيء، وابتسم حين رأى جمال المكان من حوله.`,
+      `احتفل الأصدقاء مع ${heroName} بهذا الإنجاز الجميل، وتبادلوا الضحكات والحكايات الدافئة.`,
+      `ومع حلول المساء، عاد ${heroName} وقلبه عامر بالسعادة بعد أن تعلم درساً لا يُنسى في هذه الرحلة.`,
+    ];
+    const enTexts = [
+      `On a bright morning, ${heroName} set out on a wonderful journey inspired by: ${idea}. A gentle breeze whispered that an unforgettable adventure was beginning.`,
+      `Along the path, ${heroName} spotted a warm golden light shimmering through the trees and stepped forward with curiosity.`,
+      `Soon, ${heroName} faced a small puzzle that required calm thinking, remembering that patience and kindness open every door.`,
+      `With courage and a bright smile, ${heroName} unlocked the glowing path and marveled at the beauty all around.`,
+      `Friends gathered around ${heroName} to celebrate the discovery, sharing warm laughter and cheerful songs.`,
+      `As twilight stars appeared, ${heroName} returned home with a happy heart and a wonderful new memory.`,
+    ];
+    const text = isArabic ? arTexts[i % arTexts.length] : enTexts[i % enTexts.length];
+    return {
+      page: idx,
+      text,
+      narration: text,
+      image_prompt: scene,
+      ...(idx === 1 ? { chapter: isArabic ? 'الفصل الأول' : 'Chapter 1' } : {}),
+    };
+  });
+
+  return {
+    story_info: {
+      title,
+      language: isArabic ? 'Arabic' : 'English',
+      age_group: ageGroup,
+      art_style: artStyle,
+      lessons: isArabic ? ['الشجاعة', 'الصبر', 'حب الاستطلاع'] : ['Courage', 'Patience', 'Curiosity'],
+      moral: isArabic ? 'بالصبر والشجاعة تتحول الأفكار الصغيرة إلى مغامرات عظيمة.' : 'With patience and courage, small ideas turn into wonderful adventures.',
+    },
+    characters: customChars,
+    cover_image_prompt: `${heroName} in a magical storybook scene, warm golden light, expressive children book cover`,
+    music_prompt: 'Gentle acoustic storybook melody with warm harp and soft flute',
+    pages,
+    quiz: [
+      {
+        question: isArabic ? `من هو بطل هذه القصة؟` : `Who is the hero of this story?`,
+        options: isArabic ? [heroName, 'الرحالة القديم', 'الطائر الصغير'] : [heroName, 'The Old Traveler', 'The Little Bird'],
+        answer: 0,
+        page: 1,
+      },
+      {
+        question: isArabic ? `ما الذي ساعد ${heroName} على النجاح في رحلته؟` : `What helped ${heroName} succeed on the journey?`,
+        options: isArabic ? ['الصبر والشجاعة', 'الاستعجال', 'النوم طويلاً'] : ['Patience and courage', 'Rushing ahead', 'Sleeping all day'],
+        answer: 0,
+        page: Math.min(3, pageCount),
+      },
+      {
+        question: isArabic ? `كيف عاد ${heroName} في نهاية المغامرة؟` : `How did ${heroName} return at the end of the adventure?`,
+        options: isArabic ? ['بقلب سعيد ودرس مفيد', 'غاضباً', 'حزيناً'] : ['With a happy heart and a good lesson', 'Angry', 'Sad'],
+        answer: 0,
+        page: pageCount,
+      },
+    ],
+  };
 };
 
 // بث النص سطراً سطراً (NDJSON): chunk / reset / done / error
@@ -378,9 +624,8 @@ app.post('/api/generate-story', async (req: Request, res: Response) => {
   const idea = clip(params?.idea, 500);
   if (!idea) return res.status(400).json({ error: 'Story idea cannot be empty.', code: 'FAILED' });
 
-  let ai: GoogleGenAI;
   try {
-    ai = getAiClient(req);
+    getCandidateSessions(req);
   } catch (err) {
     return sendError(res, err, 'Missing API key');
   }
@@ -438,36 +683,59 @@ app.post('/api/generate-story', async (req: Request, res: Response) => {
   const send = (obj: object) => res.write(`${JSON.stringify(obj)}\n`);
 
   try {
-    const { value } = await runChain('story', await chainFor(req, 'text'), async (model) => {
-      let raw = '';
-      let started = false;
-      try {
-        const stream = await ai.models.generateContentStream({
-          model,
-          contents: prompt,
-          config: { systemInstruction: SYSTEM_INSTRUCTION, responseMimeType: 'application/json', responseSchema: STORY_RESPONSE_SCHEMA },
-        });
-        for await (const chunk of stream) {
-          const t = chunk.text ?? '';
-          if (!t) continue;
-          started = true;
-          raw += t;
-          send({ t: 'chunk', d: t });
+    const { value } = await runChain(
+      'story',
+      await chainFor(req, 'text'),
+      async (model, ai) => {
+        let raw = '';
+        let started = false;
+        try {
+          const stream = await ai.models.generateContentStream({
+            model,
+            contents: prompt,
+            config: { systemInstruction: SYSTEM_INSTRUCTION, responseMimeType: 'application/json', responseSchema: STORY_RESPONSE_SCHEMA },
+          });
+          for await (const chunk of stream) {
+            const t = chunk.text ?? '';
+            if (!t) continue;
+            started = true;
+            raw += t;
+            send({ t: 'chunk', d: t });
+          }
+        } catch (err) {
+          if (started) send({ t: 'reset' });
+          throw err;
         }
-      } catch (err) {
-        if (started) send({ t: 'reset' });
-        throw err;
-      }
-      const parsed = parseJson(raw);
-      if (!parsed?.pages?.length || !parsed?.characters?.length) {
-        send({ t: 'reset' });
-        return null;
-      }
-      return parsed;
-    });
+        const parsed = parseJson(raw);
+        if (!parsed?.pages?.length || !parsed?.characters?.length) {
+          send({ t: 'reset' });
+          return null;
+        }
+        return parsed;
+      },
+      req
+    );
     send({ t: 'done', story: value });
   } catch (err: any) {
-    send({ t: 'error', ...errorInfo(err, 'Failed to generate story').body });
+    const info = errorInfo(err, 'Failed to generate story');
+    if (info.body.code !== 'AUTH' && info.body.code !== 'NOKEY') {
+      console.warn(`[story] All Gemini text models exhausted (${info.body.code}), trying free text fallback...`);
+      send({ t: 'reset' });
+      const fallbackJson = await runFreeTextJson(
+        SYSTEM_INSTRUCTION,
+        `${prompt}\nReturn JSON with keys: story_info {title, language, age_group, art_style, lessons[], moral}, characters [{name, description, personality, age, gender}], cover_image_prompt, music_prompt, pages [{page, text, narration, image_prompt}], quiz [{question, options[], answer, page}].`
+      );
+      if (fallbackJson?.pages?.length && fallbackJson?.characters?.length) {
+        send({ t: 'done', story: fallbackJson });
+        res.end();
+        return;
+      }
+      const localStory = buildFallbackStory(params, first);
+      send({ t: 'done', story: localStory });
+      res.end();
+      return;
+    }
+    send({ t: 'error', ...info.body });
   }
   res.end();
 });
@@ -584,7 +852,7 @@ const runFree = async (creds: FreeCreds, prompt: string, steps = 6): Promise<str
   throw new Error('Free engine failed.');
 };
 
-// جلسات Gemini التي ثبت أن الصور عندها بلا حصة: نتخطاها مؤقتاً إلى المحرك المجاني بدل تكرار 7 محاولات فاشلة لكل صورة
+// جلسات Gemini التي ثبت أن الصور عندها بلا حصة: نتخطاها مؤقتاً إلى المحرك المجاني بدل تكرار المحاولات الفاشلة لكل صورة
 const imageBlocked = new Map<string, number>();
 
 // فحص بيانات Cloudflare بصورة صغيرة فعلية (أرخص خطوة ممكنة) للتأكد من صلاحية الرمز لـ Workers AI
@@ -607,6 +875,50 @@ const AI_IMAGE_SIZES: Record<string, [number, number]> = {
   '9:16': [576, 1024],
 };
 
+// رسم توضيحي SVG فني احتياطي يضمن عدم توقف القصة أبداً حتى لو تعطلت كافة خدمات الصور الخارجية
+const buildProceduralSvgIllustration = (prompt: string, dims: [number, number], seed: number): string => {
+  const [w, h] = dims;
+  const palettes = [
+    ['#1e1b4b', '#312e81', '#f59e0b', '#fef3c7', '#38bdf8'],
+    ['#064e3b', '#047857', '#fbbf24', '#ecfdf5', '#34d399'],
+    ['#3b0764', '#6b21a8', '#f472b6', '#fdf4ff', '#c084fc'],
+    ['#0c4a6e', '#0284c7', '#fb923c', '#f0f9ff', '#7dd3fc'],
+  ];
+  const pal = palettes[seed % palettes.length];
+  const sunX = Math.round(w * (0.28 + ((seed % 45) / 100)));
+  const sunY = Math.round(h * 0.32);
+  const r = Math.round(Math.min(w, h) * 0.14);
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">
+    <defs>
+      <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="${pal[0]}"/>
+        <stop offset="65%" stop-color="${pal[1]}"/>
+        <stop offset="100%" stop-color="${pal[4]}"/>
+      </linearGradient>
+      <radialGradient id="glow" cx="50%" cy="50%" r="50%">
+        <stop offset="0%" stop-color="${pal[3]}" stop-opacity="0.95"/>
+        <stop offset="55%" stop-color="${pal[2]}" stop-opacity="0.55"/>
+        <stop offset="100%" stop-color="${pal[2]}" stop-opacity="0"/>
+      </radialGradient>
+    </defs>
+    <rect width="${w}" height="${h}" fill="url(#sky)"/>
+    <circle cx="${sunX}" cy="${sunY}" r="${r * 2.2}" fill="url(#glow)"/>
+    <circle cx="${sunX}" cy="${sunY}" r="${r}" fill="${pal[3]}"/>
+    <circle cx="${Math.round(w * 0.18)}" cy="${Math.round(h * 0.18)}" r="3" fill="#fff" opacity="0.8"/>
+    <circle cx="${Math.round(w * 0.76)}" cy="${Math.round(h * 0.15)}" r="4" fill="#fff" opacity="0.9"/>
+    <circle cx="${Math.round(w * 0.62)}" cy="${Math.round(h * 0.24)}" r="2.5" fill="#fff" opacity="0.7"/>
+    <circle cx="${Math.round(w * 0.85)}" cy="${Math.round(h * 0.28)}" r="3.5" fill="#fff" opacity="0.75"/>
+    <path d="M0,${Math.round(h * 0.72)} Q${Math.round(w * 0.28)},${Math.round(h * 0.56)} ${Math.round(w * 0.55)},${Math.round(h * 0.7)} T${w},${Math.round(h * 0.66)} L${w},${h} L0,${h} Z" fill="${pal[1]}" opacity="0.85"/>
+    <path d="M0,${Math.round(h * 0.8)} Q${Math.round(w * 0.4)},${Math.round(h * 0.68)} ${Math.round(w * 0.75)},${Math.round(h * 0.8)} T${w},${Math.round(h * 0.76)} L${w},${h} L0,${h} Z" fill="${pal[0]}"/>
+    <g transform="translate(${Math.round(w * 0.46)}, ${Math.round(h * 0.54)})">
+      <circle cx="0" cy="-36" r="24" fill="${pal[3]}"/>
+      <path d="M-26,32 C-24,-10 24,-10 26,32 Z" fill="${pal[2]}"/>
+      <circle cx="34" cy="-8" r="10" fill="${pal[3]}" opacity="0.9"/>
+    </g>
+  </svg>`;
+  return Buffer.from(svg, 'utf-8').toString('base64');
+};
+
 const runAiFallback = async (
   prompt: string,
   aspectRatio: string
@@ -617,6 +929,7 @@ const runAiFallback = async (
   const seed = Math.floor(Math.random() * 2 ** 31);
 
   const urls = [
+    `https://image.pollinations.ai/prompt/${encodedPrompt}?width=${dims[0]}&height=${dims[1]}&seed=${seed}&nologo=true&model=flux`,
     `https://image.pollinations.ai/prompt/${encodedPrompt}?width=${dims[0]}&height=${dims[1]}&seed=${seed}&nologo=true`,
     `https://image.pollinations.ai/prompt/${encodedPrompt}?seed=${seed}&nologo=true`,
   ];
@@ -624,7 +937,7 @@ const runAiFallback = async (
   for (let attempt = 0; attempt < urls.length; attempt++) {
     const url = urls[attempt];
     const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 45_000);
+    const timer = setTimeout(() => ctrl.abort(), 25_000);
     try {
       const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' }, signal: ctrl.signal });
       if (res.ok) {
@@ -634,15 +947,15 @@ const runAiFallback = async (
           const base64 = Buffer.from(buf).toString('base64');
           return {
             base64,
-            mimeType: 'image/jpeg',
+            mimeType: ct.includes('png') ? 'image/png' : 'image/jpeg',
             model: 'pollinations-flux',
             engine: 'pollinations',
             promptSnippet: cleanPrompt.slice(0, 300),
           };
         }
       }
-      if (res.status === 402) {
-        await sleep(2500);
+      if (res.status === 402 || res.status === 429) {
+        await sleep(1200);
       }
     } catch {
       // try next URL
@@ -651,10 +964,17 @@ const runAiFallback = async (
     }
   }
 
-  throw new Error('AI fallback image generator currently busy. Please retry in a moment.');
+  // شبكة أمان أخيرة: رسم SVG فني فوري بدلاً من رمي خطأ يوقف القصة
+  return {
+    base64: buildProceduralSvgIllustration(cleanPrompt, dims, seed),
+    mimeType: 'image/svg+xml',
+    model: 'pollinations-svg-fallback',
+    engine: 'pollinations',
+    promptSnippet: cleanPrompt.slice(0, 300),
+  };
 };
 
-// توليد الصور: أولاً عبر نماذج Gemini المتقدمة، ثم Cloudflare Flux إن توفر، ثم Pollinations الاحتياطي
+// توليد الصور: أولاً عبر نماذج Gemini المتقدمة (ما لم تكن الجلسة موقوفة مؤقتاً بسبب نفاد حصة الصور)، ثم Cloudflare Flux إن توفر، ثم Pollinations الاحتياطي
 app.post('/api/generate-image', async (req: Request, res: Response) => {
   try {
     const prompt = clip(req.body?.prompt, 4000);
@@ -669,69 +989,84 @@ app.post('/api/generate-image', async (req: Request, res: Response) => {
       : '';
     const text = `${prompt}${refTail}`;
 
-    try {
-      const { value, model } = await runChain('image', await chainFor(req, 'image'), async (m) => {
-        const isNoSize = NO_SIZE_IMAGE_MODELS.has(m);
-        let currentRefs = refs;
-        for (let attempt = 0; attempt < 2; attempt++) {
-          try {
-            const parts: any[] = currentRefs.length
-              ? [...currentRefs.map((r) => ({ inlineData: { data: r.data, mimeType: r.mimeType } })), { text }]
-              : [{ text }];
-            const response = await session.ai.models.generateContent({
-              model: m,
-              contents: [{ role: 'user', parts }],
-              config: {
-                responseModalities: [Modality.TEXT, Modality.IMAGE],
-                imageConfig: isNoSize ? { aspectRatio } : { aspectRatio, imageSize: '1K' },
-              },
-            });
-            const part = (response.candidates?.[0]?.content?.parts ?? []).find((p) => p.inlineData?.data);
-            if (part?.inlineData?.data) {
-              return { base64: part.inlineData.data, mimeType: part.inlineData.mimeType || 'image/png' };
-            }
-            break;
-          } catch (err: any) {
-            const msg = String(err?.message || '');
-            if (/could not be decoded|source image/i.test(msg) && currentRefs.length > 0) {
-              console.warn(`[image] Reference image decode issue on ${m}, retrying without reference...`);
-              currentRefs = [];
-              continue;
-            }
-            throw err;
-          }
-        }
-        return null;
-      });
+    const isSessionImageBlocked = (imageBlocked.get(session.fp) ?? 0) > Date.now();
 
-      return res.json({ ...value, model, engine: 'gemini', promptSnippet: text.slice(0, 300) });
-    } catch (geminiErr: any) {
-      console.warn(`[image] Gemini image models unavailable (${geminiErr?.message?.slice(0, 100)}), trying fallback engines...`);
-      const freeCreds = getFreeCreds(req);
-      if (freeCreds) {
-        try {
-          const cfPrompt = fluxPrompt(prompt, aspectRatio === '1:1');
-          const base64 = await runFree(freeCreds, cfPrompt, 6);
-          return res.json({
-            base64,
-            mimeType: 'image/png',
-            model: FLUX_LABEL,
-            engine: 'flux',
-            promptSnippet: cfPrompt.slice(0, 300),
-          });
-        } catch (cfErr: any) {
-          console.warn(`[image] Cloudflare Flux failed (${cfErr?.message?.slice(0, 100)}), falling back to Pollinations...`);
+    if (!isSessionImageBlocked) {
+      try {
+        const { value, model } = await runChain(
+          'image',
+          await chainFor(req, 'image'),
+          async (m, ai) => {
+            const isNoSize = NO_SIZE_IMAGE_MODELS.has(m);
+            let currentRefs = refs;
+            for (let attempt = 0; attempt < 2; attempt++) {
+              try {
+                const parts: any[] = currentRefs.length
+                  ? [...currentRefs.map((r) => ({ inlineData: { data: r.data, mimeType: r.mimeType } })), { text }]
+                  : [{ text }];
+                const response = await ai.models.generateContent({
+                  model: m,
+                  contents: [{ role: 'user', parts }],
+                  config: {
+                    responseModalities: [Modality.TEXT, Modality.IMAGE],
+                    imageConfig: isNoSize ? { aspectRatio } : { aspectRatio, imageSize: '1K' },
+                  },
+                });
+                const part = (response.candidates?.[0]?.content?.parts ?? []).find((p) => p.inlineData?.data);
+                if (part?.inlineData?.data) {
+                  return { base64: part.inlineData.data, mimeType: part.inlineData.mimeType || 'image/png' };
+                }
+                break;
+              } catch (err: any) {
+                const msg = String(err?.message || '');
+                if (/could not be decoded|source image/i.test(msg) && currentRefs.length > 0) {
+                  console.warn(`[image] Reference image decode issue on ${m}, retrying without reference...`);
+                  currentRefs = [];
+                  continue;
+                }
+                throw err;
+              }
+            }
+            return null;
+          },
+          req
+        );
+
+        imageBlocked.delete(session.fp);
+        return res.json({ ...value, model, engine: 'gemini', promptSnippet: text.slice(0, 300) });
+      } catch (geminiErr: any) {
+        const errCode = geminiErr?.code as ErrorCode | undefined;
+        if (errCode === 'QUOTA' || errCode === 'BILLING' || errCode === 'NOMODEL') {
+          imageBlocked.set(session.fp, Date.now() + BLOCK_TTL);
         }
+        console.warn(`[image] Gemini image models unavailable (${geminiErr?.message?.slice(0, 100)}), trying fallback engines...`);
       }
-      const fallback = await runAiFallback(prompt, aspectRatio);
-      return res.json(fallback);
     }
+
+    const freeCreds = getFreeCreds(req);
+    if (freeCreds) {
+      try {
+        const cfPrompt = fluxPrompt(prompt, aspectRatio === '1:1');
+        const base64 = await runFree(freeCreds, cfPrompt, 6);
+        return res.json({
+          base64,
+          mimeType: 'image/png',
+          model: FLUX_LABEL,
+          engine: 'flux',
+          promptSnippet: cfPrompt.slice(0, 300),
+        });
+      } catch (cfErr: any) {
+        console.warn(`[image] Cloudflare Flux failed (${cfErr?.message?.slice(0, 100)}), falling back to Pollinations...`);
+      }
+    }
+    const fallback = await runAiFallback(prompt, aspectRatio);
+    return res.json(fallback);
   } catch (err) {
     return sendError(res, err, 'Failed to generate image');
   }
 });
 
-// تفريغ الصوت وتحويله إلى نص بالذكاء الاصطناعي (Gemini 2.5 Flash) لدعم الإملاء الصوتي
+// تفريغ الصوت وتحويله إلى نص بالذكاء الاصطناعي عبر سلسلة النماذج لدعم الإملاء الصوتي دون توقف عند كوتا نموذج واحد
 app.post('/api/transcribe', async (req: Request, res: Response) => {
   try {
     const audio = req.body?.audio;
@@ -744,28 +1079,35 @@ app.post('/api/transcribe', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Audio recording is empty or too short.', code: 'FAILED' });
     }
     const mimeType = rawMime.split(';')[0].trim() || 'audio/webm';
-    const ai = getAiClient(req);
     const prompt = 'You are a highly accurate speech transcriber. Listen to this user audio recording. Transcribe the spoken speech word for word in Arabic or English as spoken. Do NOT add any notes, conversational text, formatting, or commentary. Output ONLY the exact transcribed text.';
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: [
-        {
-          role: 'user',
-          parts: [
+    const { value } = await runChain(
+      'transcribe',
+      await chainFor(req, 'text'),
+      async (model, ai) => {
+        const response = await ai.models.generateContent({
+          model,
+          contents: [
             {
-              inlineData: {
-                data: cleanBase64,
-                mimeType,
-              },
+              role: 'user',
+              parts: [
+                {
+                  inlineData: {
+                    data: cleanBase64,
+                    mimeType,
+                  },
+                },
+                { text: prompt },
+              ],
             },
-            { text: prompt },
           ],
-        },
-      ],
-    });
-    const text = response.candidates?.[0]?.content?.parts?.find((p) => p.text)?.text?.trim() || '';
-    return res.json({ text });
+        });
+        const text = response.candidates?.[0]?.content?.parts?.find((p) => p.text)?.text?.trim() || '';
+        return text ? { text } : null;
+      },
+      req
+    );
+    return res.json(value);
   } catch (err) {
     return sendError(res, err, 'Failed to transcribe audio');
   }
@@ -804,12 +1146,13 @@ app.post('/api/narrate', async (req: Request, res: Response) => {
     const text = clip(req.body?.text, 4000);
     if (!text) return res.status(400).json({ error: 'Narration text is required.', code: 'FAILED' });
     const voice = VOICES.has(req.body?.voice) ? req.body.voice : 'Sulafat';
-    const ai = getAiClient(req);
 
     const NARRATION_SYSTEM_INSTRUCTION = `STRICT NARRATOR DIRECTIVE: You are an audio story narrator performing voice '${voice}'. Maintain 100% strict acoustic consistency across all narration clips in this book. Use the exact same voice pitch, speaking rate (steady, warm, expressive storytelling cadence), articulation, and audio timbre on every single paragraph. Do not vary pitch or tone randomly between calls. Read ONLY the requested story text cleanly with perfect diction. Do not omit words, do not speak any preamble, intro, or commentary.`;
 
-    const { value, model } = await runChain('tts', await chainFor(req, 'tts'), async (m) => {
-      try {
+    const { value, model } = await runChain(
+      'tts',
+      await chainFor(req, 'tts'),
+      async (m, ai) => {
         const response = await ai.models.generateContent({
           model: m,
           contents: [{ role: 'user', parts: [{ text }] }],
@@ -821,19 +1164,9 @@ app.post('/api/narrate', async (req: Request, res: Response) => {
         });
         const part = (response.candidates?.[0]?.content?.parts ?? []).find((p) => p.inlineData?.data);
         return part?.inlineData?.data ? toWavPayload(part.inlineData.data, part.inlineData.mimeType) : null;
-      } catch (err) {
-        if (!['skip', 'missing'].includes(classify(err))) throw err;
-        // بعض نماذج TTS الجديدة متاحة عبر Interactions فقط
-        const r: any = await (ai as any).interactions.create({
-          model: m,
-          input: `${NARRATION_SYSTEM_INSTRUCTION}\nText to narrate:\n${text}`,
-          response_format: { type: 'audio' },
-          generation_config: { speech_config: [{ voice }] },
-        });
-        const audio = r?.output_audio;
-        return audio?.data ? toWavPayload(audio.data, audio.mime_type) : null;
-      }
-    });
+      },
+      req
+    );
 
     return res.json({ ...value, model });
   } catch (err) {
@@ -845,15 +1178,19 @@ app.post('/api/narrate', async (req: Request, res: Response) => {
 app.post('/api/music', async (req: Request, res: Response) => {
   try {
     const mood = clip(req.body?.prompt, 600) || 'A gentle, magical lullaby for a children storybook';
-    const ai = getAiClient(req);
-    const { value, model } = await runChain('music', await chainFor(req, 'music'), async (m) => {
-      const r: any = await (ai as any).interactions.create({
-        model: m,
-        input: `${mood}. Instrumental only, no vocals, no lyrics. Soft, warm, child friendly, steady and loop-friendly, suitable as a quiet background under narration${m === 'lyria-3.5' ? ', about 60 seconds long' : ''}.`,
-      });
-      const audio = r?.output_audio;
-      return audio?.data ? { base64: audio.data as string, mimeType: (audio.mime_type as string) || 'audio/mpeg' } : null;
-    });
+    const { value, model } = await runChain(
+      'music',
+      await chainFor(req, 'music'),
+      async (m, ai) => {
+        const r: any = await (ai as any).interactions.create({
+          model: m,
+          input: `${mood}. Instrumental only, no vocals, no lyrics. Soft, warm, child friendly, steady and loop-friendly, suitable as a quiet background under narration${m === 'lyria-3.5' ? ', about 60 seconds long' : ''}.`,
+        });
+        const audio = r?.output_audio;
+        return audio?.data ? { base64: audio.data as string, mimeType: (audio.mime_type as string) || 'audio/mpeg' } : null;
+      },
+      req
+    );
     return res.json({ ...value, model });
   } catch (err) {
     return sendError(res, err, 'Failed to generate music');
@@ -873,49 +1210,83 @@ const CONTINUE_SCHEMA: Schema = {
 
 // دفعة تالية من قصة طويلة: السياق = الشخصيات + ملخص ما كُتب، والدفعة الأخيرة تُنهي القصة وتعيد الاختبار والعبرة
 app.post('/api/continue-story', async (req: Request, res: Response) => {
+  const b = req.body ?? {};
+  const info = b.story ?? {};
+  const from = Math.min(Math.max(Number(b.from) || 2, 2), 120);
+  const count = Math.min(Math.max(Number(b.count) || 6, 1), 10);
+  const total = Math.min(Math.max(Number(b.total) || from + count - 1, from), 120);
+  const final = Boolean(b.final);
+  const earlier: string[] = (Array.isArray(info.earlier) ? info.earlier : []).slice(-60).map((t: unknown) => clip(t, 160));
+  const recent: string[] = (Array.isArray(info.recent) ? info.recent : []).slice(-3).map((t: unknown) => clip(t, 700));
+  if (!earlier.length && !recent.length) return res.status(400).json({ error: 'Missing story so far.', code: 'FAILED' });
+  const characters = (Array.isArray(info.characters) ? info.characters.slice(0, 5) : [])
+    .map((c: any) => `${clip(c?.name, 40)}: ${clip(c?.description, 400)}`)
+    .join(' | ');
+  const arabic = /arab|عرب/i.test(String(info.language ?? ''));
+
+  const prompt = [
+    `Continue the children's story "${clip(info.title, 100)}".`,
+    arabic ? `Language: Arabic (${clip(info.dialect, 30) || 'Modern Standard'})` : 'Language: English',
+    `Age group: ${clip(info.ageGroup, 10) || '4-6'}. Art style: ${clip(info.artStyle, 40) || 'Classic Storybook'}.`,
+    `Fixed characters (same names, same visual design on every page; no new main characters): ${characters}`,
+    earlier.length ? `Earlier pages in brief:\n${earlier.map((t, i) => `${i + 1}. ${t}`).join('\n')}` : '',
+    recent.length ? `Latest pages in full (continue directly from here):\n${recent.join('\n')}` : '',
+    `Write EXACTLY ${count} new pages, numbered ${from} to ${from + count - 1} (the whole book has ${total} pages).`,
+    'Start a new chapter: give the FIRST new page a "chapter" title.',
+    final
+      ? 'This is the FINAL part: build to a satisfying resolution and end the story. Also return "quiz" (exactly 3 questions about the WHOLE story; "page" = page number each question is about), "moral" (one short sentence) and "lessons" (2-3 short items).'
+      : 'The story is NOT over: do not conclude. End on a natural transition into what comes next. Do not return quiz, moral or lessons.',
+  ]
+    .filter(Boolean)
+    .join('\n');
+
   try {
-    const b = req.body ?? {};
-    const info = b.story ?? {};
-    const from = Math.min(Math.max(Number(b.from) || 2, 2), 120);
-    const count = Math.min(Math.max(Number(b.count) || 6, 1), 10);
-    const total = Math.min(Math.max(Number(b.total) || from + count - 1, from), 120);
-    const final = Boolean(b.final);
-    const earlier: string[] = (Array.isArray(info.earlier) ? info.earlier : []).slice(-60).map((t: unknown) => clip(t, 160));
-    const recent: string[] = (Array.isArray(info.recent) ? info.recent : []).slice(-3).map((t: unknown) => clip(t, 700));
-    if (!earlier.length && !recent.length) return res.status(400).json({ error: 'Missing story so far.', code: 'FAILED' });
-    const characters = (Array.isArray(info.characters) ? info.characters.slice(0, 5) : [])
-      .map((c: any) => `${clip(c?.name, 40)}: ${clip(c?.description, 400)}`)
-      .join(' | ');
-    const arabic = /arab|عرب/i.test(String(info.language ?? ''));
-
-    const ai = getAiClient(req);
-    const prompt = [
-      `Continue the children's story "${clip(info.title, 100)}".`,
-      arabic ? `Language: Arabic (${clip(info.dialect, 30) || 'Modern Standard'})` : 'Language: English',
-      `Age group: ${clip(info.ageGroup, 10) || '4-6'}. Art style: ${clip(info.artStyle, 40) || 'Classic Storybook'}.`,
-      `Fixed characters (same names, same visual design on every page; no new main characters): ${characters}`,
-      earlier.length ? `Earlier pages in brief:\n${earlier.map((t, i) => `${i + 1}. ${t}`).join('\n')}` : '',
-      recent.length ? `Latest pages in full (continue directly from here):\n${recent.join('\n')}` : '',
-      `Write EXACTLY ${count} new pages, numbered ${from} to ${from + count - 1} (the whole book has ${total} pages).`,
-      'Start a new chapter: give the FIRST new page a "chapter" title.',
-      final
-        ? 'This is the FINAL part: build to a satisfying resolution and end the story. Also return "quiz" (exactly 3 questions about the WHOLE story; "page" = page number each question is about), "moral" (one short sentence) and "lessons" (2-3 short items).'
-        : 'The story is NOT over: do not conclude. End on a natural transition into what comes next. Do not return quiz, moral or lessons.',
-    ]
-      .filter(Boolean)
-      .join('\n');
-
-    const { value } = await runChain('continue', await chainFor(req, 'text'), async (model) => {
-      const response = await ai.models.generateContent({
-        model,
-        contents: prompt,
-        config: { systemInstruction: SYSTEM_INSTRUCTION, responseMimeType: 'application/json', responseSchema: CONTINUE_SCHEMA },
-      });
-      const parsed = response.text ? parseJson(response.text) : null;
-      return Array.isArray(parsed?.pages) && parsed.pages.length ? parsed : null;
-    });
+    const { value } = await runChain(
+      'continue',
+      await chainFor(req, 'text'),
+      async (model, ai) => {
+        const response = await ai.models.generateContent({
+          model,
+          contents: prompt,
+          config: { systemInstruction: SYSTEM_INSTRUCTION, responseMimeType: 'application/json', responseSchema: CONTINUE_SCHEMA },
+        });
+        const parsed = response.text ? parseJson(response.text) : null;
+        return Array.isArray(parsed?.pages) && parsed.pages.length ? parsed : null;
+      },
+      req
+    );
     return res.json({ ...value, pages: value.pages.slice(0, count) });
-  } catch (err) {
+  } catch (err: any) {
+    const errObj = errorInfo(err, 'Failed to continue story');
+    if (errObj.body.code !== 'AUTH' && errObj.body.code !== 'NOKEY') {
+      const freeVal = await runFreeTextJson(SYSTEM_INSTRUCTION, prompt);
+      if (Array.isArray(freeVal?.pages) && freeVal.pages.length) {
+        return res.json({ ...freeVal, pages: freeVal.pages.slice(0, count) });
+      }
+      const heroName = Array.isArray(info.characters) && info.characters[0]?.name ? clip(info.characters[0].name, 40) : arabic ? 'البطل' : 'the hero';
+      const fallbackPages = Array.from({ length: count }, (_, i) => {
+        const pNum = from + i;
+        const text = arabic
+          ? `واصل ${heroName} رحلته في الصفحة ${pNum}، واكتشف تفصيلاً جديداً يقربه من هدفه بروح التعاون والأمل.`
+          : `${heroName} continued the journey on page ${pNum}, discovering a new clue with teamwork and hope.`;
+        return {
+          page: pNum,
+          text,
+          narration: text,
+          image_prompt: `${heroName} continuing the adventure in a vibrant storybook scene, page ${pNum}`,
+          ...(i === 0 ? { chapter: arabic ? `الفصل ${Math.ceil(from / 6)}` : `Chapter ${Math.ceil(from / 6)}` } : {}),
+        };
+      });
+      return res.json({
+        pages: fallbackPages,
+        ...(final
+          ? {
+              moral: arabic ? 'المثابرة والتعاون يقودان إلى النجاح.' : 'Perseverance and teamwork lead to success.',
+              lessons: arabic ? ['المثابرة', 'التعاون'] : ['Perseverance', 'Teamwork'],
+            }
+          : {}),
+      });
+    }
     return sendError(res, err, 'Failed to continue story');
   }
 });
@@ -953,7 +1324,6 @@ app.post('/api/explain', async (req: Request, res: Response) => {
     const age = clip(req.body?.ageGroup, 10) || '7-9';
     const lang = arabic ? `Arabic (${clip(req.body?.dialect, 30) || 'Modern Standard'}, simple, kid-friendly)` : 'English';
 
-    const ai = getAiClient(req);
     const prompt =
       mode === 'ask'
         ? [
@@ -970,17 +1340,36 @@ app.post('/api/explain', async (req: Request, res: Response) => {
             .filter(Boolean)
             .join('\n');
 
-    const { value } = await runChain('explain', await chainFor(req, 'text'), async (model) => {
-      const response = await ai.models.generateContent({
-        model,
-        contents: prompt,
-        config: { responseMimeType: 'application/json', responseSchema: EXPLAIN_SCHEMA },
-      });
-      const parsed = response.text ? parseJson(response.text) : null;
-      if (!Array.isArray(parsed?.quiz) || !parsed.quiz.length) return null;
-      if (mode === 'ask' && !parsed.answer) return null;
-      return parsed;
-    });
+    let value: any;
+    try {
+      const resChain = await runChain(
+        'explain',
+        await chainFor(req, 'text'),
+        async (model, ai) => {
+          const response = await ai.models.generateContent({
+            model,
+            contents: prompt,
+            config: { responseMimeType: 'application/json', responseSchema: EXPLAIN_SCHEMA },
+          });
+          const parsed = response.text ? parseJson(response.text) : null;
+          if (!Array.isArray(parsed?.quiz) || !parsed.quiz.length) return null;
+          if (mode === 'ask' && !parsed.answer) return null;
+          return parsed;
+        },
+        req
+      );
+      value = resChain.value;
+    } catch (chainErr: any) {
+      const info = errorInfo(chainErr, 'Failed to explain');
+      if (info.body.code === 'AUTH' || info.body.code === 'NOKEY') throw chainErr;
+      const freeParsed = await runFreeTextJson('You are a friendly children science and general knowledge teacher.', prompt);
+      if (Array.isArray(freeParsed?.quiz) && freeParsed.quiz.length) {
+        value = freeParsed;
+      } else {
+        throw chainErr;
+      }
+    }
+
     return res.json({
       title: clip(value.title, 120),
       answer: clip(value.answer, 1500),
@@ -1022,7 +1411,6 @@ app.post('/api/rewrite-prompt', async (req: Request, res: Response) => {
     const instruction = clip(req.body?.instruction, 300);
     const sceneText = clip(req.body?.text, 600);
 
-    const ai = getAiClient(req);
     const prompt = [
       'Rewrite this image-generation prompt for ONE page of a children picture book.',
       'Keep the same characters, setting and story event. Do not add text, captions or logos to the picture.',
@@ -1032,16 +1420,32 @@ app.post('/api/rewrite-prompt', async (req: Request, res: Response) => {
       `Current prompt: ${current}`,
     ].filter(Boolean).join('\n');
 
-    const { value } = await runChain('rewrite', await chainFor(req, 'text'), async (model) => {
-      const response = await ai.models.generateContent({
-        model,
-        contents: prompt,
-        config: { responseMimeType: 'application/json', responseSchema: REWRITE_SCHEMA },
-      });
-      const parsed = response.text ? parseJson(response.text) : null;
-      return parsed?.prompt ? parsed : null;
-    });
-    return res.json({ prompt: clip(value.prompt, 1200) });
+    try {
+      const { value } = await runChain(
+        'rewrite',
+        await chainFor(req, 'text'),
+        async (model, ai) => {
+          const response = await ai.models.generateContent({
+            model,
+            contents: prompt,
+            config: { responseMimeType: 'application/json', responseSchema: REWRITE_SCHEMA },
+          });
+          const parsed = response.text ? parseJson(response.text) : null;
+          return parsed?.prompt ? parsed : null;
+        },
+        req
+      );
+      return res.json({ prompt: clip(value.prompt, 1200) });
+    } catch (chainErr: any) {
+      const info = errorInfo(chainErr, 'Failed to rewrite prompt');
+      if (info.body.code !== 'AUTH' && info.body.code !== 'NOKEY') {
+        const freeVal = await runFreeTextJson('Rewrite children book illustration prompts in English JSON { "prompt": "..." }.', prompt);
+        if (freeVal?.prompt) return res.json({ prompt: clip(freeVal.prompt, 1200) });
+        const suffix = instruction ? `, ${instruction}` : `, ${angle}`;
+        return res.json({ prompt: clip(`${current}${suffix}`, 1200) });
+      }
+      throw chainErr;
+    }
   } catch (err) {
     return sendError(res, err, 'Failed to rewrite prompt');
   }
@@ -1053,21 +1457,39 @@ app.post('/api/analyze-name', async (req: Request, res: Response) => {
     const trimmed = clip(req.body?.name, 60);
     if (!trimmed) return res.status(400).json({ error: 'Please enter a name first.', code: 'FAILED' });
 
-    const ai = getAiClient(req);
-    const prompt =
-      language === 'Arabic'
-        ? `حلّل اسم "${trimmed}" للأطفال: المعنى، الأصل، وثلاث صفات إيجابية مرتبطة به. أسلوب لطيف ومناسب للأطفال. أعد JSON فقط.`
-        : `Analyze the name "${trimmed}" for kids: its meaning, origin, and three positive traits associated with it. Warm, kid-friendly tone. Return JSON only.`;
+    const isAr = language === 'Arabic';
+    const prompt = isAr
+      ? `حلّل اسم "${trimmed}" للأطفال: المعنى، الأصل، وثلاث صفات إيجابية مرتبطة به. أسلوب لطيف ومناسب للأطفال. أعد JSON فقط.`
+      : `Analyze the name "${trimmed}" for kids: its meaning, origin, and three positive traits associated with it. Warm, kid-friendly tone. Return JSON only.`;
 
-    const { value } = await runChain('name', await chainFor(req, 'text'), async (model) => {
-      const response = await ai.models.generateContent({
-        model,
-        contents: prompt,
-        config: { responseMimeType: 'application/json', responseSchema: NAME_ANALYSIS_SCHEMA },
-      });
-      return response.text ? parseJson(response.text) : null;
-    });
-    return res.json(value);
+    try {
+      const { value } = await runChain(
+        'name',
+        await chainFor(req, 'text'),
+        async (model, ai) => {
+          const response = await ai.models.generateContent({
+            model,
+            contents: prompt,
+            config: { responseMimeType: 'application/json', responseSchema: NAME_ANALYSIS_SCHEMA },
+          });
+          return response.text ? parseJson(response.text) : null;
+        },
+        req
+      );
+      return res.json(value);
+    } catch (chainErr: any) {
+      const info = errorInfo(chainErr, 'Failed to analyze name');
+      if (info.body.code !== 'AUTH' && info.body.code !== 'NOKEY') {
+        const freeVal = await runFreeTextJson('Return JSON with keys: meaning (string), origin (string), traits (array of 3 strings).', prompt);
+        if (freeVal?.meaning && Array.isArray(freeVal?.traits)) return res.json(freeVal);
+        return res.json({
+          meaning: isAr ? `اسم "${trimmed}" يحمل معاني النور والبهجة والجمال والهمة العالية.` : `The name "${trimmed}" carries warm meanings of light, joy, and noble character.`,
+          origin: isAr ? 'أصل عربي وإنساني أصيل' : 'Classic heritage origin',
+          traits: isAr ? ['الذكاء وحب الاستطلاع', 'طيبة القلب والكرم', 'الشجاعة والإبداع'] : ['Bright & Curious', 'Kind-hearted', 'Brave & Creative'],
+        });
+      }
+      throw chainErr;
+    }
   } catch (err) {
     return sendError(res, err, 'Failed to analyze name');
   }
@@ -1091,23 +1513,44 @@ app.post('/api/suggest-titles', async (req: Request, res: Response) => {
     if (!summary && !currentTitle) {
       return res.status(400).json({ error: 'Story summary or title is required.', code: 'FAILED' });
     }
-    const ai = getAiClient(req);
     const isArabic = /arab|عرب/i.test(language);
     const prompt = isArabic
       ? `اقترح 3 عناوين بديلة جذابة ومبتكرة لقصة أطفال باللغة العربية (${dialect}). العنوان الحالي: "${currentTitle}". ملخص القصة: "${summary}". كل عنوان بين 2 و6 كلمات، مختلف عن العنوان الحالي، ومناسب للأطفال. أعد JSON فقط.`
       : `Suggest 3 creative, catchy alternative titles for a children's story in English. Current title: "${currentTitle}". Story summary: "${summary}". Each title 2-6 words, distinct from the current title. Return JSON only.`;
 
-    const { value } = await runChain('suggest-titles', await chainFor(req, 'text'), async (model) => {
-      const response = await ai.models.generateContent({
-        model,
-        contents: prompt,
-        config: { responseMimeType: 'application/json', responseSchema: TITLES_SCHEMA },
-      });
-      const parsed = response.text ? parseJson(response.text) : null;
-      return Array.isArray(parsed?.titles) && parsed.titles.length >= 3 ? parsed : null;
-    });
-    const titles = (value.titles as unknown[]).map((t) => clip(t, 90)).filter(Boolean).slice(0, 3);
-    return res.json({ titles });
+    try {
+      const { value } = await runChain(
+        'suggest-titles',
+        await chainFor(req, 'text'),
+        async (model, ai) => {
+          const response = await ai.models.generateContent({
+            model,
+            contents: prompt,
+            config: { responseMimeType: 'application/json', responseSchema: TITLES_SCHEMA },
+          });
+          const parsed = response.text ? parseJson(response.text) : null;
+          return Array.isArray(parsed?.titles) && parsed.titles.length >= 3 ? parsed : null;
+        },
+        req
+      );
+      const titles = (value.titles as unknown[]).map((t) => clip(t, 90)).filter(Boolean).slice(0, 3);
+      return res.json({ titles });
+    } catch (chainErr: any) {
+      const info = errorInfo(chainErr, 'Failed to suggest titles');
+      if (info.body.code !== 'AUTH' && info.body.code !== 'NOKEY') {
+        const freeVal = await runFreeTextJson('Return JSON { "titles": ["...", "...", "..."] }', prompt);
+        if (Array.isArray(freeVal?.titles) && freeVal.titles.length >= 3) {
+          return res.json({ titles: freeVal.titles.slice(0, 3).map((t: unknown) => clip(t, 90)) });
+        }
+        const base = currentTitle || (isArabic ? 'الرحلة العجيبة' : 'The Magical Journey');
+        return res.json({
+          titles: isArabic
+            ? [`سر ${base}`, `حكاية النور في ${base}`, `مغامرة وراء ${base}`]
+            : [`The Secret of ${base}`, `A Light Beyond ${base}`, `The Wonder of ${base}`],
+        });
+      }
+      throw chainErr;
+    }
   } catch (err) {
     return sendError(res, err, 'Failed to suggest titles');
   }

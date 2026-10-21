@@ -50,20 +50,15 @@ export const subscribeDrawnImages = (fn: () => void): (() => void) => {
 // يرمى عندما يتم تخطي صورة (مثلاً ورقة الشخصيات إن لم تكن مطلوبة)
 export class SkippedImage extends Error {}
 
-// نماذج Gemini لتوليد الصور
+// نماذج Gemini الفعلية لتوليد الصور
 export const DIRECT_MODELS = [
-  'gemini-3.1-flash-lite-image',
-  'gemini-nano-banana-2.1',
-  'gemini-3.1-flash-image',
-  'gemini-3.1-flash-image-preview',
   'gemini-2.5-flash-image',
-  'nano-banana-pro-preview',
-  'gemini-3-pro-image',
+  'gemini-3.1-flash-image-preview',
   'gemini-3-pro-image-preview',
 ];
 const DIRECT_TIMEOUT = 60_000;
 const HARD_DOWN_MS = 30 * 60_000;
-const SOFT_DOWN_MS = 60_000;
+const SOFT_DOWN_MS = 5 * 60_000;
 
 const injectedKey = (): string => {
   const k = typeof __DIRECT_KEY__ === 'string' ? __DIRECT_KEY__.trim() : '';
@@ -81,13 +76,13 @@ export const classifyFailure = (status: number, msg: string): FailKind =>
     ? 'auth'
     : status === 403 || /PERMISSION_DENIED|permission denied/i.test(msg)
       ? 'missing'
-      : status === 429 || /RESOURCE_EXHAUSTED|quota/i.test(msg)
+      : status === 429 || /RESOURCE_EXHAUSTED|quota|rate limit|limit of requests|token limit/i.test(msg)
         ? isZeroQuota(msg)
           ? 'billing'
           : 'quota'
         : status === 404 || /NOT_FOUND|is not found|not supported for/i.test(msg)
           ? 'missing'
-          : status >= 500 || /UNAVAILABLE|overloaded|timeout|Failed to fetch|NetworkError/i.test(msg)
+          : status >= 500 || /UNAVAILABLE|overloaded|timeout|Failed to fetch|NetworkError|Failed to call the Gemini API/i.test(msg)
             ? 'busy'
             : 'skip';
 
@@ -106,11 +101,14 @@ export const rankError = (code: ApiErrorCode): number => RANK[code] ?? 9;
 
 const HARD: ReadonlySet<ApiErrorCode> = new Set(['BILLING', 'AUTH', 'NOKEY', 'NOMODEL', 'FREE_AUTH']);
 
-// ===== صحة المحركات داخل الجلسة =====
+// ===== صحة المحركات والنماذج داخل الجلسة =====
 const down = new Map<string, number>();
+const directModelDown = new Map<string, number>();
 const slot = (id: EngineId, key?: string) => (key ? `${id}:${hashText(key)}` : id);
 const isDown = (k: string) => (down.get(k) ?? 0) > Date.now();
 const markDown = (k: string, ms: number) => down.set(k, Date.now() + ms);
+const isModelDown = (slotKey: string, model: string) => (directModelDown.get(`${slotKey}:${model}`) ?? 0) > Date.now();
+const markModelDown = (slotKey: string, model: string, ms: number) => directModelDown.set(`${slotKey}:${model}`, Date.now() + ms);
 
 interface Engine {
   id: EngineId;
@@ -121,11 +119,10 @@ interface Engine {
 const engines = (_req?: ImageRequest): Engine[] => {
   const list: Engine[] = [];
   const user = getUserApiKey();
-  const env = injectedKey();
   if (user) list.push({ id: 'direct-user', slot: slot('direct-user', user), key: user });
+  // مسار الخادم يشمل مفتاح الخادم + Cloudflare Flux + Pollinations الاحتياطي، فلا يُستبعد أبداً
   list.push({ id: 'server', slot: slot('server', user ?? 'env') });
-  if (env && env !== user) list.push({ id: 'direct-env', slot: slot('direct-env', env), key: env });
-  const live = list.filter((e) => !isDown(e.slot));
+  const live = list.filter((e) => e.id === 'server' || !isDown(e.slot));
   return live.length ? live : list;
 };
 
@@ -169,7 +166,10 @@ const runDirect = async (eng: Engine, req: ImageRequest, signal?: AbortSignal): 
     })
     .filter((r) => r.data.length > 200 && r.data.length < 5_000_000);
 
-  for (const model of DIRECT_MODELS) {
+  const readyModels = DIRECT_MODELS.filter((m) => !isModelDown(eng.slot, m));
+  const modelsToTry = readyModels.length > 0 ? readyModels : DIRECT_MODELS;
+
+  for (const model of modelsToTry) {
     const isNoSize = NO_SIZE_IMAGE_MODELS.has(model);
     let currentRefs = cleanRefs;
     let retriedWithoutRef = false;
@@ -195,6 +195,7 @@ const runDirect = async (eng: Engine, req: ImageRequest, signal?: AbortSignal): 
         const cand = response.candidates?.[0];
         const part = (cand?.content?.parts ?? []).find((p) => p.inlineData?.data);
         if (part?.inlineData?.data) {
+          directModelDown.delete(`${eng.slot}:${model}`);
           recordDrawnImage({
             kind: req.kind || 'page',
             engine: 'gemini',
@@ -234,15 +235,21 @@ const runDirect = async (eng: Engine, req: ImageRequest, signal?: AbortSignal): 
           message: `${retriedWithoutRef ? '[no-ref] ' : ''}${msg.slice(0, 460)}`,
         });
 
-        const isDaily = /daily limit|limit:\s*0\b|free_?tier|requests today|limit of requests|tomorrow/i.test(msg);
-        if (kind === 'quota' && isDaily) {
-          console.warn(`[runDirect] Model ${model} reached daily/zero quota ("${msg.slice(0, 80)}"), skipping immediately to next model...`);
+        const isDaily = /daily limit|limit:\s*0\b|free_?tier|requests today|limit of requests|tomorrow|select a different model/i.test(msg);
+        if (kind === 'billing' || kind === 'missing' || (kind === 'quota' && isDaily)) {
+          markModelDown(eng.slot, model, HARD_DOWN_MS);
+          console.warn(`[runDirect] Model ${model} unavailable or reached daily/zero quota, cooling down 30m and switching model...`);
           break;
         }
 
-        if ((kind === 'quota' || kind === 'busy') && attempt < 1) {
+        if (kind === 'quota') {
+          markModelDown(eng.slot, model, 75_000);
+          console.warn(`[runDirect] Per-minute quota on ${model}, cooling down 75s and switching model immediately...`);
+          break;
+        }
+
+        if (kind === 'busy' && modelsToTry.length === 1 && attempt < 1) {
           const backoff = Math.min(1200 + Math.random() * 600, 3000);
-          console.warn(`[runDirect] Per-minute rate limit or busy on ${model}, backing off for ${Math.round(backoff)}ms before retry...`);
           await sleep(backoff);
           continue;
         }

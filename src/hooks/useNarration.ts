@@ -80,7 +80,7 @@ export function useNarration(story: StoryData, pageIndex: number, onAdvance: (ne
         setStatus('playing');
         rafRef.current = requestAnimationFrame(tick);
         const next = s.pages[index + 1];
-        if (next && voiceRef.current !== 'Family') getPageAudio(s.id, next, voiceRef.current).catch(() => undefined);
+        if (continuousRef.current && next && voiceRef.current !== 'Family') getPageAudio(s.id, next, voiceRef.current).catch(() => undefined);
       } catch (err) {
         if ((err as Error).name === 'AbortError') return;
         setError((err as Error).message);
