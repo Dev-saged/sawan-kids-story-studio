@@ -1,77 +1,158 @@
-# استوديو ساجد لقصص الأطفال — Sajed Kids Story Studio
+<div align="center" dir="rtl">
 
-AI-powered illustrated children's stories in Arabic (19 dialects + flawless Fusha) and English,
-with natural narration, read-along, story videos, science games and learning articles.
+<img src="docs/assets/cover.png" alt="استوديو ساجد لقصص الأطفال المصوّرة" width="100%">
 
-**Designed & developed by Eng. Sajed Al-Abadlah — تصميم وتطوير المهندس ساجد العبادلة**
+<br><br>
 
-## Stack (v3.1.0 — Single Version Source: `src/version.ts` & `src/config.ts`)
+<img src="docs/assets/icon.svg" alt="" width="96" height="96">
 
-- Vite 6 + React 18 + TypeScript (strict), Tailwind CSS v4 (RTL logical properties)
-- `server.ts` (Express 5) — thin Gemini proxy required by Google AI Studio hosting
-- `@google/genai` model chains (strongest first, each with its own quota, defined in `server.ts` & `shared/config.ts`):
-  - Text: `gemini-3-flash-preview` → `gemini-2.5-flash` → `gemini-2.5-pro` → `gemini-2.5-flash-lite`
-  - Images: `gemini-2.5-flash-image` → `gemini-3.1-flash-image-preview` → `gemini-3.1-pro-image-preview`
-  - Narration: `gemini-2.5-flash-preview-tts` → `gemini-2.5-pro-preview-tts` (plus `models.list` discovery)
-  - Music: `lyria-realtime-exp` / `lyria-3-clip-preview` (with WebAudio procedural lullaby fallback)
-- IndexedDB v4 (versioned schema with automatic legacy audio keyPath migration) for the library, 2048px print-grade images, audio cache, child profiles, saved character album (`characters`), and custom story identities (`custom_presets`)
-- WebCodecs + `mp4-muxer` for MP4 video export (MediaRecorder fallback)
-- PWA: manifest + service worker (offline shell with build-time version injection and `public/version.json`)
+# استوديو ساجد لقصص الأطفال
 
-## سجل الإصدارات (Changelog)
+**اكتب فكرة بسيطة، وشاهد قصتك تُكتب وتُرسم وتُروى بصوت دافئ، بالعربية أولاً.**
 
-| الإصدار | التاريخ | أهم التغييرات |
-| --- | --- | --- |
-| **v3.1.0** | 2026-10-21 | إصلاح ترقية مخزن الصوت في `IndexedDB` عبر `openCursor` واحد مع دعم ترحيل سجلات `out-of-line` دون `InvalidStateError` (أ1)، حذف اللقطة غير المستخدمة واستثناء `public/assets/aistudio/` من الكاش (أ2)، تعريب «قوس السرد» للأنواع الـ16 في `src/data/storyTypes.ts` وشارة «فصحى» (أ3)، حصر سلسلة `tts` بنماذج `gemini-2.5-*-preview-tts` وما يكتشفه `models.list` (أ4)، إضافة «فكرة اليوم» المحلية بـ64 فكرة (ب1)، ميزة «حسّن فكرتي» بـ3 صياغات وزر تراجع وحدّ طلبات (ب2)، شاشة «حالة التطبيق» مع تنظيف الكاش اليتيم وتنقية الأسرار (ب3)، وشاشة «معاينة الطباعة» للأزواج المزدوجة RTL بمقاسات A5/A4/مربع 21×21 وفحص دقة 150 DPI (ب4). |
-| **v3.0.3** | 2026-10-21 | استعادة إعدادات الصوت عالية الجودة (`NARRATION_SYSTEM_INSTRUCTION`) لضبط طبقة الصوت وسرعة الإلقاء الدافئة والنطق السليم على نماذج `gemini-2.5-flash-preview-tts` و`gemini-2.5-pro-preview-tts` أولاً، مع تحديث مفتاح الكاش الصوتي (`tts:hq:`) لتجاوز أي مقاطع قديمة منخفضة الجودة وتفعيل `preservesPitch`. |
-| **v3.0.2** | 2026-10-21 | استعادة الصوت الأصلي الفخم للراوي عبر تفعيل سلسلة نماذج Gemini TTS الكاملة (5 نماذج)، إزالة المحرك الصوتي البديل، وحماية تصدير الفيديو من التوقف أو إظهار خطأ حصة الصور `BILLING`. |
-| **v3.0.1** | 2026-10-21 | تحسين معالج الاستوديو من 3 خطوات («الفكرة»، «الشكل»، «التفاصيل») مع شريط تنقل سفلي ثابت يحترم `safe-area`، معاينة حية متكاملة للغلاف في الخطوة 2 تجمع العنوان والأسلوب والخط بـ SVG/CSS، حفظ واستعادة حالة المعالج تلقائياً، ضمان منطقة لمس 44px لجميع مفاتيح التبديل ومربعات الاختيار، وتثبيت ترحيل مخزن الصوت القديم `audio` في IndexedDB. |
-| **v3.0.0** | 2026-10-20 | إعادة تصميم الاستوديو كمعالج من 3 خطوات، مكون `StyleThumb` المرسوم بـ SVG لكل أسلوب فني، نافذة ترحيب تعريفية (Onboarding)، هياكل تحميل (Skeletons)، إصلاح مفتاح مخزن الصوت `audio` في IndexedDB إلى `id` مع ترحيل سجلات القواعد القديمة تلقائياً، فحص التحديث الصامت من `public/version.json` عبر `CONFIG`، ونظام الإصدارات الجديد (`0..9` للخانات الفرعية مع أولوية `buildNumber`). |
-| **v2.9.5 (كان يسمى 2.10.0)** | 2026-10-20 | إعادة هيكلة طلبات الصور لتبدأ بالمشهد (`Scene:`) بسقف صارم 120 كلمة، توسيع أنواع القصص إلى 16 نوعاً ببنية سردية متكاملة، 12 خطاً عربياً للغلاف مع 4 تأثيرات بصرية ومعاينة حية، 16 هوية جاهزة مع حفظ الهويات المخصصة، بوابة معاينة الغلاف والصفحة الأولى، تصحيح المشهد لكل صفحة، ألبوم الشخصيات المحفوظة، والعلامة المائية المفرغة الذكية عند التصدير فقط. |
-| **v2.9.1** | 2026-10-19 | توحيد مصدر الإصدار في `src/version.ts`، فصل قواعد نماذج الصور في `src/shared/modelRules.ts`، حماية ورقة مرجع الشخصيات من السقوط عند أخطاء الشبكة، تحسين مطابقة طبقة الصوت، دقة 2048px للطباعة، واستبدال كافة الرموز التعبيرية بأيقونات SVG مدمجة. |
-| **v2.2.0** | 2026-09-15 | محرك الصور ثلاثي المسارات (المتصفح المباشر + خادم Gemini + المسار الاحتياطي المجاني FLUX)، القصص الطويلة حتى 40 صفحة بنظام الفصول والدفعات، قسم «اقرأ وتعلّم» (49 بطاقة ثنائية اللغة + اسألني أي شيء)، وحزمة تحريك المشاهد (Veo/Flow). |
-| **v2.1.0** | 2026-08-20 | قبول جميع صيغ مفاتيح Gemini، الاكتشاف التلقائي للنماذج المتاحة، تصدير الفيديو بأربع نسب وثلاث جودات، وضع النوم، سلاسل القصص المتصلة، كتاب المطبعة A5، وتسجيل صوت العائلة لكل صفحة. |
-| **v2.0.0** | 2026-07-10 | إطلاق الجيل الثاني برسوم متسقة عبر ورقة مرجع الشخصيات، صورة الطفل بطلاً للقصة، السرد الصوتي الطبيعي بالتشكيل الكامل مع تتبع الكلمات المقروءة، الألعاب العلمية التفاعلية، والعمل الكامل دون اتصال. |
+الإصدار 3.1.0 &nbsp;|&nbsp; تطبيق ويب تقدّمي (PWA) &nbsp;|&nbsp; واجهة عربية وإنجليزية &nbsp;|&nbsp; [English](README.en.md)
 
-## What's new in v3.0.0 — 3-Step Studio Wizard, Single-Digit Versioning & Critical Fixes
+</div>
 
-- **3-Step Studio Wizard (`StorySetupForm.tsx`)**: Organized into three clear, non-overwhelming steps (`1. الفكرة والبطل`, `2. الأسلوب والغلاف`, `3. الصوت والانطلاق`) with instant step jumping, full-view toggle, and persistent quick-create bar.
-- **Inline SVG Art Style Previews (`StyleThumb.tsx`)**: Bespoke vector miniature illustrations for all 18 art styles, with zero emojis across the entire UI.
-- **Onboarding Guide & Skeleton Loaders**: First-visit RTL onboarding tour and smooth transform/opacity skeleton placeholders respecting `prefers-reduced-motion`.
-- **IndexedDB Audio Store Migration (`src/services/db.ts`)**: Unified `'audio'` store `keyPath` to `'id'` matching `narration.ts`, with automatic lossless migration from legacy `keyPath: 'key'` stores during `onupgradeneeded`.
-- **Reliable Silent Update Check (`src/services/versionCheck.ts` & `public/version.json`)**: Reads `public/version.json` generated at `prebuild` from `src/version.ts` via `CONFIG.GITHUB_OWNER` and `CONFIG.GITHUB_REPO` with a 5-second timeout and silent offline handling.
-- **Strict Single-Digit Subversion System (`src/version.ts`)**: `MINOR` and `PATCH` roll over from `9` to `0` (`2.9.9` patch → `3.0.0`), and `compareVersions` prioritizes `buildNumber` before numeric segment comparison.
+<div dir="rtl">
 
-## What's new in v2.9.5 — Scene-First Prompt Engineering & Creative Studio Expansion
+## نبذة
 
-- **Scene-First Image Prompts (<= 120 words)**: `buildPageImagePrompt`, `buildCoverPrompt`, and `buildSheetPrompt` start directly with `Scene: <prompt>.`, include only characters present in the page (up to 15 words each), apply the art style once, and end with `POSITIVE_ILLUSTRATION_DIRECTIVE` from `shared/config.ts`.
-- **16 Story Genres with Narrative Arcs (`STORY_TYPE_SPECS`)**: 5 primary genres + 11 expandable genres (`Mystery`, `Fantasy`, `SciFi`, `Fable`, `Historical`, `Rhyme`, `Interactive`, `Therapeutic`, `Prophets`, `Folklore`, `Sports`), each with structured beginning/middle/climax/ending arcs.
-- **12 Calligraphic Cover Fonts + 4 Visual Effects + Live Preview**: 12 open-source Arabic fonts loaded with `display=swap`, 4 cover text effects (`gold`, `shadow`, `outline`, `plain`), and a live cover preview box before generation.
-- **16 Complete Identity Presets + Custom Identity Saving**: Each preset configures art style, narrator voice, Arabic dialect, cover font, and ambient sound; users can save their own identities to IndexedDB (`custom_presets`).
-- **Cover & Page 1 Preview Gate**: Draws the character reference sheet, cover, and page 1 first, allowing the user to approve and continue or change the style before painting the remaining pages.
-- **Per-Page Mismatch Correction & Alternative Title Suggestions**: Instant scene correction (`Correction: ...`) and 3 dialect-matched title suggestions (`/api/suggest-titles`).
-- **Saved Character Album (`characters` store in IndexedDB)**: Save any story character with its reference sheet to reuse across future stories, included in JSON backups.
-- **Export-Only Adaptive Hollow Watermark**: Draws a 4%-width hollow watermark in the bottom corner on PDF/ZIP/share/video exports with automatic luminance contrast, keeping IndexedDB images 100% clean.
+استوديو ساجد منصة عربية لصناعة قصص الأطفال المصوّرة. يكتب الأهل أو المعلّم فكرة من سطر واحد، فيبني الاستوديو قصة كاملة بشخصيات ثابتة المظهر عبر الصفحات، ويرسم لكل صفحة مشهدها، ويقرؤها بصوت راوٍ باللهجة المختارة، ثم يسلّمها كتاباً جاهزاً للقراءة على الشاشة أو للطباعة.
 
-## What's new in v2.9.1 — Audit Remediation & Architecture Hardening
+صُمّم التطبيق للهاتف أولاً، ويعمل من اليمين إلى اليسار بشكل كامل، وتبقى مكتبة القصص على جهاز المستخدم.
 
-- **Single Version Source (`src/version.ts`)**: Centralized version tracking across UI, `config.ts`, `package.json`, and documentation.
-- **Shared Model Capabilities (`src/shared/modelRules.ts`)**: `NO_SIZE_IMAGE_MODELS` shared between `server.ts` and `src/services/imageEngine.ts` so `gemini-2.5-flash-image` never receives `imageSize: '1K'`, and concise positive anatomical directives replace negative prompt lists.
-- **Reference Sheet Protection**: Retrying without the character reference sheet is restricted strictly to image/safety/filter errors (and logged as `[no-ref retry]` in the diagnostic trail), preventing silent hero drift on network or rate-limit errors.
-- **Honest API Key Preflight & Voice Pitch Matching**: `getApiKey()` only returns `'server-proxy'` after `/api/preflight` confirms server key availability. Voice pitch matching is transparently labeled as selecting the closest prebuilt narrator voice to the user's vocal frequency (Hz).
-- **2048px Print Resolution & 250-URL Safe Cache**: `CONFIG.IMAGE_MAX_DIM = 2048` preserves crisp print quality, and `objectUrlFor` caches up to 250 active blob URLs with safe re-creation.
-- **Dual Interactive Book Readers & Ambient Audio Ducking**: Both Framer Motion spread reader and classic flipbook are selectable in `StoryReader`, with automatic narration ducking and unmount teardown for WebAudio oscillators.
-- **100% Inline SVG Iconography**: All decorative emojis replaced with custom inline SVG artwork (`src/components/common/BrandIcons.tsx`) and Lucide vector icons.
+## لقطات من التطبيق
 
-## Setup
+> هذه لقطات حيّة من واجهة الإصدار 3.1.0 أُخذت من التطبيق وهو يعمل. الرسوم داخل القصة المعروضة (الأرنب «أرنوب») رسوم عيّنة لأغراض العرض فقط، وليست ناتج توليد حقيقي.
+
+<table align="center" dir="rtl">
+  <tr>
+    <td align="center" width="25%"><img src="docs/assets/screens/onboarding.png" alt="دليل البداية"><br><sub>دليل البداية</sub></td>
+    <td align="center" width="25%"><img src="docs/assets/screens/home.png" alt="الاستوديو وفكرة اليوم"><br><sub>الاستوديو وفكرة اليوم</sub></td>
+    <td align="center" width="25%"><img src="docs/assets/screens/style.png" alt="الهوية والأسلوب"><br><sub>الهوية والأسلوب</sub></td>
+    <td align="center" width="25%"><img src="docs/assets/screens/generating.png" alt="رسم الصفحات"><br><sub>رسم الصفحات</sub></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="docs/assets/screens/cover.png" alt="غلاف القصة وطرق القراءة"><br><sub>الغلاف وطرق القراءة</sub></td>
+    <td align="center"><img src="docs/assets/screens/narration.png" alt="الراوي والسرد الصوتي"><br><sub>الراوي والسرد الصوتي</sub></td>
+    <td align="center"><img src="docs/assets/screens/library.png" alt="مكتبتي"><br><sub>مكتبتي</sub></td>
+    <td align="center"><img src="docs/assets/screens/games.png" alt="الألعاب العلمية"><br><sub>الألعاب العلمية</sub></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="docs/assets/screens/learn.png" alt="اقرأ وتعلّم"><br><sub>اقرأ وتعلّم</sub></td>
+    <td align="center"><img src="docs/assets/screens/health.png" alt="حالة التطبيق"><br><sub>حالة التطبيق</sub></td>
+    <td align="center"><img src="docs/assets/screens/dark.png" alt="الوضع الداكن"><br><sub>الوضع الداكن</sub></td>
+    <td align="center"><img src="docs/assets/screens/english.png" alt="الواجهة الإنجليزية"><br><sub>الواجهة الإنجليزية</sub></td>
+  </tr>
+</table>
+
+## المزايا
+
+| | الميزة | التفاصيل |
+| :-: | :-- | :-- |
+| <img src="docs/assets/icons/wand-sparkles.svg" width="36" alt=""> | **استوديو من ثلاث خطوات** | الفكرة، ثم الشكل، ثم التفاصيل، مع شريط تنقّل ثابت، وزر «حسّن فكرتي»، وبطاقة «فكرة اليوم»، وإملاء الفكرة بالصوت. |
+| <img src="docs/assets/icons/palette.svg" width="36" alt=""> | **هويات وأساليب فنية** | 16 هوية جاهزة تضبط الأسلوب الفني والراوي واللهجة معاً بضغطة واحدة، مع إمكانية حفظ هوياتك الخاصة. |
+| <img src="docs/assets/icons/layers.svg" width="36" alt=""> | **16 نوعاً من القصص** | لكل نوع قوس سردي خاص به، من قصص قبل النوم إلى القصص التعليمية والخيالية والتراثية. |
+| <img src="docs/assets/icons/type.svg" width="36" alt=""> | **غلاف بخط عربي مختار** | 12 خطاً عربياً وأربعة تأثيرات للعنوان مع معاينة حيّة قبل الرسم، واقتراح عناوين مناسبة للهجة. |
+| <img src="docs/assets/icons/mic.svg" width="36" alt=""> | **راوٍ بصوت طبيعي** | سرد صوتي بتشكيل كامل، وتتبّع للكلمات أثناء القراءة، ووضع نوم، وأصوات محيطة هادئة. |
+| <img src="docs/assets/icons/languages.svg" width="36" alt=""> | **لهجات عربية وإنجليزية** | فصحى مشكولة و19 لهجة محلية، وواجهة كاملة بالعربية والإنجليزية. |
+| <img src="docs/assets/icons/book-open.svg" width="36" alt=""> | **طرق قراءة متعددة** | قارئ القصة، ومعرض الرسومات، وكتاب ثلاثي الأبعاد، وكتاب تفاعلي بصفحتين، ودفتر تصفّح كلاسيكي. |
+| <img src="docs/assets/icons/sparkles.svg" width="36" alt=""> | **ثبات الشخصيات** | ورقة مرجعية للشخصيات تحافظ على مظهر البطل في كل صفحة، وألبوم لحفظ الشخصيات وإعادة استخدامها. |
+| <img src="docs/assets/icons/printer.svg" width="36" alt=""> | **تصدير وطباعة** | ملف PDF بقوالب فاخرة، ومعاينة طباعة بمقاسات A5 وA4 ومربع 21×21، وحزمة ZIP كاملة، وفيديو للقصة. |
+| <img src="docs/assets/icons/gamepad-2.svg" width="36" alt=""> | **ألعاب علمية** | مختبرات صغيرة تفاعلية، وتحدٍّ يومي، ونجوم تُجمع مع كل إنجاز. |
+| <img src="docs/assets/icons/graduation-cap.svg" width="36" alt=""> | **اقرأ وتعلّم** | بطاقات معلومات مبسّطة بحسب عمر الطفل، وسؤال حرّ يجيب عنه التطبيق، وقسم «معاني الأسماء». |
+| <img src="docs/assets/icons/library.svg" width="36" alt=""> | **مكتبة محلية** | تُحفظ القصص والصور والصوت على جهازك، مع نسخة احتياطية JSON واستيراد لها. |
+| <img src="docs/assets/icons/wifi-off.svg" width="36" alt=""> | **يعمل كتطبيق** | قابل للتثبيت على الهاتف، وهيكله يعمل دون اتصال، ويتحقّق بصمت من وجود إصدار أحدث. |
+| <img src="docs/assets/icons/heart-pulse.svg" width="36" alt=""> | **حالة التطبيق** | تقرير تشخيصي يعرض الإصدار والاتصال والنماذج المتاحة دون كشف أي مفاتيح سرّية. |
+| <img src="docs/assets/icons/moon.svg" width="36" alt=""> | **وضع داكن** | تبديل فوري بين الفاتح والداكن مع احترام تفضيلات الحركة المخفّفة. |
+
+## مسار صناعة القصة
+
+1. **الفكرة**: سطر واحد عن البطل والحدث، أو اقتراح جاهز من «فكرة اليوم».
+2. **الشكل**: اختيار الهوية السريعة أو ضبط الأسلوب الفني والراوي واللهجة ونوع القصة وخط الغلاف.
+3. **التفاصيل**: الفئة العمرية وطول القصة ونسبة الصفحة.
+4. **المعاينة أولاً**: يُرسم الغلاف والصفحة الأولى قبل أي شيء، فتوافق عليهما أو تغيّر الأسلوب قبل رسم باقي الصفحات.
+5. **القراءة والاستماع**: بإحدى طرق القراءة الخمس، مع تصحيح أي مشهد لا يطابق النص بضغطة واحدة.
+6. **التسليم**: PDF أو حزمة كاملة أو فيديو أو طباعة مباشرة.
+
+## التقنيات
+
+| الطبقة | المستخدم |
+| :-- | :-- |
+| الواجهة | Vite 6 و React 18 و TypeScript (بوضع صارم) و Tailwind CSS v4 (بخصائص منطقية تدعم RTL) و Framer Motion |
+| الخادم | Express 5 وسيطاً خفيفاً لنماذج Gemini، فلا يصل مفتاح الخدمة إلى المتصفح |
+| الذكاء الاصطناعي | مكتبة `@google/genai` مع سلاسل نماذج احتياطية للنص والصور والصوت والموسيقى |
+| التخزين | قاعدة IndexedDB بمخطط مُرقَّم وترحيل تلقائي، مع نسخ احتياطي بصيغة JSON |
+| التصدير | jsPDF و JSZip و WebCodecs مع `mp4-muxer` |
+| التثبيت | Web App Manifest و Service Worker بإصدار مرتبط بالبناء |
+
+## التشغيل محلياً
 
 ```bash
 npm install
-npm run dev        # http://localhost:3000
+export GEMINI_API_KEY="your_key_here"   # server-side only
+npm run dev                              # http://localhost:3000
 ```
 
-Production: `npm run build` then `NODE_ENV=production npm start`.
+للإنتاج:
 
-## Branding
+```bash
+npm run build
+NODE_ENV=production npm start
+```
 
-Brand name, author and social links live in `src/config.ts` — edit that file only.
+للفحص الثابت: `npm run lint`. وللاختبار الذاتي داخل التطبيق افتح العنوان `/#test`.
+
+## هيكل المشروع
+
+
+```text
+server.ts              Gemini proxy and generation endpoints
+src/
+  App.tsx              app shell and navigation
+  config.ts            brand and social links (single place to edit)
+  version.ts           single source of the version number
+  components/
+    story/             wizard, reader, export, print preview
+    library/ games/ readLearn/ nameMeaning/ layout/ common/
+  data/                story types, daily ideas, learning cards
+  services/            AI, storage, audio, video, update check
+public/                manifest, service worker, app icons
+docs/assets/           cover, screenshots and icons used here
+```
+
+## الخصوصية والأمان
+
+- مفتاح Gemini يُقرأ من متغيّرات البيئة على الخادم ولا يُرسل إلى المتصفح.
+- قصص المستخدم وصوره تبقى في مخزن المتصفح على جهازه، وتُصدَّر منه يدوياً فقط.
+- تقرير «حالة التطبيق» ينقّي أي أسرار قبل عرضه أو نسخه.
+
+## سجل الإصدارات
+
+التفاصيل الكاملة في [CHANGELOG.md](CHANGELOG.md). الإصدار الحالي **3.1.0**.
+
+## الحقوق
+
+© 2026 المهندس ساجد العبادلة. جميع الحقوق محفوظة.
+
+التصميم والفكرة والشيفرة والهوية البصرية لهذا المشروع مملوكة لصاحبه. لا يجوز نسخ المشروع أو تعديله أو إعادة توزيعه أو بيعه أو استخدام اسمه وشعاره وهويته دون إذن خطي مسبق من المالك.
+
+## تواصل معي
+
+<p align="center">
+  <a href="https://github.com/Dev-saged"><img src="docs/assets/social/github.svg" width="56" alt="GitHub"></a>&nbsp;&nbsp;
+  <a href="https://instagram.com/sajedd.0"><img src="docs/assets/social/instagram.svg" width="56" alt="Instagram"></a>&nbsp;&nbsp;
+  <a href="https://facebook.com/saged.t"><img src="docs/assets/social/facebook.svg" width="56" alt="Facebook"></a>&nbsp;&nbsp;
+  <a href="https://x.com/saged_al"><img src="docs/assets/social/x.svg" width="56" alt="X"></a>
+</p>
+
+<br>
+
+<p align="center">
+  <img src="docs/assets/flag.svg" width="44" alt="علم فلسطين"><br>
+  <strong>صُنع بكل حب من فلسطين — غزة</strong><br>
+  <sub>المهندس ساجد العبادلة</sub>
+</p>
+
+</div>
