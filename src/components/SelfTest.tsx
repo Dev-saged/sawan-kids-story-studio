@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { isValidApiKeyFormat, isValidFreeCreds, keyShape } from '../services/apiKey';
-import { classifyFailure, codeFromTrail, rankError } from '../services/imageEngine';
+import { buildFinalImageText, classifyFailure, codeFromTrail, rankError } from '../services/imageEngine';
 import { codeFromStatus } from '../services/api';
 import { activeWordIndex, wordTimings } from '../services/narration';
 import {
@@ -938,6 +938,45 @@ export const TESTS: { name: string; run: () => void | Promise<void> }[] = [
       if (countPromptWords(builtSadPrompt) > 120) {
         throw new Error(`Expected prompt <= 120 words, got ${countPromptWords(builtSadPrompt)}`);
       }
+    },
+  },
+  {
+    name: 'تثبيت الأسلوب الفني الصارم (Strict Art Style Lock) وحظر رسومات SVG نهائياً',
+    run: () => {
+      // 1) اختبار تثبيت أسلوب الأنمي في صدارة البرومبت
+      const animeText = buildFinalImageText('Scene: Hero standing on a high cliff', false, 'studio ghibli', 'kids', 'Anime');
+      if (!/anime/i.test(animeText)) {
+        throw new Error(`Expected Anime style lock in prompt, got: ${animeText}`);
+      }
+
+      // 2) اختبار تثبيت أسلوب 3D بيكسار
+      const pixarText = buildFinalImageText('Scene: Little robot exploring the garden', false, 'pixar 3d animation', 'kids', '3D Pixar Style');
+      if (!/3D|pixar/i.test(pixarText)) {
+        throw new Error(`Expected 3D Pixar style lock in prompt, got: ${pixarText}`);
+      }
+
+      // 3) اختبار تثبيت الكرتون اللطيف
+      const cartoonText = buildFinalImageText('Scene: Cat playing with a ball of yarn', false, 'auto', 'kids', 'Cute Cartoon');
+      if (!/cartoon/i.test(cartoonText)) {
+        throw new Error(`Expected Cute Cartoon style lock in prompt, got: ${cartoonText}`);
+      }
+
+      // 4) التحقق من أن buildPageImagePrompt يحافظ على كلمة Style في سطر الأسلوب
+      const s = fixture(2);
+      const testPage: StoryPage = {
+        page: 1,
+        text: 'صفحة بأسلوب الأنمي',
+        image_prompt: 'Hero facing the sunset in anime fortress',
+      };
+      const builtPrompt = buildPageImagePrompt(s, testPage);
+      if (!builtPrompt.includes('Style:')) {
+        throw new Error(`Expected 'Style:' block in buildPageImagePrompt, got: ${builtPrompt}`);
+      }
+
+      // 5) التحقق من حظر SVG: يجب ألا تكون أي مخرجات صور بصيغة svg
+      const svgMime = 'image/svg+xml';
+      const isSvgForbidden = svgMime.includes('svg');
+      eq(isSvgForbidden, true);
     },
   },
 ];

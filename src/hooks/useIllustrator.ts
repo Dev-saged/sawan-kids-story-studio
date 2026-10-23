@@ -66,7 +66,7 @@ export function useIllustrator(story: StoryData, update: Updater, focusIndex: nu
   const create = async (s: StoryData, kind: ImageKind, prompt: string, matchText: string, refs: Ref[], reuse: boolean, signal: AbortSignal) => {
     if (reuse) {
       const hit = await findSimilarImage(matchText, cacheStyle(s), kind, kind === 'sheet' ? 0.92 : 0.88, usedIds(s));
-      if (hit) return hit;
+      if (hit && !hit.url.includes('image/svg')) return hit;
     }
     const styleConsistency = resolveStyleConsistencyKeywords(
       s.story_info.art_style,
@@ -85,6 +85,9 @@ export function useIllustrator(story: StoryData, update: Updater, focusIndex: nu
       },
       signal
     );
+    if (raw.type.includes('svg')) {
+      throw new Error('SVG format is prohibited for story illustrations.');
+    }
     const net = getNetworkAdaptation();
     return saveImage(await reencode(raw, net.maxImageSide, 'image/webp', net.compressionQuality), kind, cacheStyle(s), matchText);
   };

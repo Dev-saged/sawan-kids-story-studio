@@ -144,16 +144,24 @@ const withTimeout = <T,>(p: Promise<T>, ms: number): Promise<T> => {
 
 const failed = (trail: TrailItem[]): Error & { trail: TrailItem[] } => Object.assign(new Error('engine failed'), { trail });
 
-// يبني النص النهائي المرسل للنموذج مع الحفاظ على المشهد (Scene:) في الصدارة دائماً وتثبيت الأسلوب الفني
+// يبني النص النهائي المرسل للنموذج مع الحفاظ على الأسلوب الفني والمشهد (Scene:) في الصدارة دائماً وتثبيت الأسلوب
 export const buildFinalImageText = (
   rawPrompt: string,
   hasRefs: boolean,
   styleConsistency?: string,
-  audienceLevel?: AudienceLevel
+  audienceLevel?: AudienceLevel,
+  artStyle?: string
 ): string => {
   const base = rawPrompt.trim();
   const cleanConsistency = (styleConsistency ?? '').trim();
   const hasConsistencyAlready = cleanConsistency && base.toLowerCase().includes(cleanConsistency.slice(0, 18).toLowerCase());
+
+  // تعزيز الأسلوب الفني المختار في صدارة التوجيهات
+  let explicitStyleLine = '';
+  if (artStyle && !base.toLowerCase().includes(artStyle.toLowerCase())) {
+    explicitStyleLine = `\nArt style: Masterpiece ${artStyle} illustration, unified aesthetic theme.`;
+  }
+
   const consistencyLine =
     cleanConsistency && cleanConsistency.toLowerCase() !== 'auto' && !hasConsistencyAlready
       ? `\nStyle consistency: ${cleanConsistency}, cinematic lighting, high-fidelity, concept art style, detailed textures.`
@@ -163,8 +171,8 @@ export const buildFinalImageText = (
       ? '\nAudience: Adult story — depict characters with mature adult proportions and sophisticated cinematic atmosphere.'
       : '';
   const withDirective = base.includes(POSITIVE_ILLUSTRATION_DIRECTIVE)
-    ? `${base}${consistencyLine}${audienceLine}`
-    : `${base}${consistencyLine}${audienceLine}\n${POSITIVE_ILLUSTRATION_DIRECTIVE}`;
+    ? `${base}${explicitStyleLine}${consistencyLine}${audienceLine}`
+    : `${base}${explicitStyleLine}${consistencyLine}${audienceLine}\n${POSITIVE_ILLUSTRATION_DIRECTIVE}`;
   return hasRefs
     ? `${withDirective}\nUse attached image strictly as character face/outfit reference while composing the full dynamic scene above.`
     : withDirective;
@@ -195,7 +203,7 @@ const runDirect = async (eng: Engine, req: ImageRequest, signal?: AbortSignal): 
     let retriedWithoutRef = false;
     for (let attempt = 0; attempt < 2; attempt++) {
       if (signal?.aborted) throw abortError();
-      const text = buildFinalImageText(req.prompt, currentRefs.length > 0, req.styleConsistency, req.audienceLevel);
+      const text = buildFinalImageText(req.prompt, currentRefs.length > 0, req.styleConsistency, req.audienceLevel, req.artStyle);
       try {
         const parts: any[] = currentRefs.length
           ? [...currentRefs.map((r) => ({ inlineData: { data: r.data, mimeType: r.mimeType } })), { text }]
@@ -215,6 +223,10 @@ const runDirect = async (eng: Engine, req: ImageRequest, signal?: AbortSignal): 
         const cand = response.candidates?.[0];
         const part = (cand?.content?.parts ?? []).find((p) => p.inlineData?.data);
         if (part?.inlineData?.data) {
+          const rawMime = part.inlineData.mimeType || 'image/png';
+          if (rawMime.includes('svg')) {
+            throw new Error('SVG format is prohibited for story illustrations.');
+          }
           directModelDown.delete(`${eng.slot}:${model}`);
           recordDrawnImage({
             kind: req.kind || 'page',
@@ -222,7 +234,7 @@ const runDirect = async (eng: Engine, req: ImageRequest, signal?: AbortSignal): 
             model: `${eng.id}/${model}`,
             promptSnippet: text.slice(0, 300),
           });
-          return base64ToBlob(part.inlineData.data, part.inlineData.mimeType || 'image/png');
+          return base64ToBlob(part.inlineData.data, rawMime);
         }
         const why = [response.promptFeedback?.blockReason, cand?.finishReason, cand?.content?.parts?.find((p) => p.text)?.text?.slice(0, 120)].filter(Boolean).join(' · ');
         trail.push({ model: `${eng.id}/${model}`, kind: 'skip', status: 0, message: `No image returned${retriedWithoutRef ? ' [no-ref]' : ''}${why ? `: ${why}` : '.'}` });
@@ -305,6 +317,9 @@ const runServer = async (req: ImageRequest, signal?: AbortSignal): Promise<Blob>
   );
   if (data?.skipped) throw new SkippedImage('Image skipped: free engine takes no reference sheet.');
   if (!data?.base64) throw new ApiError('FAILED', 'Empty image response.', undefined, '/api/generate-image');
+  if (data.mimeType?.includes('svg')) {
+    throw new ApiError('FAILED', 'SVG images are prohibited for story illustrations.', undefined, '/api/generate-image');
+  }
   const resolvedEngine: DrawnEngineKind =
     data.engine === 'pollinations' ? 'pollinations' : data.engine === 'flux' || data.engine === 'free' ? 'flux' : 'gemini';
   recordDrawnImage({
@@ -314,6 +329,9 @@ const runServer = async (req: ImageRequest, signal?: AbortSignal): Promise<Blob>
     promptSnippet: (data.promptSnippet || req.prompt).slice(0, 300),
   });
   const blob = base64ToBlob(data.base64, data.mimeType);
+  if (blob.type.includes('svg')) {
+    throw new ApiError('FAILED', 'SVG images are prohibited for story illustrations.', undefined, '/api/generate-image');
+  }
   return resolvedEngine === 'flux' ? cropToAspect(blob, req.aspectRatio) : blob;
 };
 
@@ -328,6 +346,9 @@ export const generateIllustration = async (req: ImageRequest, signal?: AbortSign
     if (signal?.aborted) throw abortError();
     try {
       const blob = await run(eng, req, signal);
+      if (blob.type.includes('svg')) {
+        throw new ApiError('FAILED', 'SVG graphics prohibited.');
+      }
       lastEngine = eng.id;
       down.delete(eng.slot);
       return blob;

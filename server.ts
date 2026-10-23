@@ -816,8 +816,8 @@ const getFreeCreds = (req: Request): FreeCreds | null => {
   return CF_ACCOUNT_RE.test(account) && CF_TOKEN_RE.test(token) ? { account, token, source: user ? 'user' : 'env' } : null;
 };
 
-// أ2: المشهد أولاً ولا يُقصّ أبداً؛ إزالة الحروف العربية من رابط محركات الصور الخارجية لتفادي تضخم الرابط وفشل التوليد
-const fluxPrompt = (prompt: string, square: boolean): string => {
+// أ2: المشهد أولاً مع قفل الأسلوب الفني في الصدارة؛ إزالة الحروف العربية من رابط محركات الصور لتفادي فشل التوليد
+const fluxPrompt = (prompt: string, square: boolean, artStyle?: string, styleConsistency?: string): string => {
   const sanitized = prompt
     .replace(/[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]+/g, ' ')
     .replace(/["«»“”]/g, '')
@@ -828,11 +828,42 @@ const fluxPrompt = (prompt: string, square: boolean): string => {
     .filter(Boolean);
   const sceneIdx = lines.findIndex((l) => /^(?:Scene|Character reference sheet|Composition):/i.test(l));
   const sceneLine = sceneIdx >= 0 ? lines[sceneIdx] : lines[0] || sanitized.trim();
-  const restLines = lines.filter((_, idx) => idx !== (sceneIdx >= 0 ? sceneIdx : 0));
+  const styleIdx = lines.findIndex((l) => /^Style:/i.test(l));
+  const styleLine = styleIdx >= 0 ? lines[styleIdx] : '';
+  const restLines = lines.filter((_, idx) => idx !== (sceneIdx >= 0 ? sceneIdx : 0) && idx !== styleIdx);
+
+  // استخراج أو بناء قفل الأسلوب الفني الصارم لمنع انحراف الأنمي أو الـ 3D أو الكرتون
+  let explicitStyle = '';
+  if (artStyle) {
+    const sLower = artStyle.toLowerCase();
+    if (sLower.includes('anime')) {
+      explicitStyle = 'Masterpiece Japanese studio anime key visual, cel-shaded anime aesthetic, vibrant anime character design';
+    } else if (sLower.includes('3d') || sLower.includes('pixar')) {
+      explicitStyle = 'Masterpiece 3D CGI Pixar feature-film studio render, volumetric lighting, rich 3D character design';
+    } else if (sLower.includes('cute cartoon')) {
+      explicitStyle = 'Masterpiece cute animated cartoon illustration, smooth clean linework, vibrant cheerful palette';
+    } else if (sLower.includes('hand-drawn')) {
+      explicitStyle = 'Masterpiece hand-drawn ink and brush cartoon illustration, organic strokes, artistic warmth';
+    } else if (sLower.includes('pixel')) {
+      explicitStyle = 'Masterpiece high-bit pixel art scene, crisp pixel craftsmanship, vibrant sprites';
+    } else if (sLower.includes('photorealistic') || sLower.includes('realistic')) {
+      explicitStyle = 'Cinematic photorealistic portrait photography, lifelike textures, 85mm prime lens';
+    } else if (sLower.includes('watercolor')) {
+      explicitStyle = 'Luxury fine-art watercolor illustration, luminous translucent washes, cold-press paper';
+    } else {
+      explicitStyle = `${artStyle} masterpiece illustration, high-fidelity artwork`;
+    }
+  }
+
+  const consistencyKeywords = (styleConsistency && styleConsistency !== 'auto') ? `, ${styleConsistency}` : '';
+  const styleBlock = styleLine ? styleLine : (explicitStyle ? `Style: ${explicitStyle}${consistencyKeywords}.` : '');
+
   const framing = square ? '' : ' Centered composition.';
-  const maxRestChars = Math.max(0, 520 - sceneLine.length);
+  const maxRestChars = Math.max(0, 350 - sceneLine.length - styleBlock.length);
   const rest = restLines.join(' ').slice(0, maxRestChars).trim();
-  const base = [sceneLine, rest, framing.trim()].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
+
+  // تجميع البرومبت مع تصدر الأسلوب الفني أولاً لضمان عدم ضياع هوية الرسم عند تقليص الحجم
+  const base = [styleBlock, sceneLine, rest, framing.trim()].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
   const hasDirective = base.toLowerCase().includes('expressive eyes, cohesive palette');
   return (hasDirective ? base : `${base} ${POSITIVE_ILLUSTRATION_DIRECTIVE}`).replace(/\s+/g, ' ').trim();
 };
@@ -917,56 +948,14 @@ const AI_IMAGE_SIZES: Record<string, [number, number]> = {
   '9:16': [576, 1024],
 };
 
-// رسم توضيحي SVG فني احتياطي يضمن عدم توقف القصة أبداً حتى لو تعطلت كافة خدمات الصور الخارجية
-const buildProceduralSvgIllustration = (prompt: string, dims: [number, number], seed: number): string => {
-  const [w, h] = dims;
-  const palettes = [
-    ['#1e1b4b', '#312e81', '#f59e0b', '#fef3c7', '#38bdf8'],
-    ['#064e3b', '#047857', '#fbbf24', '#ecfdf5', '#34d399'],
-    ['#3b0764', '#6b21a8', '#f472b6', '#fdf4ff', '#c084fc'],
-    ['#0c4a6e', '#0284c7', '#fb923c', '#f0f9ff', '#7dd3fc'],
-  ];
-  const pal = palettes[seed % palettes.length];
-  const sunX = Math.round(w * (0.28 + ((seed % 45) / 100)));
-  const sunY = Math.round(h * 0.32);
-  const r = Math.round(Math.min(w, h) * 0.14);
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">
-    <defs>
-      <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
-        <stop offset="0%" stop-color="${pal[0]}"/>
-        <stop offset="65%" stop-color="${pal[1]}"/>
-        <stop offset="100%" stop-color="${pal[4]}"/>
-      </linearGradient>
-      <radialGradient id="glow" cx="50%" cy="50%" r="50%">
-        <stop offset="0%" stop-color="${pal[3]}" stop-opacity="0.95"/>
-        <stop offset="55%" stop-color="${pal[2]}" stop-opacity="0.55"/>
-        <stop offset="100%" stop-color="${pal[2]}" stop-opacity="0"/>
-      </radialGradient>
-    </defs>
-    <rect width="${w}" height="${h}" fill="url(#sky)"/>
-    <circle cx="${sunX}" cy="${sunY}" r="${r * 2.2}" fill="url(#glow)"/>
-    <circle cx="${sunX}" cy="${sunY}" r="${r}" fill="${pal[3]}"/>
-    <circle cx="${Math.round(w * 0.18)}" cy="${Math.round(h * 0.18)}" r="3" fill="#fff" opacity="0.8"/>
-    <circle cx="${Math.round(w * 0.76)}" cy="${Math.round(h * 0.15)}" r="4" fill="#fff" opacity="0.9"/>
-    <circle cx="${Math.round(w * 0.62)}" cy="${Math.round(h * 0.24)}" r="2.5" fill="#fff" opacity="0.7"/>
-    <circle cx="${Math.round(w * 0.85)}" cy="${Math.round(h * 0.28)}" r="3.5" fill="#fff" opacity="0.75"/>
-    <path d="M0,${Math.round(h * 0.72)} Q${Math.round(w * 0.28)},${Math.round(h * 0.56)} ${Math.round(w * 0.55)},${Math.round(h * 0.7)} T${w},${Math.round(h * 0.66)} L${w},${h} L0,${h} Z" fill="${pal[1]}" opacity="0.85"/>
-    <path d="M0,${Math.round(h * 0.8)} Q${Math.round(w * 0.4)},${Math.round(h * 0.68)} ${Math.round(w * 0.75)},${Math.round(h * 0.8)} T${w},${Math.round(h * 0.76)} L${w},${h} L0,${h} Z" fill="${pal[0]}"/>
-    <g transform="translate(${Math.round(w * 0.46)}, ${Math.round(h * 0.54)})">
-      <circle cx="0" cy="-36" r="24" fill="${pal[3]}"/>
-      <path d="M-26,32 C-24,-10 24,-10 26,32 Z" fill="${pal[2]}"/>
-      <circle cx="34" cy="-8" r="10" fill="${pal[3]}" opacity="0.9"/>
-    </g>
-  </svg>`;
-  return Buffer.from(svg, 'utf-8').toString('base64');
-};
-
 const runAiFallback = async (
   prompt: string,
-  aspectRatio: string
+  aspectRatio: string,
+  artStyle?: string,
+  styleConsistency?: string
 ): Promise<{ base64: string; mimeType: string; model: string; engine: 'pollinations'; promptSnippet: string }> => {
   const dims = AI_IMAGE_SIZES[aspectRatio] || [1024, 768];
-  const cleanPrompt = fluxPrompt(prompt, aspectRatio === '1:1');
+  const cleanPrompt = fluxPrompt(prompt, aspectRatio === '1:1', artStyle, styleConsistency);
   const encodedPrompt = encodeURIComponent(cleanPrompt);
   const seed = Math.floor(Math.random() * 2 ** 31);
 
@@ -984,7 +973,8 @@ const runAiFallback = async (
       const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' }, signal: ctrl.signal });
       if (res.ok) {
         const ct = res.headers.get('content-type') || '';
-        if (ct.includes('image')) {
+        // منع رسومات الـ SVG نهائياً وقبول الصور النقطية الحقيقية فقط (JPEG / PNG)
+        if (ct.includes('image') && !ct.includes('svg')) {
           const buf = await res.arrayBuffer();
           const base64 = Buffer.from(buf).toString('base64');
           return {
@@ -1006,14 +996,11 @@ const runAiFallback = async (
     }
   }
 
-  // شبكة أمان أخيرة: رسم SVG فني فوري بدلاً من رمي خطأ يوقف القصة
-  return {
-    base64: buildProceduralSvgIllustration(cleanPrompt, dims, seed),
-    mimeType: 'image/svg+xml',
-    model: 'pollinations-svg-fallback',
-    engine: 'pollinations',
-    promptSnippet: cleanPrompt.slice(0, 300),
-  };
+  // ممنوع توليد SVG نهائياً: عند تعذر الخدمات نطلق خطأ معالجة لطلب إعادة المحاولة
+  throw Object.assign(new Error('Image generation models are busy. Tap retry scene to repaint with high-res models.'), {
+    code: 'BUSY',
+    status: 503,
+  });
 };
 
 // توليد الصور: أولاً عبر نماذج Gemini المتقدمة (ما لم تكن الجلسة موقوفة مؤقتاً بسبب نفاد حصة الصور)، ثم Cloudflare Flux إن توفر، ثم Pollinations الاحتياطي
@@ -1108,7 +1095,7 @@ app.post('/api/generate-image', async (req: Request, res: Response) => {
     const freeCreds = getFreeCreds(req);
     if (freeCreds) {
       try {
-        const cfPrompt = fluxPrompt(prompt, aspectRatio === '1:1');
+        const cfPrompt = fluxPrompt(prompt, aspectRatio === '1:1', req.body?.artStyle, styleConsistency);
         const base64 = await runFree(freeCreds, cfPrompt, 6);
         return res.json({
           base64,
@@ -1121,7 +1108,7 @@ app.post('/api/generate-image', async (req: Request, res: Response) => {
         // fallback to Pollinations
       }
     }
-    const fallback = await runAiFallback(prompt, aspectRatio);
+    const fallback = await runAiFallback(prompt, aspectRatio, req.body?.artStyle, styleConsistency);
     return res.json(fallback);
   } catch (err) {
     return sendError(res, err, 'Failed to generate image');

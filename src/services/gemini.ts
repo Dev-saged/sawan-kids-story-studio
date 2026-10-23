@@ -463,7 +463,7 @@ export const buildPageImagePrompt = (story: StoryData, page: StoryPage): string 
   const audienceLevel: AudienceLevel = adult ? 'adults' : 'kids';
   const sentimentInfo = analyzeTextSentimentAndPalette(page.text || '', page.image_prompt || '');
   const baseStyleLine = getArtStylePrompt(story.story_info.art_style, story.story_info.age_group, styleConsistency, audienceLevel);
-  const styleLine = `Palette (${sentimentInfo.sentiment}): ${sentimentInfo.paletteDescriptor}. ${baseStyleLine}`;
+  const styleLine = `Style: ${baseStyleLine} Palette: ${sentimentInfo.paletteDescriptor}.`;
   return assemblePromptWithWordCap(sceneLine, charsLine, styleLine, POSITIVE_ILLUSTRATION_DIRECTIVE, 120);
 };
 
@@ -494,7 +494,7 @@ export const buildCoverPrompt = (story: StoryData): string => {
     story.cover_image_prompt || story.pages?.[0]?.image_prompt || ''
   );
   const baseStyleLine = getArtStylePrompt(story.story_info.art_style, story.story_info.age_group, styleConsistency, audienceLevel);
-  const styleLine = `Palette (${sentimentInfo.sentiment}): ${sentimentInfo.paletteDescriptor}. ${baseStyleLine}`;
+  const styleLine = `Style: ${baseStyleLine} Palette: ${sentimentInfo.paletteDescriptor}.`;
   return assemblePromptWithWordCap(sceneLine, charsLine, styleLine, POSITIVE_ILLUSTRATION_DIRECTIVE, 120);
 };
 
