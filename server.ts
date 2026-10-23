@@ -7,6 +7,7 @@ import { GoogleGenAI, Modality, Type, type Schema } from '@google/genai';
 import {
   NO_SIZE_IMAGE_MODELS,
   POSITIVE_ILLUSTRATION_DIRECTIVE,
+  SHARED_ART_STYLE_OPTIONS,
   STORY_TYPE_SPECS,
   buildSharedSystemInstruction,
 } from './src/shared/modelRules.ts';
@@ -21,20 +22,22 @@ app.use(express.json({ limit: '30mb' }));
 const MODELS = {
   text: [
     'gemini-3-flash-preview',
+    'gemini-3.8-flash',
     'gemini-2.5-flash',
     'gemini-3.1-flash-lite-preview',
     'gemini-2.5-flash-lite',
     'gemini-3.1-pro-preview',
     'gemini-2.5-pro',
-    'gemini-2.0-flash',
-    'gemini-2.0-flash-lite',
     'gemini-flash-latest',
     'gemini-flash-lite-latest',
   ],
   image: [
     'gemini-2.5-flash-image',
     'gemini-3.1-flash-image-preview',
+    'gemini-3.1-flash-lite-image',
+    'gemini-nano-banana-2.1',
     'gemini-3-pro-image-preview',
+    'gemini-3-pro-image',
   ],
   tts: [
     'gemini-2.5-flash-preview-tts',
@@ -516,25 +519,32 @@ const buildFallbackStory = (params: any, pageCount: number) => {
   const heroName = clip(params?.heroName, 40) || (Array.isArray(params?.customCharacters) && params.customCharacters[0]?.name ? clip(params.customCharacters[0].name, 40) : isArabic ? 'سراج' : 'Sami');
   const artStyle = clip(params?.artStyle, 40) || 'Classic Storybook';
   const ageGroup = clip(params?.ageGroup, 10) || '4-6';
+  const isAdult = ageGroup === '18+' || Boolean(params?.adultMode) || params?.heroAgeStage === 'adult';
   const title = isArabic ? `مغامرة ${heroName}` : `${heroName}'s Adventure`;
 
   const customChars = Array.isArray(params?.customCharacters) && params.customCharacters.length > 0
     ? params.customCharacters.slice(0, 3).map((c: any) => ({
         name: clip(c?.name, 40) || heroName,
-        description: clip(c?.description, 200) || 'A cheerful young hero wearing a bright adventure outfit and warm smile',
+        description:
+          clip(c?.description, 200) ||
+          (isAdult
+            ? 'A charismatic adult protagonist with expressive eyes, refined features, and a tailored cinematic coat'
+            : 'A cheerful young hero wearing a bright adventure outfit and warm smile'),
         personality: clip(c?.personality, 80) || (isArabic ? 'شجاع ومحب للاستطلاع' : 'Brave and curious'),
-        age: clip(c?.age, 15) || '7',
-        gender: clip(c?.gender, 15) || 'boy',
+        age: clip(c?.age, 15) || (isAdult ? '28' : '7'),
+        gender: clip(c?.gender, 15) || (isAdult ? 'man' : 'boy'),
       }))
     : [
         {
           name: heroName,
           description: params?.fruitFantasy
             ? `${heroName} is a cute pomegranate character with a face and limbs, wearing a tiny explorer cape`
-            : `A cheerful child named ${heroName} with bright expressive eyes and a cozy adventure jacket`,
+            : isAdult
+              ? `An adult protagonist named ${heroName}, 28 years old, with confident eyes, defined facial features, and a stylish dark navy coat`
+              : `A cheerful child named ${heroName} with bright expressive eyes and a cozy adventure jacket`,
           personality: isArabic ? 'شجاع وفضولي ويحب مساعدة الآخرين' : 'Brave, curious, and kind-hearted',
-          age: '7',
-          gender: 'boy',
+          age: isAdult ? '28' : '7',
+          gender: isAdult ? 'man' : 'boy',
         },
       ];
 
@@ -640,9 +650,26 @@ app.post('/api/generate-story', async (req: Request, res: Response) => {
     : [];
   const storyTypeKey = (clip(params.storyType, 30) || 'Bedtime') as keyof typeof STORY_TYPE_SPECS;
   const typeSpec = STORY_TYPE_SPECS[storyTypeKey] ?? STORY_TYPE_SPECS.Bedtime;
+  const ageGroupVal = clip(params.ageGroup, 10) || '4-6';
+  const audienceLevelVal = clip(params.audienceLevel, 15) || (ageGroupVal === '18+' ? 'adults' : 'kids');
+  const isAdult =
+    audienceLevelVal === 'adults' ||
+    ageGroupVal === '18+' ||
+    Boolean(params.adultMode) ||
+    params.heroAgeStage === 'adult' ||
+    req.body?.classification?.targetAudience === 'adult';
+  const heroStage = params.heroAgeStage === 'adult' || isAdult ? 'adult' : params.heroAgeStage === 'teen' || ageGroupVal === '13-18' ? 'teen' : 'child';
+  const artStyleVal = clip(params.artStyle, 40) || 'Classic Storybook';
+  const artStyleSpec = SHARED_ART_STYLE_OPTIONS.find((s) => s.value === artStyleVal)?.prompt || artStyleVal;
+  const styleConsistencyVal = clip(params.styleConsistency || req.body?.classification?.styleConsistency, 200);
+  const qaModifiersVal =
+    clip(req.body?.classification?.qaModifiers, 200) ||
+    (isAdult
+      ? 'cinematic lighting, high-fidelity masterpiece, concept art style, detailed textures, mature adult proportions'
+      : 'cinematic lighting, high-fidelity illustration, concept art style, detailed textures');
   const customChars = Array.isArray(params.customCharacters)
     ? params.customCharacters
-        .slice(0, 3)
+        .slice(0, 4)
         .map((c: any) => `${clip(c?.name, 40)} (${clip(c?.gender, 15)}, age ${clip(c?.age, 15)}): ${clip(c?.description, 250)} — ${clip(c?.personality, 120)}`)
         .join(' | ')
     : '';
@@ -651,24 +678,38 @@ app.post('/api/generate-story', async (req: Request, res: Response) => {
     : params.themeTopic
       ? `Character theme context: weave "${clip(params.themeTopic, 80)}" traits into character descriptions.`
       : '';
+  const maturityLine = isAdult
+    ? 'AUDIENCE LEVEL: ADULTS (18+). Write with deep, engaging literary prose, complex character psychology, and mature themes suitable for adults. CRITICAL FOR ILLUSTRATIONS: Unless a character is explicitly defined as a child, ALL characters MUST be described in "characters" and in every "image_prompt" as full-grown ADULTS (e.g., "28-year-old adult man", "26-year-old adult woman", mature adult facial structure, adult body proportions, realistic adult attire) — NEVER default to children or kids.'
+    : ageGroupVal === '13-18'
+      ? 'AUDIENCE LEVEL: YOUNG ADULTS / TEENS (13-18). Depict characters with teen/young-adult proportions and expressive cinematic drama.'
+      : 'AUDIENCE LEVEL: KIDS. Write warm, imaginative, age-appropriate prose and expressive storybook visuals.';
+  const styleConsistencyLine = `STYLE CONSISTENCY & QUALITY ASSURANCE: Lock the visual theme strictly to [${styleConsistencyVal || artStyleSpec}] with mandatory quality modifiers [${qaModifiersVal}]. Never deviate from this artistic theme regardless of story content.`;
+  const heroLine = heroName
+    ? heroStage === 'adult'
+      ? `HERO: the main protagonist is a real ADULT person named "${heroName}". Describe the hero in English as "${heroName}, an adult protagonist${params.hasHeroPhoto ? ' matching the reference photo' : ''}" with mature adult facial structure, realistic adult build, and a fixed signature outfit with specific colors.`
+      : heroStage === 'teen'
+        ? `HERO: the main protagonist is a teenager named "${heroName}". Describe the hero in English as "${heroName}, a teen protagonist${params.hasHeroPhoto ? ' matching the reference photo' : ''}" with a fixed signature outfit with specific colors.`
+        : `HERO: the main character is a real child named "${heroName}". A reference photo of this child may be used for the illustrations, so describe the hero as "${heroName}, the child from the reference photo" plus a fixed outfit with colors.`
+    : '';
   const prompt = [
     `Story idea: ${idea}`,
     isArabic ? `Language: Arabic (${clip(params.dialect, 30) || 'Modern Standard'})` : 'Language: English',
-    `Age group: ${clip(params.ageGroup, 10) || '4-6'}`,
+    `Audience level: ${isAdult ? 'Adults (18+)' : `Kids (${ageGroupVal})`}`,
+    `Age group: ${isAdult ? '18+' : ageGroupVal}`,
+    maturityLine,
     `Story type: ${typeSpec.value} — Narrative Arc: [Beginning: ${typeSpec.arc.beginning} | Middle: ${typeSpec.arc.middle} | Climax: ${typeSpec.arc.climax} | Ending: ${typeSpec.arc.ending}]. Rule: ${typeSpec.promptRule}`,
     `Exact page count: ${first}`,
     total > first
       ? `LONG STORY: the finished book will have ${total} pages in ${Math.ceil(total / 6)} chapters. Write ONLY the opening ${first} pages now (chapter 1 and its set-up). Do NOT conclude the story: end on a natural moment that leads into what comes next. Give page 1 a "chapter" title. The quiz and moral can be provisional.`
       : '',
-    `Art style: ${clip(params.artStyle, 40) || 'Classic Storybook'}`,
+    `Art style: ${artStyleVal} — Visual directive for every image_prompt and cover_image_prompt: ${artStyleSpec}. Ensure every page image_prompt vividly depicts the exact action, setting, and character emotions of that page in this style.`,
+    styleConsistencyLine,
     themeLine,
     customChars
-      ? `ALBUM CHARACTERS (include these exact characters in "characters" with their names and visual traits): ${customChars}`
+      ? `CUSTOM / ALBUM CHARACTERS (include these exact characters in "characters" with their exact names, ages, and visual traits translated to English): ${customChars}`
       : '',
     ...seriesLines,
-    heroName
-      ? `HERO: the main character is a real child named "${heroName}". A reference photo of this child will be used for the illustrations, so describe the hero as "${heroName}, the child from the reference photo" plus a fixed outfit with colors.`
-      : '',
+    heroLine,
   ]
     .filter(Boolean)
     .join('\n');
@@ -775,19 +816,25 @@ const getFreeCreds = (req: Request): FreeCreds | null => {
   return CF_ACCOUNT_RE.test(account) && CF_TOKEN_RE.test(token) ? { account, token, source: user ? 'user' : 'env' } : null;
 };
 
-// أ2: المشهد أولاً ولا يُقصّ أبداً؛ ما بعد المشهد يُختصر إن لزم
+// أ2: المشهد أولاً ولا يُقصّ أبداً؛ إزالة الحروف العربية من رابط محركات الصور الخارجية لتفادي تضخم الرابط وفشل التوليد
 const fluxPrompt = (prompt: string, square: boolean): string => {
-  const lines = prompt
+  const sanitized = prompt
+    .replace(/[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]+/g, ' ')
+    .replace(/["«»“”]/g, '')
+    .replace(/\(\s*\)/g, '');
+  const lines = sanitized
     .split('\n')
-    .map((l) => l.trim())
+    .map((l) => l.replace(/\s+/g, ' ').trim())
     .filter(Boolean);
   const sceneIdx = lines.findIndex((l) => /^(?:Scene|Character reference sheet|Composition):/i.test(l));
-  const sceneLine = sceneIdx >= 0 ? lines[sceneIdx] : lines[0] || prompt.trim();
+  const sceneLine = sceneIdx >= 0 ? lines[sceneIdx] : lines[0] || sanitized.trim();
   const restLines = lines.filter((_, idx) => idx !== (sceneIdx >= 0 ? sceneIdx : 0));
   const framing = square ? '' : ' Centered composition.';
-  const maxRestChars = Math.max(0, 1400 - sceneLine.length);
+  const maxRestChars = Math.max(0, 520 - sceneLine.length);
   const rest = restLines.join(' ').slice(0, maxRestChars).trim();
-  return [sceneLine, rest, framing.trim(), POSITIVE_ILLUSTRATION_DIRECTIVE].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
+  const base = [sceneLine, rest, framing.trim()].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
+  const hasDirective = base.toLowerCase().includes('expressive eyes, cohesive palette');
+  return (hasDirective ? base : `${base} ${POSITIVE_ILLUSTRATION_DIRECTIVE}`).replace(/\s+/g, ' ').trim();
 };
 
 const runFlux = async (creds: FreeCreds, prompt: string, steps = 6): Promise<string> => {
@@ -972,15 +1019,31 @@ const runAiFallback = async (
 // توليد الصور: أولاً عبر نماذج Gemini المتقدمة (ما لم تكن الجلسة موقوفة مؤقتاً بسبب نفاد حصة الصور)، ثم Cloudflare Flux إن توفر، ثم Pollinations الاحتياطي
 app.post('/api/generate-image', async (req: Request, res: Response) => {
   try {
-    const prompt = clip(req.body?.prompt, 4000);
-    if (!prompt) return res.status(400).json({ error: 'Image prompt is required.', code: 'FAILED' });
+    const rawPrompt = clip(req.body?.prompt, 4000);
+    if (!rawPrompt) return res.status(400).json({ error: 'Image prompt is required.', code: 'FAILED' });
     const aspectRatio = ASPECTS.has(req.body?.aspectRatio) ? req.body.aspectRatio : '4:3';
+    const styleConsistency = clip(req.body?.styleConsistency, 240);
+    const audienceLevel = clip(req.body?.audienceLevel, 20);
     const refs = sanitizeRefs(req.body?.references);
     const session = getSession(req);
 
-    // المشهد يبقى في البداية؛ ملاحظة المرجع تأتي في النهاية حتى لا تزيح المشهد عن أول 40 حرفاً
+    const hasConsistencyInPrompt =
+      styleConsistency && rawPrompt.toLowerCase().includes(styleConsistency.slice(0, 18).toLowerCase());
+    const consistencyTail =
+      styleConsistency && styleConsistency.toLowerCase() !== 'auto' && !hasConsistencyInPrompt
+        ? `\nStyle consistency: ${styleConsistency}, cinematic lighting, high-fidelity, concept art style, detailed textures.`
+        : !/cinematic lighting/i.test(rawPrompt)
+          ? '\nQuality: cinematic lighting, high-fidelity, concept art style, detailed textures.'
+          : '';
+    const audienceTail =
+      audienceLevel === 'adults' && !/\b(adult|mature)\b/i.test(rawPrompt)
+        ? ' Depict characters with mature adult proportions.'
+        : '';
+    const prompt = `${rawPrompt}${consistencyTail}${audienceTail}`;
+
+    // المشهد يبقى في البداية؛ ملاحظة المرجع تأتي في النهاية مع إلزام النموذج برسم المشهد الجديد بالكامل
     const refTail = refs.length
-      ? ' Maintain exact character face, hair, and outfit from the attached reference image.'
+      ? ' Use the attached reference image ONLY for character identity (facial features, hairstyle, and outfit colors); compose a brand-new dynamic scene matching the Scene description.'
       : '';
     const text = `${prompt}${refTail}`;
 
@@ -1030,10 +1093,16 @@ app.post('/api/generate-image', async (req: Request, res: Response) => {
         return res.json({ ...value, model, engine: 'gemini', promptSnippet: text.slice(0, 300) });
       } catch (geminiErr: any) {
         const errCode = geminiErr?.code as ErrorCode | undefined;
-        if (errCode === 'QUOTA' || errCode === 'BILLING' || errCode === 'NOMODEL') {
+        // حظر الجلسة فقط إذا كانت الحصة صفرية (BILLING) أو لا يوجد أي نموذج صور؛ أما كوتا الدقيقة المؤقتة فتُدار عبر modelCooldowns
+        if (errCode === 'BILLING' || errCode === 'NOMODEL') {
           imageBlocked.set(session.fp, Date.now() + BLOCK_TTL);
         }
       }
+    }
+
+    // إذا كان الطلب ورقة مرجع شخصية (sheet) وفشل Gemini، نتخطى ورقة المرجع بدلاً من توليد صورة بديلة تشوّه صفحات القصة
+    if (req.body?.kind === 'sheet') {
+      return res.json({ skipped: true, mimeType: 'image/png', model: 'skipped-sheet', engine: 'gemini' });
     }
 
     const freeCreds = getFreeCreds(req);
@@ -1299,10 +1368,18 @@ app.post('/api/continue-story', async (req: Request, res: Response) => {
     .join(' | ');
   const arabic = /arab|عرب/i.test(String(info.language ?? ''));
 
+  const ageGroupCont = clip(info.ageGroup, 10) || '4-6';
+  const isAdultCont = ageGroupCont === '18+' || Boolean(info.adultMode);
+  const artStyleCont = clip(info.artStyle, 40) || 'Classic Storybook';
+  const artStyleSpecCont = SHARED_ART_STYLE_OPTIONS.find((s) => s.value === artStyleCont)?.prompt || artStyleCont;
+
   const prompt = [
-    `Continue the children's story "${clip(info.title, 100)}".`,
+    `Continue the ${isAdultCont ? 'mature adult' : 'illustrated'} story "${clip(info.title, 100)}".`,
     arabic ? `Language: Arabic (${clip(info.dialect, 30) || 'Modern Standard'})` : 'Language: English',
-    `Age group: ${clip(info.ageGroup, 10) || '4-6'}. Art style: ${clip(info.artStyle, 40) || 'Classic Storybook'}.`,
+    `Age group: ${ageGroupCont}. Art style: ${artStyleCont} (${artStyleSpecCont}).`,
+    isAdultCont
+      ? 'AUDIENCE & CHARACTER MATURITY: This is a MATURE / ADULT story (18+). Keep adult characters depicted as full-grown adults with mature proportions in every image_prompt.'
+      : '',
     `Fixed characters (same names, same visual design on every page; no new main characters): ${characters}`,
     earlier.length ? `Earlier pages in brief:\n${earlier.map((t, i) => `${i + 1}. ${t}`).join('\n')}` : '',
     recent.length ? `Latest pages in full (continue directly from here):\n${recent.join('\n')}` : '',
@@ -1691,26 +1768,30 @@ app.post('/api/improve-idea', async (req: Request, res: Response) => {
     const ageGroup = clip(req.body?.ageGroup, 20) || '7-9';
     const isArabic = /arab|عرب/i.test(language);
 
+    const isAdultIdea = ageGroup === '18+' || Boolean(req.body?.adultMode);
+    const audienceLabelAr = isAdultIdea ? 'للكبار والبالغين (18+ بشخصيات ناضجة وحبكة عميقة)' : `للأطفال واليافعين (${ageGroup} سنوات)`;
+    const audienceLabelEn = isAdultIdea ? 'Adults (18+ with mature adult characters and deep narrative)' : `${ageGroup} years`;
+
     const prompt = isArabic
       ? [
-          `أنت محرر قصص أطفال خبير. حسّن فكرة المستخدم التالية إلى 3 صياغات قصصية متميزة وغنية للتوليد.`,
+          `أنت محرر قصص وروايات خبير. حسّن فكرة المستخدم التالية إلى 3 صياغات قصصية متميزة وغنية للتوليد.`,
           `فكرة المستخدم: "${rawIdea}"`,
-          `اللغة: العربية (${dialect === 'Modern Standard' ? 'فصحى واضحة وسلسة' : dialect}). نوع القصة: ${storyType}. الفئة العمرية: ${ageGroup} سنوات.`,
+          `اللغة: العربية (${dialect === 'Modern Standard' ? 'فصحى واضحة وسلسة' : dialect}). نوع القصة: ${storyType}. الفئة المستهدفة: ${audienceLabelAr}.`,
           `القواعد الصارمة لكل صياغة من الصياغات الـ3:`,
           `1) الطول بين 40 و70 كلمة بالضبط.`,
           `2) بنفس اللغة واللهجة المطلوبة تماماً.`,
-          `3) حافظ على شخصيات المستخدم وفكرته الأساسية دون تغيير جوهرها.`,
+          `3) حافظ على شخصيات المستخدم وفكرته الأساسية وأعمار شخصياته (إن كانت القصة للكبار أو لشخص كبير فاجعل الأبطال بالغين ناضجين بوضوح).`,
           `4) أضف بطلاً واضحاً، ومكاناً ملموساً، ومشكلة أو تحدياً مشوقاً، وخاتمة قيمية نبيلة.`,
           `5) أعد JSON فقط بالشكل: { "suggestions": ["...", "...", "..."] }.`,
         ].join('\n')
       : [
-          `You are an expert children's story editor. Improve the user's story idea into 3 distinct, rich story pitches.`,
+          `You are an expert story editor. Improve the user's story idea into 3 distinct, rich story pitches.`,
           `User idea: "${rawIdea}"`,
-          `Language: English. Story type: ${storyType}. Age group: ${ageGroup} years.`,
+          `Language: English. Story type: ${storyType}. Target audience: ${audienceLabelEn}.`,
           `Strict rules for each of the 3 suggestions:`,
           `1) Length MUST be between 40 and 70 words each.`,
-          `2) Keep the user's characters and core idea intact.`,
-          `3) Include a clear hero, a vivid setting, an engaging problem/challenge, and a value-driven ending.`,
+          `2) Keep the user's characters, character maturity (adult vs child), and core idea intact.`,
+          `3) Include a clear hero, a vivid setting, an engaging problem/challenge, and a meaningful ending.`,
           `4) Return valid JSON only: { "suggestions": ["...", "...", "..."] }.`,
         ].join('\n');
 

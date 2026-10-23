@@ -23,6 +23,7 @@ import { APP_VERSION, BRAND, BRAND_PRESETS, CONFIG, getStudioSettings, saveStudi
 import { CURRENT_VERSION, incrementVersion, compareVersions } from '../version';
 import { VIDEO_FORMATS, VIDEO_QUALITIES, videoSize } from '../services/videoFormats';
 import {
+  analyzeTextSentimentAndPalette,
   applyBatch,
   applyImprovedIdeaWithUndo,
   buildCoverPrompt,
@@ -33,7 +34,9 @@ import {
   IMPROVE_IDEA_COOLDOWN_MS,
   isFruitStory,
   isIncomplete,
+  resolveStyleConsistencyKeywords,
   restoreOriginalIdea,
+  StoryGenerator,
   validateAndClipImprovedIdeas,
 } from '../services/gemini';
 import { allAnimationPrompts, animationPackText } from '../services/animation';
@@ -866,6 +869,74 @@ export const TESTS: { name: string; run: () => void | Promise<void> }[] = [
         if (ratio < 4.5) {
           throw new Error(`Contrast failure on ${p.label}: ${ratio.toFixed(2)}:1 (< 4.5:1)`);
         }
+      }
+    },
+  },
+  {
+    name: 'محرك تصنيف البرومبت (StoryGenerator.classifyPrompt) وثبات الأسلوب الفني (Style Consistency) ومستوى الجمهور (Audience Level)',
+    run: () => {
+      const adultClass = StoryGenerator.classifyPrompt({
+        idea: 'قصة عن مهندس بالغ يخوض رحلة في مدينة قديمة',
+        audienceLevel: 'adults',
+        artStyle: 'Anime',
+        styleConsistency: 'studio ghibli',
+      });
+      eq(adultClass.targetAudience, 'adult');
+      eq(adultClass.audienceLevel, 'adults');
+      if (!adultClass.styleConsistency.includes('studio ghibli')) {
+        throw new Error(`Expected studio ghibli in styleConsistency, got: ${adultClass.styleConsistency}`);
+      }
+      if (!/cinematic lighting.*high-fidelity.*concept art style.*detailed textures/i.test(adultClass.qaModifiers)) {
+        throw new Error(`Missing required QA modifiers in: ${adultClass.qaModifiers}`);
+      }
+
+      const kidsClass = StoryGenerator.classifyPrompt({
+        idea: 'أرنب صغير يلعب في البستان',
+        audienceLevel: 'kids',
+        ageGroup: '4-6',
+        artStyle: 'Photorealistic',
+        styleConsistency: 'hyper-realistic digital painting',
+      });
+      eq(kidsClass.targetAudience, 'children');
+      eq(kidsClass.audienceLevel, 'kids');
+      if (!resolveStyleConsistencyKeywords('Photorealistic', 'hyper-realistic digital painting').includes('hyper-realistic digital painting')) {
+        throw new Error('Failed to lock hyper-realistic digital painting keyword');
+      }
+    },
+  },
+  {
+    name: 'تحليل المشاعر والنبرة العاطفية (Sentiment & Tone Palette) وحقن الألوان التلقائي في برومبت الرسم',
+    run: () => {
+      const happyAr = analyzeTextSentimentAndPalette('ضحك سامي بفرح وسعادة في العيد مع أصدقائه تحت الشمس المشرقة');
+      eq(happyAr.sentiment, 'happy');
+      if (!happyAr.paletteDescriptor.includes('warm glowing colors')) {
+        throw new Error(`Expected 'warm glowing colors' for happy sentiment, got: ${happyAr.paletteDescriptor}`);
+      }
+
+      const sadAr = analyzeTextSentimentAndPalette('جلس وحيداً يبكي بحزن تحت المطر البارد بعد الفراق');
+      eq(sadAr.sentiment, 'sad');
+      if (!sadAr.paletteDescriptor.includes('deep moody shadows')) {
+        throw new Error(`Expected 'deep moody shadows' for sad sentiment, got: ${sadAr.paletteDescriptor}`);
+      }
+
+      const happyEn = StoryGenerator.analyzeSentiment('She smiled happily and celebrated the joyful victory');
+      eq(happyEn.sentiment, 'happy');
+      const sadEn = StoryGenerator.analyzeSentiment('He wept in lonely sorrow under the cold rain');
+      eq(sadEn.sentiment, 'sad');
+
+      // التحقق من حقن لوحة الألوان العاطفية داخل buildPageImagePrompt مع الحفاظ على سقف 120 كلمة
+      const s = fixture(2);
+      const sadPage: StoryPage = {
+        page: 1,
+        text: 'بكى سامي بحزن شديد في ليلة ممطرة باردة وهو وحيد',
+        image_prompt: 'Sami sitting alone by the window watching the rain',
+      };
+      const builtSadPrompt = buildPageImagePrompt(s, sadPage);
+      if (!builtSadPrompt.includes('deep moody shadows')) {
+        throw new Error(`Expected buildPageImagePrompt to inject 'deep moody shadows' for sad page, got: ${builtSadPrompt}`);
+      }
+      if (countPromptWords(builtSadPrompt) > 120) {
+        throw new Error(`Expected prompt <= 120 words, got ${countPromptWords(builtSadPrompt)}`);
       }
     },
   },

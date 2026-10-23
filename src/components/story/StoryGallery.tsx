@@ -11,11 +11,15 @@ import {
   Wand2,
   Clapperboard,
   Check,
+  ZoomIn,
+  Palette,
 } from 'lucide-react';
 import { Language, StoryData, StoryPage } from '../../types';
 import { srcToBlob, toSrc } from '../../services/media';
 import { saveAs } from 'file-saver';
 import { animationPrompt } from '../../services/animation';
+import { analyzeTextSentimentAndPalette } from '../../services/gemini';
+import { ImageMagnifierModal } from './ImageMagnifierModal';
 
 interface Props {
   storyData: StoryData;
@@ -29,6 +33,7 @@ export default function StoryGallery({ storyData, language, onSelectPage, onPain
   const ar = language === 'Arabic';
   const [fullscreenIndex, setFullscreenIndex] = useState<number | null>(null);
   const [copiedPage, setCopiedPage] = useState<number | null>(null);
+  const [magnifierPage, setMagnifierPage] = useState<StoryPage | null>(null);
 
   const copyAnimation = async (page: StoryPage, idx: number, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -144,6 +149,17 @@ export default function StoryGallery({ storyData, language, onSelectPage, onPain
                         type="button"
                         onClick={(e) => {
                           e.stopPropagation();
+                          setMagnifierPage(page);
+                        }}
+                        className="flex h-10 w-10 items-center justify-center rounded-full bg-lantern text-ink shadow-sm transition hover:scale-110"
+                        title={ar ? 'تكبير وفحص التفاصيل بعدسة HD' : 'Zoom & Inspect HD Details'}
+                      >
+                        <ZoomIn size={18} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
                           setFullscreenIndex(idx);
                         }}
                         className="flex h-10 w-10 items-center justify-center rounded-full bg-white/90 text-ink shadow-sm transition hover:scale-110"
@@ -183,9 +199,16 @@ export default function StoryGallery({ storyData, language, onSelectPage, onPain
                   </div>
                 )}
 
-                {/* Page Badge */}
-                <div className="absolute top-2.5 start-2.5 rounded-full bg-black/50 px-2.5 py-0.5 text-xs font-bold text-white backdrop-blur-xs">
-                  {ar ? `مشهد ${page.page}` : `Scene ${page.page}`}
+                {/* Page Badge & Sentiment Swatch */}
+                <div className="absolute top-2.5 start-2.5 flex items-center gap-1.5 rounded-full bg-black/60 px-2.5 py-0.5 text-xs font-bold text-white backdrop-blur-xs">
+                  <span
+                    className="h-2.5 w-2.5 rounded-full ring-1 ring-white/50"
+                    style={{
+                      backgroundColor: analyzeTextSentimentAndPalette(page.text || '', page.image_prompt || '').swatchHex,
+                    }}
+                    title={analyzeTextSentimentAndPalette(page.text || '', page.image_prompt || '').paletteDescriptor}
+                  />
+                  <span>{ar ? `مشهد ${page.page}` : `Scene ${page.page}`}</span>
                 </div>
               </div>
 
@@ -257,15 +280,26 @@ export default function StoryGallery({ storyData, language, onSelectPage, onPain
 
             <div className="flex items-center gap-2">
               {activeFullscreenPage.generatedImage && (
-                <button
-                  type="button"
-                  onClick={() => handleDownloadSingleImage(activeFullscreenPage)}
-                  className="flex items-center gap-1.5 rounded-full bg-white/15 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-white/25"
-                  title={ar ? 'تنزيل الصورة' : 'Download Image'}
-                >
-                  <Download size={14} />
-                  <span className="hidden sm:inline">{ar ? 'تنزيل' : 'Download'}</span>
-                </button>
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setMagnifierPage(activeFullscreenPage)}
+                    className="flex items-center gap-1.5 rounded-full bg-lantern px-3.5 py-1.5 text-xs font-extrabold text-ink transition hover:brightness-105"
+                    title={ar ? 'تكبير وفحص التفاصيل بعدسة HD' : 'Zoom & Inspect HD Details'}
+                  >
+                    <ZoomIn size={14} />
+                    <span className="hidden sm:inline">{ar ? 'عدسة الفحص والتكبير' : 'Zoom & Inspect'}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleDownloadSingleImage(activeFullscreenPage)}
+                    className="flex items-center gap-1.5 rounded-full bg-white/15 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-white/25"
+                    title={ar ? 'تنزيل الصورة' : 'Download Image'}
+                  >
+                    <Download size={14} />
+                    <span className="hidden sm:inline">{ar ? 'تنزيل' : 'Download'}</span>
+                  </button>
+                </>
               )}
 
               {onSelectPage && (
@@ -355,13 +389,34 @@ export default function StoryGallery({ storyData, language, onSelectPage, onPain
             className="px-6 py-4 bg-gradient-to-t from-black/80 via-black/60 to-transparent text-white"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="mx-auto max-w-2xl rounded-2xl bg-white/10 p-4 backdrop-blur-md border border-white/10">
+            <div className="mx-auto max-w-2xl rounded-2xl bg-white/10 p-4 backdrop-blur-md border border-white/10 space-y-2">
+              <div className="flex items-center justify-center gap-2 text-xs text-amber-200 font-bold">
+                <Palette size={13} className="text-lantern" />
+                <span>
+                  {ar
+                    ? analyzeTextSentimentAndPalette(activeFullscreenPage.text || '', activeFullscreenPage.image_prompt || '').label.ar
+                    : analyzeTextSentimentAndPalette(activeFullscreenPage.text || '', activeFullscreenPage.image_prompt || '').label.en}
+                </span>
+              </div>
               <p className="text-sm sm:text-base leading-relaxed text-center font-medium">
                 {activeFullscreenPage.text}
               </p>
             </div>
           </div>
         </div>
+      )}
+
+      {magnifierPage && toSrc(magnifierPage.generatedImage) && (
+        <ImageMagnifierModal
+          src={toSrc(magnifierPage.generatedImage)!}
+          title={ar ? `مشهد ${magnifierPage.page} — ${storyData.story_info.title}` : `Scene ${magnifierPage.page} — ${storyData.story_info.title}`}
+          pageText={magnifierPage.text}
+          scenePrompt={magnifierPage.image_prompt}
+          artStyle={storyData.story_info.art_style}
+          styleConsistency={storyData.styleConsistency || storyData.story_info.styleConsistency}
+          ar={ar}
+          onClose={() => setMagnifierPage(null)}
+        />
       )}
     </div>
   );

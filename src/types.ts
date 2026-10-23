@@ -21,7 +21,9 @@ export type ArabicDialect =
   | 'Libyan'
   | 'Mauritanian';
 
-export type AgeGroup = '3-4' | '4-6' | '7-9' | '9-12' | '13-18';
+export type AgeGroup = '3-4' | '4-6' | '7-9' | '9-12' | '13-18' | '18+';
+
+export type AudienceLevel = 'kids' | 'adults';
 
 export type CoverFontStyle =
   | 'kufi'
@@ -120,8 +122,10 @@ export interface SeriesContext {
   heroPhotoId?: string;
   heroName?: string;
   artStyle: ArtStyle;
+  styleConsistency?: string;
   dialect?: ArabicDialect;
   ageGroup: AgeGroup;
+  audienceLevel?: AudienceLevel;
   aspectRatio: AspectRatio;
 }
 
@@ -145,12 +149,16 @@ export interface StoryParams {
   language: Language;
   dialect?: ArabicDialect;
   ageGroup: AgeGroup;
+  audienceLevel?: AudienceLevel;
   storyType: StoryType;
   length: StoryLength;
   artStyle: ArtStyle;
+  styleConsistency?: string;
   aspectRatio: AspectRatio;
   heroName?: string;
   heroPhotoId?: string;
+  heroAgeStage?: 'child' | 'teen' | 'adult';
+  adultMode?: boolean;
   series?: SeriesContext;
   coverFontStyle?: CoverFontStyle;
   coverTextEffect?: CoverTextEffect;
@@ -179,7 +187,9 @@ export interface StoryInfo {
   title: string;
   language: string;
   age_group: string;
+  audienceLevel?: AudienceLevel;
   art_style: string;
+  styleConsistency?: string;
   aspect_ratio: AspectRatio;
   dialect?: string;
   story_type?: StoryType;
@@ -189,6 +199,7 @@ export interface StoryInfo {
   coverTextEffect?: CoverTextEffect;
   fruitFantasy?: boolean;
   themeTopic?: string;
+  adultMode?: boolean;
 }
 
 export interface QuizItem {
@@ -220,6 +231,8 @@ export interface StoryData {
   plannedPages?: number;
   coverFontStyle?: CoverFontStyle;
   coverTextEffect?: CoverTextEffect;
+  audienceLevel?: AudienceLevel;
+  styleConsistency?: string;
 }
 
 export type NarratorVoice = 'Sulafat' | 'Vindemiatrix' | 'Achernar' | 'Algieba' | 'Charon' | 'Puck' | 'Family' | 'ClonedVoice';
@@ -228,6 +241,7 @@ export interface ChildProfile {
   id: string;
   name: string;
   photoId: string;
+  ageStage?: 'child' | 'teen' | 'adult';
   createdAt: number;
 }
 

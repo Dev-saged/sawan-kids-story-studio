@@ -77,6 +77,7 @@ import {
   ArabicDialect,
   ArtStyle,
   AspectRatio,
+  AudienceLevel,
   ChildProfile,
   CoverFontStyle,
   CoverTextEffect,
@@ -95,6 +96,7 @@ import {
   deleteCustomPreset,
   listAlbumCharacters,
   listCustomPresets,
+  saveAlbumCharacter,
   saveCustomPreset,
 } from '../../services/db';
 import { getVoice, setVoice as persistVoice, VOICE_OPTIONS } from '../../services/narration';
@@ -103,8 +105,10 @@ import {
   canRequestImproveIdea,
   IMPROVE_IDEA_COOLDOWN_MS,
   improveStoryIdea,
+   resolveStyleConsistencyKeywords,
   restoreOriginalIdea,
   sanitizeUserIdeaText,
+  STYLE_CONSISTENCY_PRESETS,
 } from '../../services/gemini';
 import { ApiError } from '../../services/api';
 
@@ -274,9 +278,11 @@ interface PersistedWizardState {
   idea: string;
   dialect: ArabicDialect;
   ageGroup: AgeGroup;
+  audienceLevel?: AudienceLevel;
   storyType: StoryType;
   pageCount: number;
   artStyle: ArtStyle;
+  styleConsistency?: string;
   aspectRatio: AspectRatio;
   presetId: string;
   coverFontStyle: CoverFontStyle;
@@ -349,9 +355,15 @@ export default function StorySetupForm({ initialIdea, language, onSubmit, onLoad
   const [idea, setIdea] = useState(() => (initialIdea ?? savedWizard?.idea ?? '').slice(0, MAX_IDEA_LENGTH));
   const [dialect, setDialect] = useState<ArabicDialect>(() => series?.dialect ?? savedWizard?.dialect ?? readPreset().dialect);
   const [ageGroup, setAgeGroup] = useState<AgeGroup>(() => series?.ageGroup ?? savedWizard?.ageGroup ?? '4-6');
+  const [audienceLevel, setAudienceLevel] = useState<AudienceLevel>(() => {
+    if (series?.audienceLevel) return series.audienceLevel;
+    if (savedWizard?.audienceLevel) return savedWizard.audienceLevel;
+    return (series?.ageGroup ?? savedWizard?.ageGroup) === '18+' ? 'adults' : 'kids';
+  });
   const [storyType, setStoryType] = useState<StoryType>(() => savedWizard?.storyType ?? 'Bedtime');
   const [pageCount, setPageCount] = useState<number>(() => savedWizard?.pageCount ?? 6);
   const [artStyle, setArtStyle] = useState<ArtStyle>(() => series?.artStyle ?? savedWizard?.artStyle ?? readPreset().artStyle);
+  const [styleConsistency, setStyleConsistency] = useState<string>(() => series?.styleConsistency ?? savedWizard?.styleConsistency ?? 'auto');
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>(() => series?.aspectRatio ?? savedWizard?.aspectRatio ?? '4:3');
   const [hero, setHero] = useState<ChildProfile | null>(() => savedWizard?.hero ?? null);
   const [presetId, setPresetId] = useState<string>(() => savedWizard?.presetId ?? readPreset().id);
@@ -377,6 +389,11 @@ export default function StorySetupForm({ initialIdea, language, onSubmit, onLoad
   const [selectedFruitTemplate, setSelectedFruitTemplate] = useState<string | null>(
     () => savedWizard?.selectedFruitTemplate ?? FRUIT_FANTASY_TEMPLATES[0].id
   );
+  const [showAddCharForm, setShowAddCharForm] = useState(false);
+  const [newCharName, setNewCharName] = useState('');
+  const [newCharMaturity, setNewCharMaturity] = useState<'adult' | 'teen' | 'child'>('adult');
+  const [newCharGender, setNewCharGender] = useState<'male' | 'female'>('male');
+  const [newCharDesc, setNewCharDesc] = useState('');
   const [dailyIdeaDismissed, setDailyIdeaDismissed] = useState<boolean>(() => isDailyIdeaDismissedToday());
   const [dailyIdeaOffset, setDailyIdeaOffset] = useState<number>(0);
 
@@ -488,9 +505,11 @@ export default function StorySetupForm({ initialIdea, language, onSubmit, onLoad
       idea,
       dialect,
       ageGroup,
+      audienceLevel,
       storyType,
       pageCount,
       artStyle,
+      styleConsistency,
       aspectRatio,
       presetId,
       coverFontStyle,
@@ -509,9 +528,11 @@ export default function StorySetupForm({ initialIdea, language, onSubmit, onLoad
     idea,
     dialect,
     ageGroup,
+    audienceLevel,
     storyType,
     pageCount,
     artStyle,
+    styleConsistency,
     aspectRatio,
     presetId,
     coverFontStyle,
@@ -667,8 +688,52 @@ export default function StorySetupForm({ initialIdea, language, onSubmit, onLoad
 
   const toggleAlbumCharacter = (charId: string) => {
     setSelectedAlbumCharIds((prev) =>
-      prev.includes(charId) ? prev.filter((id) => id !== charId) : [...prev, charId].slice(0, 3)
+      prev.includes(charId) ? prev.filter((id) => id !== charId) : [...prev, charId].slice(0, 4)
     );
+  };
+
+  const handleQuickAddCharacter = async () => {
+    const trimmedName = newCharName.trim();
+    if (!trimmedName) return;
+    const ageVal = newCharMaturity === 'adult' ? '28 (adult)' : newCharMaturity === 'teen' ? '16 (teen)' : '7 (child)';
+    const genderVal =
+      newCharMaturity === 'adult'
+        ? newCharGender === 'male'
+          ? 'Adult Man'
+          : 'Adult Woman'
+        : newCharMaturity === 'teen'
+          ? newCharGender === 'male'
+            ? 'Teen Boy'
+            : 'Teen Girl'
+          : newCharGender === 'male'
+            ? 'Child Boy'
+            : 'Child Girl';
+    const defaultDesc =
+      newCharMaturity === 'adult'
+        ? newCharGender === 'male'
+          ? `Full-grown adult man (28 years old) with mature facial structure, expressive eyes, and stylish dark coat`
+          : `Full-grown adult woman (26 years old) with graceful mature features, expressive eyes, and elegant attire`
+        : newCharMaturity === 'teen'
+          ? `Expressive teenager (16 years old) with modern stylish jacket`
+          : `Cheerful young child (7 years old) with bright adventure outfit`;
+    const combinedDesc = newCharDesc.trim() ? `${defaultDesc} — ${newCharDesc.trim()}` : defaultDesc;
+    const saved = await saveAlbumCharacter({
+      name: trimmedName,
+      description: combinedDesc,
+      personality: newCharDesc.trim() || (ar ? 'شخصية رئيسية مميزة وحضور قوي' : 'Charismatic main character'),
+      age: ageVal,
+      gender: genderVal,
+    });
+    const updated = await listAlbumCharacters();
+    setAlbumCharacters(updated);
+    setSelectedAlbumCharIds((prev) => [saved.id, ...prev.filter((id) => id !== saved.id)].slice(0, 4));
+    if (newCharMaturity === 'adult' && ageGroup !== '18+') {
+      setAgeGroup('18+');
+      setIsTeenDrama(false);
+    }
+    setNewCharName('');
+    setNewCharDesc('');
+    setShowAddCharForm(false);
   };
 
   const handleDeleteAlbumCharacter = async (charId: string) => {
@@ -747,17 +812,25 @@ export default function StorySetupForm({ initialIdea, language, onSubmit, onLoad
     }
     clearStoryDraft();
     const chosenAlbumChars = albumCharacters.filter((c) => selectedAlbumCharIds.includes(c.id));
+    const hasAdultAlbumChar = chosenAlbumChars.some((c) => /adult|18\+|2\d|3\d|بالغ|كبير|رجل|امرأة/i.test(`${c.age} ${c.gender} ${c.description}`));
+    const isAdultStoryMode = audienceLevel === 'adults' || ageGroup === '18+' || hero?.ageStage === 'adult' || hasAdultAlbumChar;
+    const effectiveAudienceLevel: AudienceLevel = isAdultStoryMode ? 'adults' : 'kids';
+    const resolvedStyleConsistency = resolveStyleConsistencyKeywords(artStyle, styleConsistency);
     const params: StoryParams = {
       idea,
       language,
       dialect: ar ? dialect : undefined,
-      ageGroup,
+      ageGroup: isAdultStoryMode ? '18+' : ageGroup,
+      audienceLevel: effectiveAudienceLevel,
       storyType,
       length,
       artStyle,
+      styleConsistency: resolvedStyleConsistency,
       aspectRatio,
       heroName: series?.heroName ?? hero?.name,
       heroPhotoId: series?.heroPhotoId ?? hero?.photoId,
+      heroAgeStage: hero?.ageStage ?? (isAdultStoryMode ? 'adult' : ageGroup === '13-18' ? 'teen' : 'child'),
+      adultMode: isAdultStoryMode,
       series: series ?? undefined,
       coverFontStyle,
       coverTextEffect,
@@ -1017,6 +1090,139 @@ export default function StorySetupForm({ initialIdea, language, onSubmit, onLoad
               </div>
             </div>
 
+            {/* مستوى الجمهور (Audience Level: Kids / Adults) + شريط الفئة العمرية */}
+            <div className="space-y-2 rounded-2xl border border-dream/25 bg-dream/5 p-3 dark:border-white/10 dark:bg-white/[0.03]">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <label
+                  htmlFor="audienceLevelSelect"
+                  className="font-display text-xs sm:text-sm font-extrabold text-ink dark:text-moonlight flex items-center gap-1.5"
+                >
+                  <Users size={15} className="text-lantern shrink-0" aria-hidden />
+                  <span>{ar ? 'مستوى الجمهور (Audience Level):' : 'Audience Level (Kids / Adults):'}</span>
+                </label>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <div
+                    className="inline-flex rounded-xl border border-dream/30 bg-white/85 p-1 dark:border-white/15 dark:bg-white/10"
+                    role="group"
+                    aria-label={ar ? 'مستوى الجمهور' : 'Audience Level'}
+                  >
+                    <button
+                      type="button"
+                      data-testid="audience-kids-btn"
+                      onClick={() => {
+                        setAudienceLevel('kids');
+                        if (ageGroup === '18+') setAgeGroup('7-9');
+                      }}
+                      className={`min-h-11 rounded-lg px-3.5 py-1.5 text-xs font-extrabold transition ${
+                        audienceLevel === 'kids' && ageGroup !== '18+'
+                          ? 'bg-lantern text-ink shadow-2xs'
+                          : 'text-ink hover:bg-lantern/15 dark:text-moonlight'
+                      }`}
+                    >
+                      {ar ? 'أطفال (Kids)' : 'Kids'}
+                    </button>
+                    <button
+                      type="button"
+                      data-testid="adult-story-mode-btn"
+                      onClick={() => {
+                        setAudienceLevel('adults');
+                        setAgeGroup('18+');
+                        setIsTeenDrama(false);
+                      }}
+                      className={`min-h-11 rounded-lg px-3.5 py-1.5 text-xs font-extrabold transition ${
+                        audienceLevel === 'adults' || ageGroup === '18+'
+                          ? 'bg-lantern text-ink shadow-2xs'
+                          : 'text-ink hover:bg-lantern/15 dark:text-moonlight'
+                      }`}
+                    >
+                      {ar ? 'بالغين / للكبار (Adults 18+)' : 'Adults (18+)'}
+                    </button>
+                  </div>
+
+                  <select
+                    id="audienceLevelSelect"
+                    data-testid="audience-level-select"
+                    value={audienceLevel === 'adults' || ageGroup === '18+' ? 'adults' : 'kids'}
+                    onChange={(e) => {
+                      const nextLevel = e.target.value === 'adults' ? 'adults' : 'kids';
+                      setAudienceLevel(nextLevel);
+                      if (nextLevel === 'adults') {
+                        setAgeGroup('18+');
+                        setIsTeenDrama(false);
+                      } else if (ageGroup === '18+') {
+                        setAgeGroup('7-9');
+                      }
+                    }}
+                    aria-label={ar ? 'اختيار مستوى الجمهور' : 'Select Audience Level'}
+                    className="min-h-11 rounded-xl border border-dream/35 bg-white px-3 py-1.5 text-xs font-extrabold text-ink outline-none focus:border-lantern dark:border-white/15 dark:bg-black/40 dark:text-moonlight"
+                  >
+                    <option value="kids">{ar ? 'أطفال ويافعين (Kids)' : 'Kids (Children)'}</option>
+                    <option value="adults">{ar ? 'بالغين / قصة للكبار (Adults)' : 'Adults (Mature 18+)'}</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center justify-between gap-2 border-t border-dream/15 pt-2 dark:border-white/10">
+                <span className="text-[11px] font-bold text-ink/75 dark:text-moonlight/80">
+                  {audienceLevel === 'adults' || ageGroup === '18+'
+                    ? ar
+                      ? 'وضع الكبار مفعّل: حبكة عميقة، لغة أدبية راقية، ورسم شخصيات بالغة ناضجة بدقة سينمائية.'
+                      : 'Adults mode active: sophisticated literary tone, complex plot, and full-grown adult character proportions.'
+                    : ar
+                      ? 'وضع الأطفال مفعّل: سرد قصصي دافئ ومشوق يناسب الفئة العمرية المختارة.'
+                      : 'Kids mode active: warm, imaginative storytelling tailored to the selected age group.'}
+                </span>
+                <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label={ar ? 'الفئة العمرية السريعة' : 'Quick age group'}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAudienceLevel('kids');
+                      if (ageGroup === '18+' || ageGroup === '13-18') setAgeGroup('7-9');
+                      setIsTeenDrama(false);
+                    }}
+                    className={`min-h-11 rounded-xl px-3 py-1 text-xs font-extrabold transition ${
+                      ageGroup !== '13-18' && ageGroup !== '18+'
+                        ? 'bg-lantern text-ink shadow-2xs'
+                        : 'border border-ink/15 bg-white/80 text-ink hover:border-lantern dark:border-white/15 dark:bg-white/10 dark:text-moonlight'
+                    }`}
+                  >
+                    {ar ? 'أطفال (3-12)' : 'Kids (3-12)'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAudienceLevel('kids');
+                      setAgeGroup('13-18');
+                      setIsTeenDrama(true);
+                    }}
+                    className={`min-h-11 rounded-xl px-3 py-1 text-xs font-extrabold transition ${
+                      ageGroup === '13-18'
+                        ? 'bg-lantern text-ink shadow-2xs'
+                        : 'border border-ink/15 bg-white/80 text-ink hover:border-lantern dark:border-white/15 dark:bg-white/10 dark:text-moonlight'
+                    }`}
+                  >
+                    {ar ? 'يافعين (13-18)' : 'Teens (13-18)'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAudienceLevel('adults');
+                      setAgeGroup('18+');
+                      setIsTeenDrama(false);
+                    }}
+                    className={`min-h-11 rounded-xl px-3 py-1 text-xs font-extrabold transition ${
+                      ageGroup === '18+'
+                        ? 'bg-lantern text-ink shadow-2xs ring-2 ring-lantern/50'
+                        : 'border border-ink/15 bg-white/80 text-ink hover:border-lantern dark:border-white/15 dark:bg-white/10 dark:text-moonlight'
+                    }`}
+                  >
+                    {ar ? 'للكبار (18+)' : 'Adults (18+)'}
+                  </button>
+                </div>
+              </div>
+            </div>
+
             <textarea
               ref={ideaInputRef}
               id="idea"
@@ -1026,7 +1232,15 @@ export default function StorySetupForm({ initialIdea, language, onSubmit, onLoad
                 if (stepValidationError) setStepValidationError(false);
               }}
               rows={3}
-              placeholder={ar ? 'أرنب صغير شجاع يكتشف سر النجوم المضيئة في البستان...' : 'A brave little rabbit who discovers the secret of glowing stars...'}
+              placeholder={
+                ageGroup === '18+'
+                  ? ar
+                    ? 'اكتب فكرة قصتك للكبار أو عن شخص كبير تعرفه (مثال: شاب طموح يخوض رحلة غامضة في مدينة قديمة...)'
+                    : 'Write your adult story idea or about an adult character you know...'
+                  : ar
+                    ? 'أرنب صغير شجاع يكتشف سر النجوم المضيئة في البستان...'
+                    : 'A brave little rabbit who discovers the secret of glowing stars...'
+              }
               aria-invalid={tooShort || stepValidationError}
               className={`w-full rounded-2xl border bg-white/90 px-3.5 py-2.5 text-sm sm:text-base leading-relaxed text-ink outline-none transition focus:ring-2 dark:bg-white/[0.06] dark:text-moonlight resize-none ${
                 tooShort || stepValidationError
@@ -1201,61 +1415,169 @@ export default function StorySetupForm({ initialIdea, language, onSubmit, onLoad
             </p>
           </div>
 
-          {/* 2. الطفل البطل + ألبوم الشخصيات المحفوظة */}
-          {!series && <HeroPicker ar={ar} selectedId={hero?.id ?? null} onSelect={setHero} />}
+          {/* 2. البطل (طفل أو شخص كبير) + بناء شخصيات القصة المخصصة */}
+          {!series && (
+            <HeroPicker
+              ar={ar}
+              selectedId={hero?.id ?? null}
+              onSelect={(selectedHero) => {
+                setHero(selectedHero);
+                if (selectedHero?.ageStage === 'adult') {
+                  setAgeGroup('18+');
+                  setIsTeenDrama(false);
+                } else if (selectedHero?.ageStage === 'teen') {
+                  setAgeGroup('13-18');
+                }
+              }}
+            />
+          )}
 
-          {!series && albumCharacters.length > 0 && (
-            <div className="luxury-card p-3.5 sm:p-4 space-y-2.5">
-              <div className="flex items-center justify-between gap-2">
-                <span className="font-display text-xs sm:text-sm font-extrabold text-ink dark:text-moonlight flex items-center gap-1.5">
-                  <Users size={15} className="text-lantern" />
-                  <span>{ar ? 'من ألبومي (شخصيات محفوظة)' : 'From My Character Album'}</span>
-                </span>
-                <span className="text-[11px] font-semibold text-ink/60 dark:text-moonlight/60">
-                  {ar ? `${selectedAlbumCharIds.length}/3` : `${selectedAlbumCharIds.length}/3`}
-                </span>
+          {!series && (
+            <div className="luxury-card p-3.5 sm:p-4 space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <span className="font-display text-xs sm:text-sm font-extrabold text-ink dark:text-moonlight flex items-center gap-1.5">
+                    <Users size={15} className="text-lantern" />
+                    <span>{ar ? 'شخصيات القصة (أضف شخصاً كبيراً أو طفلاً بالاسم والملامح)' : 'Story Characters (Add Adult or Child Characters)'}</span>
+                  </span>
+                  <p className="text-[11px] text-ink/65 dark:text-moonlight/70">
+                    {ar
+                      ? 'حدد أبطال قصتك وأعمارهم (شخص كبير بالغ، شاب، أو طفل) ليتم رسمهم بدقة وثبات في جميع الصفحات.'
+                      : 'Define your characters and their maturity (adult, teen, or child) for accurate illustrations on every page.'}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowAddCharForm((v) => !v)}
+                  className="inline-flex min-h-11 shrink-0 items-center gap-1.5 rounded-xl bg-lantern px-3.5 py-1.5 text-xs font-extrabold text-ink shadow-2xs transition hover:brightness-105 active:scale-95"
+                >
+                  <BookmarkPlus size={14} aria-hidden />
+                  <span>{showAddCharForm ? (ar ? 'إغلاق' : 'Close') : ar ? '+ أضف شخصية للقصة' : '+ Add Character'}</span>
+                </button>
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                {albumCharacters.map((c) => {
-                  const selected = selectedAlbumCharIds.includes(c.id);
-                  return (
-                    <div
-                      key={c.id}
-                      className={`flex items-center justify-between gap-2 rounded-2xl border p-2.5 transition ${
-                        selected
-                          ? 'border-lantern bg-lantern/15 shadow-xs'
-                          : 'border-dream/25 bg-white/60 dark:border-white/10 dark:bg-white/5'
-                      }`}
-                    >
-                      <button
-                        type="button"
-                        onClick={() => toggleAlbumCharacter(c.id)}
-                        className="flex min-h-11 flex-1 items-center gap-2 text-start"
-                      >
-                        <span
-                          className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full border text-xs font-bold ${
-                            selected ? 'border-lantern bg-lantern text-ink' : 'border-dream/40 text-ink/60 dark:text-moonlight/60'
+
+              {showAddCharForm && (
+                <div className="space-y-2.5 rounded-2xl border border-lantern/40 bg-lantern/10 p-3 dark:bg-white/5">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    <input
+                      type="text"
+                      value={newCharName}
+                      onChange={(e) => setNewCharName(e.target.value.slice(0, 40))}
+                      placeholder={ar ? 'اسم الشخصية (مثال: طارق، ليلى...)' : 'Character name (e.g., Tariq, Layla)'}
+                      className="min-h-11 rounded-xl border border-dream/35 bg-white px-3 text-xs sm:text-sm font-bold text-ink outline-none focus:border-lantern dark:border-white/15 dark:bg-black/30 dark:text-moonlight"
+                    />
+                    <input
+                      type="text"
+                      value={newCharDesc}
+                      onChange={(e) => setNewCharDesc(e.target.value.slice(0, 180))}
+                      placeholder={ar ? 'الملامح واللباس والدور (مثال: مهندس بلحية خفيفة ومعطف كحلي)' : 'Appearance, outfit & role (e.g., bearded architect in navy coat)'}
+                      className="min-h-11 rounded-xl border border-dream/35 bg-white px-3 text-xs sm:text-sm text-ink outline-none focus:border-lantern dark:border-white/15 dark:bg-black/30 dark:text-moonlight"
+                    />
+                  </div>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {(
+                        [
+                          { id: 'adult', ar: 'شخص كبير / بالغ (18+)', en: 'Adult (18+)' },
+                          { id: 'teen', ar: 'شاب / شابة (13-18)', en: 'Teen (13-18)' },
+                          { id: 'child', ar: 'طفل / طفلة', en: 'Child' },
+                        ] as const
+                      ).map((m) => (
+                        <button
+                          key={m.id}
+                          type="button"
+                          onClick={() => setNewCharMaturity(m.id)}
+                          className={`min-h-9 rounded-xl px-2.5 py-1 text-xs font-extrabold transition ${
+                            newCharMaturity === m.id
+                              ? 'bg-ink text-paper dark:bg-lantern dark:text-ink'
+                              : 'border border-ink/20 bg-white/85 text-ink dark:border-white/15 dark:bg-white/10 dark:text-moonlight'
                           }`}
                         >
-                          {selected ? <Check size={14} /> : c.name.slice(0, 1)}
-                        </span>
-                        <div className="min-w-0 flex-1">
-                          <p className="font-display text-xs font-extrabold text-ink dark:text-moonlight truncate">{c.name}</p>
-                          <p className="text-[11px] text-ink/60 dark:text-moonlight/60 truncate">{c.personality || c.description}</p>
-                        </div>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleDeleteAlbumCharacter(c.id)}
-                        className="flex min-h-11 min-w-11 items-center justify-center rounded-xl text-ink/45 hover:text-coral dark:text-moonlight/45"
-                        aria-label={ar ? 'حذف من الألبوم' : 'Remove from album'}
-                      >
-                        <Trash2 size={14} />
-                      </button>
+                          {ar ? m.ar : m.en}
+                        </button>
+                      ))}
+                      {(
+                        [
+                          { id: 'male', ar: 'ذكر', en: 'Male' },
+                          { id: 'female', ar: 'أنثى', en: 'Female' },
+                        ] as const
+                      ).map((g) => (
+                        <button
+                          key={g.id}
+                          type="button"
+                          onClick={() => setNewCharGender(g.id)}
+                          className={`min-h-9 rounded-xl px-2.5 py-1 text-xs font-extrabold transition ${
+                            newCharGender === g.id
+                              ? 'bg-lantern text-ink'
+                              : 'border border-ink/20 bg-white/85 text-ink dark:border-white/15 dark:bg-white/10 dark:text-moonlight'
+                          }`}
+                        >
+                          {ar ? g.ar : g.en}
+                        </button>
+                      ))}
                     </div>
-                  );
-                })}
-              </div>
+                    <button
+                      type="button"
+                      disabled={!newCharName.trim()}
+                      onClick={handleQuickAddCharacter}
+                      className="inline-flex min-h-10 items-center gap-1.5 rounded-xl bg-lantern px-4 py-1.5 text-xs font-extrabold text-ink shadow-2xs disabled:opacity-40"
+                    >
+                      <Check size={14} aria-hidden />
+                      <span>{ar ? 'حفظ وإدراج في القصة' : 'Save & Include'}</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {albumCharacters.length > 0 && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {albumCharacters.map((c) => {
+                    const selected = selectedAlbumCharIds.includes(c.id);
+                    const isAdultChar = /adult|18\+|2\d|3\d|بالغ|كبير/i.test(`${c.age} ${c.gender}`);
+                    return (
+                      <div
+                        key={c.id}
+                        className={`flex items-center justify-between gap-2 rounded-2xl border p-2.5 transition ${
+                          selected
+                            ? 'border-lantern bg-lantern/15 shadow-xs'
+                            : 'border-dream/25 bg-white/60 dark:border-white/10 dark:bg-white/5'
+                        }`}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => toggleAlbumCharacter(c.id)}
+                          className="flex min-h-11 flex-1 items-center gap-2 text-start"
+                        >
+                          <span
+                            className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full border text-xs font-bold ${
+                              selected ? 'border-lantern bg-lantern text-ink' : 'border-dream/40 text-ink/60 dark:text-moonlight/60'
+                            }`}
+                          >
+                            {selected ? <Check size={14} /> : c.name.slice(0, 1)}
+                          </span>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-1.5">
+                              <p className="font-display text-xs font-extrabold text-ink dark:text-moonlight truncate">{c.name}</p>
+                              <span className="rounded-md bg-ink/10 px-1.5 py-0.5 text-[10px] font-bold text-ink dark:bg-white/15 dark:text-moonlight">
+                                {isAdultChar ? (ar ? 'بالغ 18+' : 'Adult') : c.age}
+                              </span>
+                            </div>
+                            <p className="text-[11px] text-ink/60 dark:text-moonlight/60 truncate">{c.personality || c.description}</p>
+                          </div>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteAlbumCharacter(c.id)}
+                          className="flex min-h-11 min-w-11 items-center justify-center rounded-xl text-ink/45 hover:text-coral dark:text-moonlight/45"
+                          aria-label={ar ? 'حذف من الألبوم' : 'Remove from album'}
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           )}
 
@@ -1623,8 +1945,8 @@ export default function StorySetupForm({ initialIdea, language, onSubmit, onLoad
             )}
           </div>
 
-          {/* 3. الأسلوب الفني (18 أسلوباً بمعاينات StyleThumb SVG مضغوطة لتناسب موبايل 390px) */}
-          <div className="luxury-card p-3.5 sm:p-4 space-y-2.5">
+          {/* 3. الأسلوب الفني (18 أسلوباً بمعاينات StyleThumb SVG مضغوطة لتناسب موبايل 390px) + قفل ثبات الأسلوب الفني (Style Consistency) */}
+          <div className="luxury-card p-3.5 sm:p-4 space-y-3">
             <div className="flex items-center justify-between gap-2">
               <label className="font-display text-xs sm:text-sm font-extrabold text-ink dark:text-moonlight flex items-center gap-1.5">
                 <Palette size={15} className="text-lantern" aria-hidden />
@@ -1661,6 +1983,37 @@ export default function StorySetupForm({ initialIdea, language, onSubmit, onLoad
                   </button>
                 );
               })}
+            </div>
+
+            {/* قفل ثبات الأسلوب الفني (Style Consistency Parameter) */}
+            <div className="space-y-2 rounded-2xl border border-lantern/35 bg-lantern/10 p-3 dark:bg-white/5">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <label
+                  htmlFor="styleConsistencySelect"
+                  className="font-display text-xs font-extrabold text-ink dark:text-moonlight flex items-center gap-1.5"
+                >
+                  <ShieldCheck size={15} className="text-lantern shrink-0" aria-hidden />
+                  <span>{ar ? 'تثبيت الهوية البصرية (Style Consistency):' : 'Style Consistency Lock:'}</span>
+                </label>
+                <select
+                  id="styleConsistencySelect"
+                  data-testid="style-consistency-select"
+                  value={styleConsistency}
+                  onChange={(e) => setStyleConsistency(e.target.value)}
+                  className="min-h-11 rounded-xl border border-dream/35 bg-white px-3 py-1.5 text-xs font-extrabold text-ink outline-none focus:border-lantern dark:border-white/15 dark:bg-black/40 dark:text-moonlight"
+                >
+                  {STYLE_CONSISTENCY_PRESETS.map((preset) => (
+                    <option key={preset.id} value={preset.id}>
+                      {ar ? preset.label.ar : preset.label.en}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <p className="text-[11px] font-medium text-ink/75 dark:text-moonlight/80">
+                {ar
+                  ? `الكلمات المقفلة لضمان فخامة وثبات الرسم: ${resolveStyleConsistencyKeywords(artStyle, styleConsistency)}`
+                  : `Locked theme keywords: ${resolveStyleConsistencyKeywords(artStyle, styleConsistency)}`}
+              </p>
             </div>
           </div>
 
@@ -1807,6 +2160,7 @@ export default function StorySetupForm({ initialIdea, language, onSubmit, onLoad
                 value={ageGroup}
                 onChange={(val) => {
                   setAgeGroup(val);
+                  setAudienceLevel(val === '18+' ? 'adults' : 'kids');
                   setIsTeenDrama(val === '13-18');
                 }}
                 searchable={false}

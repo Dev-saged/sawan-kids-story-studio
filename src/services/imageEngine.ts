@@ -3,7 +3,7 @@ import { getUserApiKey, keyShape } from './apiKey';
 import { hashText } from './db';
 import { base64ToBlob, cropToAspect } from './media';
 import { NO_SIZE_IMAGE_MODELS, POSITIVE_ILLUSTRATION_DIRECTIVE } from '../../shared/config.ts';
-import type { AspectRatio } from '../types';
+import type { AspectRatio, AudienceLevel } from '../types';
 
 // طبقة الصور الموحدة: كل رسم في التطبيق يمر من هنا
 export type EngineId = 'direct-user' | 'server' | 'direct-env';
@@ -15,6 +15,8 @@ export interface ImageRequest {
   references?: { data: string; mimeType: string }[];
   kind?: string;
   artStyle?: string;
+  styleConsistency?: string;
+  audienceLevel?: AudienceLevel;
 }
 
 // سجل تقني لكل صورة مرسومة: المحرك الذي رسمها وأول 300 حرف من الطلب المرسل فعلاً
@@ -53,8 +55,11 @@ export class SkippedImage extends Error {}
 // نماذج Gemini الفعلية لتوليد الصور
 export const DIRECT_MODELS = [
   'gemini-2.5-flash-image',
+  'gemini-3.1-flash-lite-image',
   'gemini-3.1-flash-image-preview',
+  'gemini-nano-banana-2.1',
   'gemini-3-pro-image-preview',
+  'gemini-3-pro-image',
 ];
 const DIRECT_TIMEOUT = 60_000;
 const HARD_DOWN_MS = 30 * 60_000;
@@ -139,14 +144,29 @@ const withTimeout = <T,>(p: Promise<T>, ms: number): Promise<T> => {
 
 const failed = (trail: TrailItem[]): Error & { trail: TrailItem[] } => Object.assign(new Error('engine failed'), { trail });
 
-// يبني النص النهائي المرسل للنموذج مع الحفاظ على المشهد (Scene:) في الصدارة دائماً
-export const buildFinalImageText = (rawPrompt: string, hasRefs: boolean): string => {
+// يبني النص النهائي المرسل للنموذج مع الحفاظ على المشهد (Scene:) في الصدارة دائماً وتثبيت الأسلوب الفني
+export const buildFinalImageText = (
+  rawPrompt: string,
+  hasRefs: boolean,
+  styleConsistency?: string,
+  audienceLevel?: AudienceLevel
+): string => {
   const base = rawPrompt.trim();
+  const cleanConsistency = (styleConsistency ?? '').trim();
+  const hasConsistencyAlready = cleanConsistency && base.toLowerCase().includes(cleanConsistency.slice(0, 18).toLowerCase());
+  const consistencyLine =
+    cleanConsistency && cleanConsistency.toLowerCase() !== 'auto' && !hasConsistencyAlready
+      ? `\nStyle consistency: ${cleanConsistency}, cinematic lighting, high-fidelity, concept art style, detailed textures.`
+      : '';
+  const audienceLine =
+    audienceLevel === 'adults' && !/mature|adult/i.test(base)
+      ? '\nAudience: Adult story — depict characters with mature adult proportions and sophisticated cinematic atmosphere.'
+      : '';
   const withDirective = base.includes(POSITIVE_ILLUSTRATION_DIRECTIVE)
-    ? base
-    : `${base}\n${POSITIVE_ILLUSTRATION_DIRECTIVE}`;
+    ? `${base}${consistencyLine}${audienceLine}`
+    : `${base}${consistencyLine}${audienceLine}\n${POSITIVE_ILLUSTRATION_DIRECTIVE}`;
   return hasRefs
-    ? `${withDirective}\nKeep exact character appearance from attached reference.`
+    ? `${withDirective}\nUse attached image strictly as character face/outfit reference while composing the full dynamic scene above.`
     : withDirective;
 };
 
@@ -175,7 +195,7 @@ const runDirect = async (eng: Engine, req: ImageRequest, signal?: AbortSignal): 
     let retriedWithoutRef = false;
     for (let attempt = 0; attempt < 2; attempt++) {
       if (signal?.aborted) throw abortError();
-      const text = buildFinalImageText(req.prompt, currentRefs.length > 0);
+      const text = buildFinalImageText(req.prompt, currentRefs.length > 0, req.styleConsistency, req.audienceLevel);
       try {
         const parts: any[] = currentRefs.length
           ? [...currentRefs.map((r) => ({ inlineData: { data: r.data, mimeType: r.mimeType } })), { text }]
@@ -272,7 +292,15 @@ const runServer = async (req: ImageRequest, signal?: AbortSignal): Promise<Blob>
     promptSnippet?: string;
   }>(
     '/api/generate-image',
-    { prompt: req.prompt, aspectRatio: req.aspectRatio, references: req.references, kind: req.kind, artStyle: req.artStyle },
+    {
+      prompt: req.prompt,
+      aspectRatio: req.aspectRatio,
+      references: req.references,
+      kind: req.kind,
+      artStyle: req.artStyle,
+      styleConsistency: req.styleConsistency,
+      audienceLevel: req.audienceLevel,
+    },
     signal
   );
   if (data?.skipped) throw new SkippedImage('Image skipped: free engine takes no reference sheet.');

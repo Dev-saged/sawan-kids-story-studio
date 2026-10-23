@@ -138,8 +138,10 @@ export default function App() {
       characterSheetId: story.characterSheetId,
       heroPhotoId: story.heroPhotoId,
       artStyle: story.story_info.art_style as SeriesContext['artStyle'],
+      styleConsistency: story.styleConsistency ?? story.story_info.styleConsistency,
       dialect: story.story_info.dialect as SeriesContext['dialect'],
       ageGroup: story.story_info.age_group as SeriesContext['ageGroup'],
+      audienceLevel: story.audienceLevel ?? story.story_info.audienceLevel,
       aspectRatio: story.story_info.aspect_ratio,
     });
     setStage('idle');

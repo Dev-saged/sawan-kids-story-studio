@@ -19,7 +19,14 @@ self.addEventListener('fetch', (e) => {
   const req = e.request;
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
-  if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/assets/aistudio/')) return;
+  if (
+    url.pathname.startsWith('/api/') ||
+    url.pathname.startsWith('/assets/aistudio/') ||
+    url.pathname.startsWith('/node_modules/') ||
+    url.pathname.startsWith('/src/') ||
+    url.pathname.startsWith('/@')
+  )
+    return;
 
   // الصفحة: الشبكة أولاً ثم النسخة المخزنة
   if (req.mode === 'navigate') {

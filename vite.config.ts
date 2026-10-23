@@ -46,9 +46,27 @@ export default defineConfig(({ command, mode }) => {
     },
     plugins: [react(), tailwindcss(), versionManifestPlugin()],
     resolve: {
+      dedupe: ['react', 'react-dom', 'react/jsx-runtime', 'react/jsx-dev-runtime'],
       alias: {
         '@': path.resolve(__dirname, './src'),
       },
+    },
+    optimizeDeps: {
+      entries: ['index.html', 'src/**/*.{ts,tsx}'],
+      include: [
+        'react',
+        'react-dom',
+        'react-dom/client',
+        'react/jsx-runtime',
+        'react/jsx-dev-runtime',
+        'lucide-react',
+        'framer-motion',
+        'html2canvas',
+        'jspdf',
+        'jszip',
+        'file-saver',
+        'mp4-muxer',
+      ],
     },
   };
 });

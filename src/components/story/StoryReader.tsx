@@ -30,6 +30,8 @@ import {
   BookmarkPlus,
   Check,
   MessageSquareWarning,
+  ZoomIn,
+  Palette,
 } from 'lucide-react';
 import { ArtStyle, Character, CoverFontStyle, CoverTextEffect, Language, NarratorVoice, PageImage, PDFPreset, StoryData, StoryPage } from '../../types';
 import { ART_STYLE_OPTIONS, COVER_EFFECT_OPTIONS, COVER_FONT_OPTIONS, getCoverTitleClasses } from '../../constants';
@@ -38,7 +40,7 @@ import { exportBundle } from '../../services/storyBundle';
 import { recordGame } from '../../services/progress';
 import { toSrc } from '../../services/media';
 import { VOICE_OPTIONS } from '../../services/narration';
-import { suggestAlternativeTitles } from '../../services/gemini';
+import { analyzeTextSentimentAndPalette, suggestAlternativeTitles } from '../../services/gemini';
 import { saveAlbumCharacter } from '../../services/db';
 import { useIllustrator } from '../../hooks/useIllustrator';
 import { useNarration } from '../../hooks/useNarration';
@@ -61,6 +63,7 @@ import FullPageEditor from './FullPageEditor';
 import InteractiveBranches from './InteractiveBranches';
 import VoiceClonerModal from './VoiceClonerModal';
 import PrintPreviewModal from './PrintPreviewModal';
+import { ImageMagnifierModal } from './ImageMagnifierModal';
 import { ambientEngine, detectAmbientEnvironment, AMBIENT_PRESETS } from '../../services/ambientAudio';
 import { Rotate3D, ShieldCheck, AudioWaveform, VolumeX, Volume2 as VolumeIcon } from 'lucide-react';
 
@@ -93,6 +96,12 @@ export default function StoryReader({ storyData, language, printableContainerId 
   const [fullEditMode, setFullEditMode] = useState(false);
   const [showVoiceCloner, setShowVoiceCloner] = useState(false);
   const [showPrintPreview, setShowPrintPreview] = useState(false);
+  const [magnifierTarget, setMagnifierTarget] = useState<{
+    src: string;
+    title: string;
+    pageText?: string;
+    scenePrompt?: string;
+  } | null>(null);
 
   // ب4: تحرير الأسلوب أو الشخصيات عند بوابة المعاينة
   const [showPreviewChangePanel, setShowPreviewChangePanel] = useState(false);
@@ -117,6 +126,10 @@ export default function StoryReader({ storyData, language, printableContainerId 
 
   const page = storyData.pages[pageIndex] || storyData.pages[0];
   const imageSrc = toSrc(page?.generatedImage);
+  const pageSentiment = useMemo(
+    () => analyzeTextSentimentAndPalette(page?.text || '', page?.image_prompt || ''),
+    [page?.text, page?.image_prompt]
+  );
   const illustratedCount = storyData.pages.filter((p) => p.generatedImage).length;
   const allDrawn = illustratedCount === storyData.pages.length;
 
@@ -249,6 +262,24 @@ export default function StoryReader({ storyData, language, printableContainerId 
           </div>
         )}
         <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/25 to-transparent" />
+        {storyData.coverImage && (
+          <button
+            type="button"
+            onClick={() =>
+              setMagnifierTarget({
+                src: storyData.coverImage!,
+                title: ar ? `غلاف: ${storyData.story_info.title}` : `Cover: ${storyData.story_info.title}`,
+                pageText: storyData.pages[0]?.text || storyData.story_info.title,
+                scenePrompt: storyData.cover_image_prompt || storyData.pages[0]?.image_prompt,
+              })
+            }
+            className="absolute top-3 end-3 z-20 inline-flex min-h-11 items-center gap-1.5 rounded-full bg-black/65 px-3.5 text-xs font-extrabold text-white shadow-sm backdrop-blur-xs transition hover:bg-black/85 active:scale-95"
+            title={ar ? 'تكبير وفحص تفاصيل الغلاف بعدسة HD' : 'Zoom & inspect cover details with HD loupe'}
+          >
+            <ZoomIn size={14} className="text-lantern" />
+            <span>{ar ? 'تكبير الغلاف' : 'Zoom Cover'}</span>
+          </button>
+        )}
         <div className="absolute inset-x-0 bottom-0 flex flex-col gap-2 p-4" dir={ar ? 'rtl' : 'ltr'}>
           <div className="flex items-end justify-between gap-3">
             <div className="min-w-0 flex-1">
@@ -666,11 +697,46 @@ export default function StoryReader({ storyData, language, printableContainerId 
                   ar={ar}
                   className="h-full w-full"
                 />
-                <div className="absolute top-3 end-3 flex items-center gap-1 rounded-full bg-black/40 px-3 py-1 text-xs font-medium text-white backdrop-blur-xs">
-                  <Sparkles size={12} className="text-star" />
-                  <span>{storyData.story_info.art_style || 'Illustrated'}</span>
+                <div className="absolute top-3 end-3 flex flex-wrap items-center gap-1.5 z-20">
+                  <div
+                    className="flex items-center gap-1.5 rounded-full bg-black/65 px-3 py-1 text-[11px] font-bold text-white backdrop-blur-xs"
+                    title={
+                      ar
+                        ? `طيف الألوان العاطفي التلقائي: ${pageSentiment.paletteDescriptor}`
+                        : `Auto Emotional Color Palette: ${pageSentiment.paletteDescriptor}`
+                    }
+                  >
+                    <Palette size={12} className="text-lantern" />
+                    <span
+                      className="h-2.5 w-2.5 rounded-full ring-1 ring-white/60"
+                      style={{ backgroundColor: pageSentiment.swatchHex }}
+                    />
+                    <span>{ar ? pageSentiment.label.ar : pageSentiment.label.en}</span>
+                  </div>
+                  <div className="flex items-center gap-1 rounded-full bg-black/55 px-3 py-1 text-xs font-medium text-white backdrop-blur-xs">
+                    <Sparkles size={12} className="text-star" />
+                    <span>{storyData.story_info.art_style || 'Illustrated'}</span>
+                  </div>
                 </div>
-                <div className="absolute bottom-3 end-3 flex gap-2 z-20">
+                <div className="absolute bottom-3 end-3 flex flex-wrap gap-2 z-20">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setMagnifierTarget({
+                        src: imageSrc,
+                        title: ar
+                          ? `مشهد ${page?.page || pageIndex + 1} — ${storyData.story_info.title}`
+                          : `Scene ${page?.page || pageIndex + 1} — ${storyData.story_info.title}`,
+                        pageText: page?.text,
+                        scenePrompt: page?.image_prompt,
+                      })
+                    }
+                    className="flex min-h-11 items-center gap-1.5 rounded-full bg-lantern px-3.5 text-xs font-extrabold text-ink shadow-sm transition hover:brightness-105 active:scale-95"
+                    title={ar ? 'تكبير الصورة وفحص تفاصيل الشخصيات والخلفية بعدسة HD' : 'Zoom & inspect character and background details with HD loupe'}
+                  >
+                    <ZoomIn size={15} />
+                    <span>{ar ? 'تكبير وفحص التفاصيل' : 'Zoom & Inspect'}</span>
+                  </button>
                   <button
                     type="button"
                     onClick={() => illustrator.retryPage(page.page, true)}
@@ -1221,6 +1287,19 @@ export default function StoryReader({ storyData, language, printableContainerId 
           ar={ar}
           onClose={() => setShowPrintPreview(false)}
           onStoryUpdated={(updated) => onStoryChange(() => updated)}
+        />
+      )}
+
+      {magnifierTarget && (
+        <ImageMagnifierModal
+          src={magnifierTarget.src}
+          title={magnifierTarget.title}
+          pageText={magnifierTarget.pageText}
+          scenePrompt={magnifierTarget.scenePrompt}
+          artStyle={storyData.story_info.art_style}
+          styleConsistency={storyData.styleConsistency || storyData.story_info.styleConsistency}
+          ar={ar}
+          onClose={() => setMagnifierTarget(null)}
         />
       )}
 

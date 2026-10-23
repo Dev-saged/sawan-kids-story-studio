@@ -56,9 +56,10 @@ export const AGE_GROUPS: { value: AgeGroup; label: string; desc: { en: string; a
   { value: '7-9', label: '7-9', desc: { en: 'Longer stories with adventures and clear characters', ar: 'قصص أطول بمغامرات وشخصيات واضحة' } },
   { value: '9-12', label: '9-12', desc: { en: 'Advanced stories with deeper plots', ar: 'قصص متقدمة بأحداث أعمق' } },
   { value: '13-18', label: '13-18', desc: { en: 'Dramatic young adult sagas & mystery', ar: 'قصص درامية مشوقة لليافعين والشباب' } },
+  { value: '18+', label: '18+ (للكبار)', desc: { en: 'Mature, deep literary stories & adult characters', ar: 'قصص ناضجة وعميقة للكبار بشخصيات بالغة' } },
 ];
 
-export const PROMPT_LIMITS: Record<AgeGroup, number> = { '3-4': 5, '4-6': 8, '7-9': 10, '9-12': 15, '13-18': 18 };
+export const PROMPT_LIMITS: Record<AgeGroup, number> = { '3-4': 5, '4-6': 8, '7-9': 10, '9-12': 15, '13-18': 12, '18+': 10 };
 
 export const SECONDS_PER_PAGE = 25;
 
@@ -73,6 +74,7 @@ export const SURPRISE_PROMPTS: Record<Language, string[]> = {
     'An epic dramatic fruit kingdom saga for young adults: The high-stakes feud between the Ancient Pomegranate Citadel and the Citrus Enclave over the mystical core seed.',
     'CyberFruit 2099: A squad of cyber-enhanced fruit rebels navigating a neon mega-orchard to solve the disappearance of the solar power grid.',
     'A young adult mystery adventure in the uncharted orchards: Three brave teens unravel an ancient riddle carved on the legendary Whispering Tree.',
+    'An epic anime saga for adults: A seasoned swordsman and a brilliant strategist reunite in a rain-swept fortress to uncover a royal betrayal and restore honor.',
   ],
   Arabic: [
     'قصة أرنب صغير شجاع يدعى لوز يذهب في مغامرة كبيرة ليتعلم كيف يساعد أصدقاءه في الغابة.',
@@ -83,6 +85,7 @@ export const SURPRISE_PROMPTS: Record<Language, string[]> = {
     'سايبر فروت 2099: فريق من محاربي الفواكه في مدينة النيون المستقبلية يكتشفون مؤامرة سرية بمختبرات الطاقة البيولوجية ويسابقون الزمن لإنقاذ الشجرة الأم.',
     'مغامرة بقاء وغموض لليافعين: ثلاثة أصدقاء شجعان يتوغلون في بساتين البرية المجهولة ويفكون طلاسم الباب الحجري المنقوش على شجرة الحكمة القديمة.',
     'دراما فلسفية ملهمة لليافعين: بطل شاب يكتشف أن قوته الحقيقية ليست في أسلحته، بل في اختياراته وشجاعته عندما يواجه حقيقة ماضيه وتحديات مصيره.',
+    'ملحمة درامية للكبار بأسلوب أنمي فخم: القائد كنعان يعود إلى مدينته القديمة بعد سنوات الغياب ليكشف سر المخطوطة المفقودة ويواجه خصمه القديم بحكمة وشجاعة.',
   ],
 };
 
@@ -93,6 +96,7 @@ export const SMART_TIPS: Record<Language, Record<AgeGroup, string>> = {
     '7-9': 'Add an exciting adventure with connected events.',
     '9-12': 'Think about a real challenge and a meaningful message.',
     '13-18': 'Craft an intense, character-driven saga with dramatic stakes, mysteries, and moral choices.',
+    '18+': 'Write a deep, mature story with adult characters, realistic conflicts, or epic themes tailored for adult readers.',
   },
   Arabic: {
     '3-4': 'اكتب قصة بسيطة عن حيوان لطيف أو لون جميل.',
@@ -100,6 +104,7 @@ export const SMART_TIPS: Record<Language, Record<AgeGroup, string>> = {
     '7-9': 'أضف مغامرة ممتعة وأحداثًا مترابطة.',
     '9-12': 'فكّر في تحدٍّ حقيقي ورسالة مفيدة في القصة.',
     '13-18': 'ابتكر حبكة درامية مشوقة ذات أبعاد عميقة وتحديات مصيرية لليافعين والشباب.',
+    '18+': 'اكتب قصة ناضجة وعميقة بشخصيات كبيرة وبالغة، مع أحداث درامية أو ملحمية تناسب الكبار.',
   },
 };
 

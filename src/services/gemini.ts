@@ -1,4 +1,4 @@
-import { Character, Language, NameAnalysis, QuizItem, StoryData, StoryParams, StoryPage } from '../types';
+import { AudienceLevel, Character, Language, NameAnalysis, QuizItem, StoryData, StoryParams, StoryPage } from '../types';
 import { ART_STYLE_OPTIONS, FIRST_BATCH_PAGES, MAX_IDEA_LENGTH, MAX_STORY_PAGES, NEXT_BATCH_PAGES } from '../constants';
 import { POSITIVE_ILLUSTRATION_DIRECTIVE } from '../shared/modelRules';
 import { ApiError, authHeaders, codeFromStatus, postJson, trackApiCall } from './api';
@@ -6,9 +6,202 @@ import { base64ToBlob } from './media';
 
 export const API_KEY_MISSING = 'API_KEY_MISSING';
 
-export const getArtStylePrompt = (style: string): string => {
+export interface StyleConsistencyPreset {
+  id: string;
+  label: { ar: string; en: string };
+  keywords: string;
+}
+
+export const STYLE_CONSISTENCY_PRESETS: StyleConsistencyPreset[] = [
+  {
+    id: 'auto',
+    label: { ar: 'تلقائي حسب الأسلوب الفني المختار', en: 'Auto-lock to Selected Art Style' },
+    keywords: '',
+  },
+  {
+    id: 'studio ghibli',
+    label: { ar: 'استوديو جيبلي (Studio Ghibli)', en: 'Studio Ghibli Masterpiece' },
+    keywords: 'studio ghibli anime masterpiece, hand-painted lush background, expressive cel-shaded characters',
+  },
+  {
+    id: 'makoto shinkai anime',
+    label: { ar: 'أنمي سينمائي فخم (Ufotable / Shinkai)', en: 'Luxury Anime (Ufotable / Makoto Shinkai)' },
+    keywords: 'ufotable and makoto shinkai luxury anime key visual, razor-sharp cel shading, dramatic rim lighting',
+  },
+  {
+    id: 'hyper-realistic digital painting',
+    label: { ar: 'رسم رقمي واقعي فائق (Hyper-Realistic Digital Painting)', en: 'Hyper-Realistic Digital Painting' },
+    keywords: 'hyper-realistic digital painting, concept art style, lifelike skin and fabric textures, 85mm depth',
+  },
+  {
+    id: 'pixar 3d animation',
+    label: { ar: 'بيكسار ثلاثي الأبعاد فخم (3D Feature Render)', en: '3D Feature Animation Render' },
+    keywords: 'pixar 3d CGI feature-film studio render, volumetric lighting, detailed subsurface textures',
+  },
+  {
+    id: 'cinematic concept art',
+    label: { ar: 'كونسبت آرت سينمائي ملحمي (Cinematic Concept Art)', en: 'Epic Cinematic Concept Art' },
+    keywords: 'masterpiece cinematic concept art style, dramatic chiaroscuro lighting, intricate world textures',
+  },
+  {
+    id: 'luxury watercolor storybook',
+    label: { ar: 'ألوان مائية فنية فاخرة (Luxury Watercolor)', en: 'Luxury Fine-Art Watercolor' },
+    keywords: 'luxury fine-art watercolor illustration, luminous washes, cold-press paper texture, ink detail',
+  },
+  {
+    id: 'graphic novel comic',
+    label: { ar: 'رواية مصورة فخمة (Graphic Novel)', en: 'Luxury Graphic Novel' },
+    keywords: 'masterpiece graphic novel illustration, bold ink linework, dramatic cel shading, heroic framing',
+  },
+];
+
+const DEFAULT_STYLE_CONSISTENCY_BY_ART_STYLE: Record<string, string> = {
+  Anime: 'studio ghibli and ufotable luxury anime key visual, razor-sharp cel shading',
+  Photorealistic: 'hyper-realistic digital painting, lifelike skin and fabric textures, 85mm prime lens',
+  '3D Pixar Style': 'pixar 3d CGI feature-film studio render, volumetric lighting, detailed surface textures',
+  Watercolor: 'luxury fine-art watercolor, luminous translucent washes, cold-press paper texture',
+  'Classic Storybook': 'timeless gouache and fine ink masterpiece illustration, rich painterly textures',
+  'Fantasy Fairy Tale': 'enchanted fantasy concept art style, golden chiaroscuro lighting, rich painterly depth',
+  'Comic Book': 'masterpiece graphic novel illustration, bold dynamic ink linework, dramatic cel shading',
+  'Cute Cartoon': 'award-winning animated cartoon illustration, smooth clean linework, vibrant cohesive palette',
+  'Hand-drawn Cartoon': 'masterpiece hand-drawn ink and brush illustration, organic strokes, rich artistic warmth',
+  'Pastel Dream': 'luxury pastel fine-art illustration, velvety luminous gradients, soft atmospheric glow',
+  'Doodle Sketch': 'expressive ink-and-wash artistic sketch, dynamic cross-hatching, rich watercolor accents',
+  'Paper Cutout': 'layered handmade paper cut-out diorama, tactile craft paper textures, dimensional shadows',
+  'Educational Line Cartoon': 'crisp vector-line illustration, clean bold outlines, balanced vibrant colors',
+  Claymation: 'sculpted clay stop-motion studio frame, handcrafted tactile textures, miniature set lighting',
+  'Flat Vector': 'luxury modern flat vector art, razor-sharp geometric composition, rich lighting gradients',
+  'Bedtime Story': 'serene moonlit indigo storybook painting, warm golden lantern glow, rich textures',
+  'Pixel Art': 'high-bit masterpiece pixel art scene, crisp pixel craftsmanship, dynamic lighting',
+  'Chalk Drawing': 'luminous pastel chalk artwork on textured dark slate, hand-blended strokes',
+};
+
+export const resolveStyleConsistencyKeywords = (artStyle?: string, styleConsistency?: string): string => {
+  const cleanCustom = (styleConsistency ?? '').trim();
+  if (cleanCustom && cleanCustom.toLowerCase() !== 'auto') {
+    const preset = STYLE_CONSISTENCY_PRESETS.find(
+      (p) => p.id.toLowerCase() === cleanCustom.toLowerCase() || p.keywords.toLowerCase() === cleanCustom.toLowerCase()
+    );
+    return preset?.keywords || cleanCustom;
+  }
+  return DEFAULT_STYLE_CONSISTENCY_BY_ART_STYLE[artStyle || ''] || `${artStyle || 'Classic Storybook'} masterpiece illustration, cohesive artistic theme`;
+};
+
+const ADULT_CONTENT_RE =
+  /\b(adult|adults|man|woman|men|women|husband|wife|father|mother|elder|warrior|knight|detective|doctor|engineer|professor|king|queen|prince|princess|leader|commander|merchant|30-year-old|25-year-old|28-year-old|35-year-old|40-year-old|18\+|mature)\b|بالغ|بالغين|للكبار|كبار|شخص كبير|رجل|امرأة|شاب|شابة|زوج|زوجة|أب|أم|قائد|فارس|طبيب|مهندس|محقق|شيخ|ملحمة/i;
+
+export interface PromptClassificationInput {
+  idea?: string;
+  scenePrompt?: string;
+  ageGroup?: string;
+  audienceLevel?: AudienceLevel;
+  adultMode?: boolean;
+  heroAgeStage?: 'child' | 'teen' | 'adult';
+  artStyle?: string;
+  styleConsistency?: string;
+  characters?: Character[];
+}
+
+export interface PromptClassificationResult {
+  targetAudience: 'adult' | 'children';
+  audienceLevel: AudienceLevel;
+  styleConsistency: string;
+  qaModifiers: string;
+  toneDirective: string;
+}
+
+export const buildQualityAssuranceModifiers = (targetAudience: 'adult' | 'children', artStyle?: string): string => {
+  const styleLower = (artStyle || '').toLowerCase();
+  if (styleLower.includes('anime')) {
+    return targetAudience === 'adult'
+      ? 'cinematic lighting, high-fidelity anime key visual, concept art style, detailed textures, mature adult proportions'
+      : 'cinematic lighting, high-fidelity anime illustration, concept art style, detailed textures';
+  }
+  if (styleLower.includes('photorealistic') || styleLower.includes('realistic')) {
+    return targetAudience === 'adult'
+      ? 'cinematic lighting, high-fidelity photorealistic rendering, concept art style, detailed textures, lifelike adult anatomy'
+      : 'cinematic lighting, high-fidelity digital painting, concept art style, detailed textures';
+  }
+  if (styleLower.includes('3d') || styleLower.includes('pixar')) {
+    return 'cinematic lighting, high-fidelity 3D studio render, concept art style, detailed textures';
+  }
+  return targetAudience === 'adult'
+    ? 'cinematic lighting, high-fidelity masterpiece, concept art style, detailed textures, mature character proportions'
+    : 'cinematic lighting, high-fidelity illustration, concept art style, detailed textures';
+};
+
+export const classifyStoryPrompt = (input: PromptClassificationInput): PromptClassificationResult => {
+  const charText = (input.characters ?? [])
+    .map((c) => `${c.age ?? ''} ${c.gender ?? ''} ${c.description ?? ''}`)
+    .join(' ');
+  const hasAdultCharAge = (input.characters ?? []).some((c) => {
+    const numAge = parseInt(String(c.age ?? '').replace(/[^\d]/g, ''), 10);
+    return !Number.isNaN(numAge) && numAge >= 18;
+  });
+  const combinedText = `${input.idea ?? ''} ${input.scenePrompt ?? ''} ${charText}`;
+
+  const isExplicitKids = input.audienceLevel === 'kids' && !input.adultMode && input.ageGroup !== '18+';
+  const isAdult =
+    input.audienceLevel === 'adults' ||
+    Boolean(input.adultMode) ||
+    input.ageGroup === '18+' ||
+    input.heroAgeStage === 'adult' ||
+    hasAdultCharAge ||
+    (!isExplicitKids && ADULT_CONTENT_RE.test(combinedText));
+
+  const targetAudience: 'adult' | 'children' = isAdult ? 'adult' : 'children';
+  const audienceLevel: AudienceLevel = isAdult ? 'adults' : 'kids';
+  const styleConsistency = resolveStyleConsistencyKeywords(input.artStyle, input.styleConsistency);
+  const qaModifiers = buildQualityAssuranceModifiers(targetAudience, input.artStyle);
+  const toneDirective =
+    targetAudience === 'adult'
+      ? 'Target Audience: ADULTS (18+). Use sophisticated literary prose, complex emotional depth, and depict protagonists as full-grown adults with mature proportions.'
+      : 'Target Audience: CHILDREN. Use warm, imaginative, age-appropriate storytelling and expressive storybook visuals.';
+
+  return {
+    targetAudience,
+    audienceLevel,
+    styleConsistency,
+    qaModifiers,
+    toneDirective,
+  };
+};
+
+export const isAdultStory = (story: StoryData): boolean => {
+  if (
+    story.audienceLevel === 'adults' ||
+    story.story_info?.audienceLevel === 'adults' ||
+    story.story_info?.age_group === '18+' ||
+    story.story_info?.adultMode
+  ) {
+    return true;
+  }
+  return (story.characters ?? []).some((c) => {
+    const numAge = parseInt(String(c.age ?? '').replace(/[^\d]/g, ''), 10);
+    if (!Number.isNaN(numAge) && numAge >= 18) return true;
+    return /\b(adult|man|woman|elder|leader|warrior|knight|father|mother)\b|بالغ|كبير|رجل|امرأة|شاب|قائد|شيخ/i.test(
+      `${c.age ?? ''} ${c.gender ?? ''} ${c.description ?? ''}`
+    );
+  });
+};
+
+export const getArtStylePrompt = (
+  style: string,
+  ageGroup?: string,
+  styleConsistency?: string,
+  audienceLevel?: AudienceLevel
+): string => {
   const option = ART_STYLE_OPTIONS.find((o) => o.value === style);
-  return option ? option.prompt : `${style} storybook illustration, vibrant colors, expressive characters.`;
+  const isAdult = audienceLevel === 'adults' || ageGroup === '18+';
+  let base = option ? option.prompt : `${style} masterpiece illustration, vibrant colors, expressive characters.`;
+  if (isAdult) {
+    base = base.replace(/\b(children|kids|cute)\b/gi, 'cinematic mature');
+  }
+  const lockedKeywords = resolveStyleConsistencyKeywords(style, styleConsistency);
+  const qa = buildQualityAssuranceModifiers(isAdult ? 'adult' : 'children', style);
+  const customLockPart =
+    styleConsistency && styleConsistency.toLowerCase() !== 'auto' ? ` Theme consistency: ${lockedKeywords}.` : '';
+  return `${base}${customLockPart} Quality: ${qa}.`;
 };
 
 const wordsOf = (text: string): string[] => text.trim().split(/\s+/).filter(Boolean);
@@ -52,9 +245,33 @@ export const fruitThemeBoost = (story: StoryData, character?: Character): string
   return `${name} is a cute ${fruit} character with a face and limbs`;
 };
 
-// وصف الشخصية في 15 كلمة كحد أقصى مع دمج سمة الفاكهة أو الموضوع داخل الوصف نفسه
-const formatCharacterLine = (c: Character, story: StoryData, maxWords = 15): string => {
-  const cleanDesc = (c.description || c.personality || 'friendly young hero').replace(/\bVisual anchor:.*$/i, '').trim();
+const buildCharacterMaturityTag = (c: Character, story: StoryData): string => {
+  const desc = (c.description || '').toLowerCase();
+  if (/\b(adult|man|woman|boy|girl|child|teen|year-old|years old|elderly)\b/.test(desc)) {
+    return '';
+  }
+  const numAge = parseInt(String(c.age ?? '').replace(/[^\d]/g, ''), 10);
+  const isFemale = /\b(female|woman|girl)\b|أنثى|امرأة|بنت|فتاة/i.test(`${c.gender ?? ''} ${c.age ?? ''}`);
+  const isAdultChar =
+    (!Number.isNaN(numAge) && numAge >= 18) ||
+    isAdultStory(story) ||
+    /\b(adult|man|woman)\b|بالغ|كبير|رجل|امرأة/i.test(`${c.age ?? ''} ${c.gender ?? ''}`);
+  if (isAdultChar) {
+    const ageStr = !Number.isNaN(numAge) && numAge >= 18 ? `${numAge}-year-old ` : '';
+    return isFemale ? `adult ${ageStr}woman, ` : `adult ${ageStr}man, `;
+  }
+  if ((!Number.isNaN(numAge) && numAge >= 13) || story.story_info?.age_group === '13-18') {
+    return isFemale ? 'teenage girl, ' : 'teenage boy, ';
+  }
+  return '';
+};
+
+// وصف الشخصية في 18 كلمة كحد أقصى مع دمج سمة العمر/النضج أو الفاكهة أو الموضوع داخل الوصف نفسه
+const formatCharacterLine = (c: Character, story: StoryData, maxWords = 18): string => {
+  const defaultFallback = isAdultStory(story) ? 'charismatic adult protagonist' : 'friendly young hero';
+  const baseDesc = (c.description || c.personality || defaultFallback).replace(/\bVisual anchor:.*$/i, '').trim();
+  const maturityTag = buildCharacterMaturityTag(c, story);
+  const cleanDesc = `${maturityTag}${baseDesc}`.trim();
   const topic = story.story_info.themeTopic?.trim();
   let raw: string;
   if (isFruitStory(story)) {
@@ -68,17 +285,22 @@ const formatCharacterLine = (c: Character, story: StoryData, maxWords = 15): str
   return capWords(raw, maxWords);
 };
 
-// مطابقة الشخصيات الظاهرة في الصفحة فقط (من page.text و page.image_prompt)؛ إن لم تطابق أي شخصية فالرئيسية فقط
+// مطابقة الشخصيات الظاهرة في الصفحة (سواء بالاسم الكامل أو بأجزاء الاسم أو الاسم الإنجليزي في الوصف)
 export const getCharactersForPage = (story: StoryData, page?: StoryPage): Character[] => {
   const chars = story.characters ?? [];
   if (!chars.length) return [];
   if (!page) return chars;
   const haystack = `${page.text ?? ''} ${page.image_prompt ?? ''}`.toLowerCase();
   const matched = chars.filter((c) => {
-    const name = c.name?.trim().toLowerCase();
-    return Boolean(name && haystack.includes(name));
+    const fullName = c.name?.trim().toLowerCase();
+    if (fullName && haystack.includes(fullName)) return true;
+    const nameTokens = (fullName || '').split(/\s+/).filter((t) => t.length >= 3);
+    if (nameTokens.some((tok) => haystack.includes(tok))) return true;
+    const engMatch = /^([a-z]{3,20})\b/i.exec((c.description || '').trim());
+    if (engMatch && haystack.includes(engMatch[1].toLowerCase())) return true;
+    return false;
   });
-  return matched.length > 0 ? matched : [chars[0]];
+  return matched.length > 0 ? matched : chars.slice(0, 2);
 };
 
 // أ1 + أ3: تجميع الطلب مع سقف صارم 120 كلمة؛ إن تجاوز نقصّ وصف الشخصيات أولاً ثم الأسلوب، ولا نقصّ المشهد أبداً
@@ -121,9 +343,112 @@ const assemblePromptWithWordCap = (
   return [scene, chars, style, directive].filter(Boolean).join('\n');
 };
 
-// أ1 + ب5: يبدأ بـ "Scene: <page.image_prompt>." (مع Correction إن وجد) ثم الشخصيات في الصفحة ثم الأسلوب ثم التوجيه الإيجابي (<= 120 كلمة)
+export type SentimentTone = 'happy' | 'sad' | 'mysterious' | 'tense' | 'wonder' | 'serene';
+
+export interface SentimentPaletteAnalysis {
+  sentiment: SentimentTone;
+  paletteDescriptor: string;
+  label: { ar: string; en: string };
+  swatchHex: string;
+}
+
+const SENTIMENT_CONFIG: Record<
+  SentimentTone,
+  {
+    paletteDescriptor: string;
+    label: { ar: string; en: string };
+    swatchHex: string;
+    regex: RegExp;
+  }
+> = {
+  happy: {
+    paletteDescriptor: 'warm glowing colors, sunlit golden highlights, vibrant joyful palette',
+    label: { ar: 'مبهج ودافئ (ألوان متوهجة دافئة)', en: 'Joyful & Warm (Warm Glowing Colors)' },
+    swatchHex: '#f59e0b',
+    regex:
+      /\b(happy|happily|joy|joyful|smile|smiled|smiling|laugh|laughed|laughing|cheer|cheerful|celebrate|celebration|party|dance|dancing|sunny|bright|win|won|victory|hug|hugged|love|loved|excited|delight|play|playing|fun|feast|triumph)\b|سعيد|سعادة|فرح|فرحة|ابتسم|ابتسامة|ضحك|يضحك|تضحك|مرح|احتفال|عيد|رقص|يرقص|مشرق|فوز|انتصار|عناق|حضن|حب|حماس|بهجة|يلعب|تلعب|لعب|سرور|مبتهج/gi,
+  },
+  sad: {
+    paletteDescriptor: 'deep moody shadows, muted atmospheric blues, melancholic cool tones',
+    label: { ar: 'حزين وشاعري (ظلال عميقة وباردة)', en: 'Melancholic (Deep Moody Shadows)' },
+    swatchHex: '#3b82f6',
+    regex:
+      /\b(sad|sadly|sadness|cry|cried|crying|tear|tears|lonely|alone|lost|grief|sorrow|miss|missed|missing|rain|rainy|cold|broken|hurt|pain|afraid|fear|weeping|wept|melancholy|gloomy|sigh|sighed)\b|حزين|حزن|بكى|بكت|يبكي|تبكي|دموع|دمعة|وحيد|وحدة|ضاع|ضائع|فقد|شوق|مشتاق|مطر|بارد|مكسور|ألم|جرح|خوف|خائف|كئيب|تنهد|أسى|غصة|وداع/gi,
+  },
+  tense: {
+    paletteDescriptor: 'dramatic high-contrast amber and obsidian shadows, intense storm-lit atmosphere',
+    label: { ar: 'مشوّق وحماسي (تباين درامي عالٍ)', en: 'Dramatic & Tense (High-Contrast Shadows)' },
+    swatchHex: '#ef4444',
+    regex:
+      /\b(danger|dangerous|storm|thunder|lightning|chase|chased|escape|battle|fight|fire|monster|threat|urgent|trap|roar|scream|crisis|cliff|falling|clash)\b|خطر|عاصفة|رعد|برق|مطاردة|هرب|يهرب|معركة|قتال|نار|وحش|تهديد|فخ|زئير|صرخة|أزمة|هاوية|انفجار|صراع|مواجهة/gi,
+  },
+  mysterious: {
+    paletteDescriptor: 'enigmatic twilight indigo, dramatic chiaroscuro shadows, mystic glow',
+    label: { ar: 'غامض وساحر (نيلي الغسق وظلال غامضة)', en: 'Mysterious (Twilight Indigo & Shadows)' },
+    swatchHex: '#6366f1',
+    regex:
+      /\b(mystery|mysterious|secret|hidden|whisper|whispered|ancient|riddle|puzzle|fog|mist|cave|labyrinth|unknown|clue|locked|shadowy|enigma|cryptic|twilight)\b|غموض|غامض|سر|سري|مخفي|همس|يهمس|قديم|أثري|لغز|أحجية|ضباب|كهف|متاهة|مجهول|مفتاح|باب مغلق|خفي|طلسم/gi,
+  },
+  wonder: {
+    paletteDescriptor: 'luminous iridescent colors, enchanted bioluminescent glow, jewel-toned palette',
+    label: { ar: 'خيالي مدهش (ألوان متلألئة ساحرة)', en: 'Magical Wonder (Luminous Iridescent Colors)' },
+    swatchHex: '#a855f7',
+    regex:
+      /\b(magic|magical|enchanted|wonder|miracle|sparkle|sparkling|glow|glowing|galaxy|fairy|dragon|flying|crystal|treasure|portal|spell|cosmic)\b|سحر|سحري|مسحور|عجيب|معجزة|بريق|يتلألأ|مجرة|جنية|تنين|تحليق|بلورة|كريستال|كنز|بوابة|تعويذة|كوني/gi,
+  },
+  serene: {
+    paletteDescriptor: 'soft tranquil pastel hues, gentle moonlit silver and warm lantern glow',
+    label: { ar: 'هادئ ومطمئن (ألوان باستيل هادئة)', en: 'Serene & Calm (Soft Tranquil Hues)' },
+    swatchHex: '#14b8a6',
+    regex:
+      /\b(calm|peace|peaceful|quiet|sleep|sleeping|bedtime|moon|breeze|gentle|soft|rest|garden|river|meditate|still|harmony|lullaby)\b|هدوء|هادئ|سلام|طمأنينة|سكينة|نوم|ينام|قمر|نسيم|لطيف|ناعم|راحة|حديقة|نهر|تأمل|تهويدة|أمان/gi,
+  },
+};
+
+export const analyzeTextSentimentAndPalette = (text: string, scenePrompt = ''): SentimentPaletteAnalysis => {
+  const cleanText = String(text ?? '');
+  const cleanScene = String(scenePrompt ?? '');
+  const order: SentimentTone[] = ['happy', 'sad', 'tense', 'mysterious', 'wonder', 'serene'];
+
+  let bestTone: SentimentTone = 'serene';
+  let bestScore = 0;
+
+  for (const tone of order) {
+    const cfg = SENTIMENT_CONFIG[tone];
+    const textMatches = (cleanText.match(cfg.regex) ?? []).length;
+    const sceneMatches = (cleanScene.match(cfg.regex) ?? []).length;
+    const score = textMatches * 2 + sceneMatches;
+    if (score > bestScore) {
+      bestScore = score;
+      bestTone = tone;
+    }
+  }
+
+  // إن لم تتطابق أي كلمات محددة، نجعل المشاهد النهارية تميل للألوان الدافئة المتوهجة والمشاهد الليلية للهدوء
+  if (bestScore === 0) {
+    if (/\b(night|moon|sleep|stars|evening)\b|ليل|قمر|نوم|مساء/i.test(`${cleanText} ${cleanScene}`)) {
+      bestTone = 'serene';
+    } else {
+      bestTone = 'happy';
+    }
+  }
+
+  const chosen = SENTIMENT_CONFIG[bestTone];
+  return {
+    sentiment: bestTone,
+    paletteDescriptor: chosen.paletteDescriptor,
+    label: chosen.label,
+    swatchHex: chosen.swatchHex,
+  };
+};
+
+// أ1 + ب5: يبدأ بـ "Scene: <page.image_prompt>." (مع Correction إن وجد) ثم الشخصيات في الصفحة ثم الأسلوب ولوحة الألوان العاطفية ثم التوجيه الإيجابي (<= 120 كلمة)
 export const buildPageImagePrompt = (story: StoryData, page: StoryPage): string => {
-  const rawScene = (page.image_prompt || page.text || 'A colorful children storybook illustration').trim().replace(/\.+$/, '');
+  const adult = isAdultStory(story);
+  const defaultScene = adult
+    ? 'A dramatic cinematic illustration of the main adult character in the story setting'
+    : 'A colorful storybook illustration';
+  const rawScene = (page.image_prompt || page.text || defaultScene).trim().replace(/\.+$/, '');
   const correction = page.correctionNote?.trim()
     ? ` Correction: ${page.correctionNote.trim().replace(/\.+$/, '')}.`
     : '';
@@ -131,41 +456,68 @@ export const buildPageImagePrompt = (story: StoryData, page: StoryPage): string 
 
   const pageChars = getCharactersForPage(story, page);
   const charsLine = pageChars.length
-    ? `Characters: ${pageChars.map((c) => formatCharacterLine(c, story, 15)).join('; ')}.`
+    ? `Characters: ${pageChars.map((c) => formatCharacterLine(c, story, 18)).join('; ')}.`
     : '';
 
-  const styleLine = getArtStylePrompt(story.story_info.art_style);
+  const styleConsistency = story.styleConsistency || story.story_info.styleConsistency;
+  const audienceLevel: AudienceLevel = adult ? 'adults' : 'kids';
+  const sentimentInfo = analyzeTextSentimentAndPalette(page.text || '', page.image_prompt || '');
+  const baseStyleLine = getArtStylePrompt(story.story_info.art_style, story.story_info.age_group, styleConsistency, audienceLevel);
+  const styleLine = `Palette (${sentimentInfo.sentiment}): ${sentimentInfo.paletteDescriptor}. ${baseStyleLine}`;
   return assemblePromptWithWordCap(sceneLine, charsLine, styleLine, POSITIVE_ILLUSTRATION_DIRECTIVE, 120);
 };
 
-// أ1: الغلاف يبدأ بـ "Scene: <cover_image_prompt>" أولاً، ثم العنوان كسياق فقط (لا نص يظهر في الصورة)، ثم الأسلوب
+// أ1: الغلاف يبدأ بـ "Scene: <cover_image_prompt>" أولاً، ثم السياق بدون نص عربي خام يربك الرسام، ثم الأسلوب ولوحة الألوان العاطفية
 export const buildCoverPrompt = (story: StoryData): string => {
-  const rawCover = (story.cover_image_prompt || story.pages[0]?.image_prompt || story.story_info.title || 'Heroic children book cover illustration').trim().replace(/\.+$/, '');
-  const titleContext = story.story_info.title ? ` Story context (no text in image): "${story.story_info.title}".` : '';
+  const adult = isAdultStory(story);
+  const defaultCover = adult
+    ? 'Dramatic cinematic book cover illustration featuring the adult protagonist'
+    : 'Heroic book cover illustration';
+  const rawCover = (story.cover_image_prompt || story.pages[0]?.image_prompt || defaultCover).trim().replace(/\.+$/, '');
+  const hasArabicInTitle = /[\u0600-\u06FF]/.test(story.story_info.title ?? '');
+  const titleContext =
+    story.story_info.title && !hasArabicInTitle
+      ? ` Story context (no text in image): "${story.story_info.title}".`
+      : ` Genre: ${story.story_info.story_type || 'Adventure'}${adult ? ', mature adult characters' : ''} (no text in image).`;
   const sceneLine = `Scene: ${rawCover}.${titleContext}`;
 
   const mainChars = (story.characters ?? []).slice(0, 2);
   const charsLine = mainChars.length
-    ? `Characters: ${mainChars.map((c) => formatCharacterLine(c, story, 15)).join('; ')}.`
+    ? `Characters: ${mainChars.map((c) => formatCharacterLine(c, story, 18)).join('; ')}.`
     : '';
 
-  const styleLine = getArtStylePrompt(story.story_info.art_style);
+  const styleConsistency = story.styleConsistency || story.story_info.styleConsistency;
+  const audienceLevel: AudienceLevel = adult ? 'adults' : 'kids';
+  const firstPageText = story.pages?.[0]?.text || '';
+  const sentimentInfo = analyzeTextSentimentAndPalette(
+    `${story.story_info.title || ''} ${firstPageText}`,
+    story.cover_image_prompt || story.pages?.[0]?.image_prompt || ''
+  );
+  const baseStyleLine = getArtStylePrompt(story.story_info.art_style, story.story_info.age_group, styleConsistency, audienceLevel);
+  const styleLine = `Palette (${sentimentInfo.sentiment}): ${sentimentInfo.paletteDescriptor}. ${baseStyleLine}`;
   return assemblePromptWithWordCap(sceneLine, charsLine, styleLine, POSITIVE_ILLUSTRATION_DIRECTIVE, 120);
 };
 
 // أ1: ورقة الشخصيات تبدأ بـ "Character reference sheet:" ثم الشخصيات ثم الأسلوب
 export const buildSheetPrompt = (story: StoryData, withPhoto: boolean, simplified = false): string => {
-  const photoNote = withPhoto ? ' Primary hero matches the attached child photo.' : '';
+  const adult = isAdultStory(story);
+  const photoNote = withPhoto
+    ? adult
+      ? ' Primary hero matches the attached adult reference photo.'
+      : ' Primary hero matches the attached reference photo.'
+    : '';
   const sceneLine = simplified
     ? `Character reference sheet: Simple front-view model sheet on plain background.${photoNote}`
     : `Character reference sheet: Full-body turnaround model sheet on clean plain background.${photoNote}`;
 
   const chars = story.characters ?? [];
   const charsLine = chars.length
-    ? `Characters: ${chars.map((c) => formatCharacterLine(c, story, simplified ? 10 : 15)).join('; ')}.`
+    ? `Characters: ${chars.map((c) => formatCharacterLine(c, story, simplified ? 12 : 18)).join('; ')}.`
     : '';
 
-  const styleLine = getArtStylePrompt(story.story_info.art_style);
+  const styleConsistency = story.styleConsistency || story.story_info.styleConsistency;
+  const audienceLevel: AudienceLevel = adult ? 'adults' : 'kids';
+  const styleLine = getArtStylePrompt(story.story_info.art_style, story.story_info.age_group, styleConsistency, audienceLevel);
   return assemblePromptWithWordCap(sceneLine, charsLine, styleLine, POSITIVE_ILLUSTRATION_DIRECTIVE, 120);
 };
 
@@ -461,8 +813,42 @@ export class StoryGenerator {
     });
   }
 
+  public static classifyPrompt(params: Partial<StoryParams>): PromptClassificationResult {
+    return classifyStoryPrompt({
+      idea: params.idea,
+      ageGroup: params.ageGroup,
+      audienceLevel: params.audienceLevel,
+      adultMode: params.adultMode,
+      heroAgeStage: params.heroAgeStage,
+      artStyle: params.artStyle,
+      styleConsistency: params.styleConsistency,
+      characters: params.customCharacters ?? params.series?.characters,
+    });
+  }
+
+  public classifyPrompt(params: Partial<StoryParams>): PromptClassificationResult {
+    return StoryGenerator.classifyPrompt(params);
+  }
+
+  public static analyzeSentiment(text: string, scenePrompt = ''): SentimentPaletteAnalysis {
+    return analyzeTextSentimentAndPalette(text, scenePrompt);
+  }
+
+  public analyzeSentiment(text: string, scenePrompt = ''): SentimentPaletteAnalysis {
+    return analyzeTextSentimentAndPalette(text, scenePrompt);
+  }
+
   public async generate(rawParams: StoryParams, pageCount: number, onProgress: (info: ProgressInfo) => void): Promise<StoryData> {
-    const params: StoryParams = { ...rawParams, idea: rawParams.idea.trim().slice(0, MAX_IDEA_LENGTH) };
+    const classification = this.classifyPrompt(rawParams);
+    const isClassifiedAdult = classification.targetAudience === 'adult';
+    const params: StoryParams = {
+      ...rawParams,
+      idea: rawParams.idea.trim().slice(0, MAX_IDEA_LENGTH),
+      audienceLevel: classification.audienceLevel,
+      adultMode: isClassifiedAdult,
+      ageGroup: isClassifiedAdult && rawParams.ageGroup !== '18+' ? '18+' : rawParams.ageGroup,
+      styleConsistency: classification.styleConsistency,
+    };
     const total = Math.min(Math.max(Math.round(pageCount) || 6, 3), MAX_STORY_PAGES);
     pageCount = total > 16 ? FIRST_BATCH_PAGES : total;
     if (!params.idea) throw new Error('Story idea cannot be empty.');
@@ -472,8 +858,12 @@ export class StoryGenerator {
       language: params.language,
       dialect: params.dialect,
       artStyle: params.artStyle,
+      styleConsistency: params.styleConsistency,
       storyType: params.storyType,
       ageGroup: params.ageGroup,
+      audienceLevel: params.audienceLevel,
+      targetAudience: classification.targetAudience,
+      qaModifiers: classification.qaModifiers,
     });
 
     onProgress({ progress: 6, message: ar ? 'نجهّز فكرة القصة...' : 'Preparing your story...' });
@@ -508,7 +898,12 @@ export class StoryGenerator {
         const res = await fetch('/api/generate-story', {
           method: 'POST',
           headers: authHeaders(),
-          body: JSON.stringify({ params, pageCount, totalPages: total }),
+          body: JSON.stringify({
+            params,
+            pageCount,
+            totalPages: total,
+            classification,
+          }),
         });
 
         if (res.status === 429) {
@@ -612,10 +1007,16 @@ export class StoryGenerator {
         `seed-${Date.now()}-${Math.floor(Math.random() * 89999 + 10000)}`,
       coverFontStyle: params.coverFontStyle,
       coverTextEffect: params.coverTextEffect,
+      audienceLevel: params.audienceLevel,
+      styleConsistency: params.styleConsistency,
       story_info: {
         ...parsed.story_info,
+        age_group: params.ageGroup || parsed.story_info.age_group,
+        audienceLevel: params.audienceLevel,
+        adultMode: params.adultMode ?? params.ageGroup === '18+',
         lessons: parsed.story_info.lessons ?? [],
         art_style: params.artStyle,
+        styleConsistency: params.styleConsistency,
         aspect_ratio: params.aspectRatio,
         dialect: params.dialect,
         story_type: params.storyType,

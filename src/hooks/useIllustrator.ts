@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ArtStyle, Character, StoryData, StoryPage } from '../types';
+import { ArtStyle, AudienceLevel, Character, StoryData, StoryPage } from '../types';
 import { getStudioSettings } from '../config';
 import { ApiError } from '../services/api';
-import { buildCoverPrompt, buildPageImagePrompt, buildSheetPrompt, generateIllustration } from '../services/gemini';
+import { buildCoverPrompt, buildPageImagePrompt, buildSheetPrompt, generateIllustration, isAdultStory, resolveStyleConsistencyKeywords, SkippedImage } from '../services/gemini';
 import { findSimilarImage, getImage, getNetworkAdaptation, reencode, saveImage, toReference, type ImageKind } from '../services/media';
 import { hashText } from '../services/db';
 
@@ -56,27 +56,40 @@ export function useIllustrator(story: StoryData, update: Updater, focusIndex: nu
   const [awaitingPreviewApproval, setAwaitingPreviewApproval] = useState(false);
   const [running, setRunning] = useState(false);
 
-  // مفتاح الإعادة: نفس الأسلوب + نفس الشخصيات + نفس صورة البطل
+  // مفتاح الإعادة: نفس الأسلوب + نفس ثبات الأسلوب + نفس الشخصيات + نفس صورة البطل + الفئة العمرية
   const cacheStyle = (s: StoryData) =>
-    `${s.story_info.art_style}|${s.heroPhotoId ?? ''}|${hashText(s.characters.map((c) => c.description).join('|'))}`;
+    `${s.story_info.art_style}|${s.styleConsistency ?? s.story_info.styleConsistency ?? ''}|${s.story_info.age_group ?? ''}|${s.heroPhotoId ?? ''}|${hashText(s.characters.map((c) => c.description).join('|'))}`;
 
   const usedIds = (s: StoryData) => new Set([s.coverImageId, s.characterSheetId, ...s.pages.map((p) => p.imageId)].filter(Boolean) as string[]);
 
   // التشابه يُقاس على وصف المشهد وحده، ولا تتكرر صورة داخل نفس القصة
   const create = async (s: StoryData, kind: ImageKind, prompt: string, matchText: string, refs: Ref[], reuse: boolean, signal: AbortSignal) => {
     if (reuse) {
-      const hit = await findSimilarImage(matchText, cacheStyle(s), kind, kind === 'sheet' ? 0.9 : 0.82, usedIds(s));
+      const hit = await findSimilarImage(matchText, cacheStyle(s), kind, kind === 'sheet' ? 0.92 : 0.88, usedIds(s));
       if (hit) return hit;
     }
+    const styleConsistency = resolveStyleConsistencyKeywords(
+      s.story_info.art_style,
+      s.styleConsistency ?? s.story_info.styleConsistency
+    );
+    const audienceLevel: AudienceLevel = isAdultStory(s) ? 'adults' : 'kids';
     const raw = await generateIllustration(
-      { prompt, aspectRatio: kind === 'sheet' ? '16:9' : s.story_info.aspect_ratio || '4:3', references: refs, kind, artStyle: s.story_info.art_style },
+      {
+        prompt,
+        aspectRatio: kind === 'sheet' ? '16:9' : s.story_info.aspect_ratio || '4:3',
+        references: refs,
+        kind,
+        artStyle: s.story_info.art_style,
+        styleConsistency,
+        audienceLevel,
+      },
       signal
     );
     const net = getNetworkAdaptation();
     return saveImage(await reencode(raw, net.maxImageSide, 'image/webp', net.compressionQuality), kind, cacheStyle(s), matchText);
   };
 
-  // أ5: محاولة أولى لورقة الشخصيات، فإن فشلت نعيد مرة واحدة بوصف مبسّط، فإن فشلتا نظهر تنبيهاً عربياً واضحاً
+  // أ5: محاولة أولى لورقة الشخصيات، فإن فشلت نعيد مرة واحدة بوصف مبسّط، فإن تم تخطيها (محرك مجاني لا يدعم المراجع) نكمل مباشرة بدون تلويث المراجع
   const references = async (signal: AbortSignal): Promise<Ref[]> => {
     if (refsCache.current) return refsCache.current;
     const s = storyRef.current;
@@ -107,6 +120,10 @@ export function useIllustrator(story: StoryData, update: Updater, focusIndex: nu
           }
         } catch (err) {
           if ((err as Error)?.name === 'AbortError') throw err;
+          if (err instanceof SkippedImage) {
+            // المحرك البديل لا يحتاج ورقة شخصيات مرجعية بل يعتمد على الوصف البصري الدقيق
+            break;
+          }
           if (err instanceof ApiError && FATAL.has(err.code)) throw err;
           if (attempt === 1) {
             setSheetWarning(SHEET_FAILED_WARNING_AR);
@@ -116,11 +133,15 @@ export function useIllustrator(story: StoryData, update: Updater, focusIndex: nu
     }
 
     const refs: Ref[] = [];
-    if (sheet) refs.push(await toReference(sheet.blob));
-    else if (photo) refs.push(await toReference(photo.blob));
+    if (photo && ! photo.blob.type.includes('svg')) {
+      refs.push(await toReference(photo.blob));
+    }
+    if (sheet && !sheet.blob.type.includes('svg')) {
+      refs.push(await toReference(sheet.blob));
+    }
 
-    refsCache.current = refs;
-    return refs;
+    refsCache.current = refs.slice(0, 2);
+    return refsCache.current;
   };
 
   const setPage = (pageNo: number, patch: Partial<StoryPage>) =>

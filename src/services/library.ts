@@ -202,8 +202,12 @@ export const restoreBackupExtras = async (parsed: any): Promise<void> => {
   }
 };
 
-// ملفات الأطفال: الصورة تُحفظ مصغّرة (512px) لإعادة الاستخدام في قصص لاحقة دون إجهاد الذاكرة
-export const saveChild = async (name: string, file: Blob): Promise<ChildProfile & { photoUrl: string }> => {
+// ملفات الأبطال (طفل / شاب / بالغ): الصورة تُحفظ مصغّرة (512px) لإعادة الاستخدام في قصص لاحقة دون إجهاد الذاكرة
+export const saveChild = async (
+  name: string,
+  file: Blob,
+  ageStage: 'child' | 'teen' | 'adult' = 'child'
+): Promise<ChildProfile & { photoUrl: string }> => {
   let photo: Blob = file;
   try {
     photo = await reencode(file, 512, 'image/jpeg', 0.85);
@@ -211,7 +215,7 @@ export const saveChild = async (name: string, file: Blob): Promise<ChildProfile 
     console.warn('reencode photo failed, using original file:', err);
   }
   const { id: photoId, url } = await saveImage(photo, 'photo', 'photo', name);
-  const child: ChildProfile = { id: newId(), name: name.trim().slice(0, 40), photoId, createdAt: Date.now() };
+  const child: ChildProfile = { id: newId(), name: name.trim().slice(0, 40), photoId, ageStage, createdAt: Date.now() };
   await dbPut('children', child);
   return { ...child, photoUrl: url };
 };

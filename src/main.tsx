@@ -33,4 +33,14 @@ if (import.meta.env.PROD && 'serviceWorker' in navigator && window.top === windo
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('/sw.js').catch(() => undefined);
   });
+} else if ('serviceWorker' in navigator) {
+  navigator.serviceWorker
+    .getRegistrations()
+    .then((regs) => {
+      for (const reg of regs) {
+        reg.unregister().catch(() => undefined);
+      }
+    })
+    .catch(() => undefined);
 }
+
