@@ -876,7 +876,7 @@ const runFlux = async (creds: FreeCreds, prompt: string, steps = 6): Promise<str
       method: 'POST',
       signal: ctrl.signal,
       headers: { Authorization: `Bearer ${creds.token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt, steps, seed: Math.floor(Math.random() * 2 ** 31) }),
+      body: JSON.stringify({ prompt, steps }),
     });
     const raw = await r.text();
     let json: any = null;
