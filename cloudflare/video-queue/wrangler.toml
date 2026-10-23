@@ -1,0 +1,16 @@
+name = "sawan-video-queue"
+main = "worker.js"
+compatibility_date = "2025-01-01"
+workers_dev = true
+
+# أنشئ القاعدة والمخزن ثم ضع المعرّفات هنا (الأوامر في README.md):
+#   npx wrangler d1 create sawan-video-queue
+#   npx wrangler kv namespace create BLOBS
+[[d1_databases]]
+binding = "DB"
+database_name = "sawan-video-queue"
+database_id = "REPLACE_WITH_D1_DATABASE_ID"
+
+[[kv_namespaces]]
+binding = "BLOBS"
+id = "REPLACE_WITH_KV_NAMESPACE_ID"

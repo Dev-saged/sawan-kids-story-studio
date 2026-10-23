@@ -10,7 +10,7 @@
 
 **Type one simple idea and watch your story get written, illustrated and narrated in a warm voice, Arabic first.**
 
-Version 3.3.0 &nbsp;|&nbsp; Progressive Web App &nbsp;|&nbsp; Arabic and English UI &nbsp;|&nbsp; [العربية](README.md)
+Version 3.4.0 &nbsp;|&nbsp; Progressive Web App &nbsp;|&nbsp; Arabic and English UI &nbsp;|&nbsp; [العربية](README.md)
 
 </div>
 
@@ -22,7 +22,7 @@ It is mobile-first, fully right-to-left, and keeps the story library on the user
 
 ## Screenshots
 
-> Live captures of version 3.1.0 (the core UI is unchanged in 3.3.0) taken from the running app. The illustrations inside the sample story (the rabbit "Arnoub") are sample artwork used for display only, not real generation output.
+> Live captures of version 3.1.0 (the core UI is unchanged in 3.4.0) taken from the running app. The illustrations inside the sample story (the rabbit "Arnoub") are sample artwork used for display only, not real generation output.
 
 <table align="center">
   <tr>
@@ -57,7 +57,7 @@ It is mobile-first, fully right-to-left, and keeps the story library on the user
 | <img src="docs/assets/icons/languages.svg" width="36" alt=""> | **Dialects and languages** | Vocalized Modern Standard Arabic, 19 local dialects, and a complete Arabic and English interface. |
 | <img src="docs/assets/icons/book-open.svg" width="36" alt=""> | **Five reading modes** | Story reader, illustration gallery, 3D book, two-page interactive book and a classic flipbook. |
 | <img src="docs/assets/icons/sparkles.svg" width="36" alt=""> | **Consistent characters** | A character reference sheet keeps the hero identical on every page, with an album to reuse characters. |
-| <img src="docs/assets/icons/sparkles.svg" width="36" alt=""> | **AI-animated scenes** | Animates each page illustration with Gemini Omni in silent clips of about 8 seconds; the app adds its own narration and captions. Shows a cost estimate and asks for explicit consent first (paid service), with free camera motion for pages you do not select. |
+| <img src="docs/assets/icons/sparkles.svg" width="36" alt=""> | **AI-animated scenes** | Animates each page illustration in silent clips; the app adds its own narration and captions. Pick the source: a Colab notebook running Wan through a Cloudflare queue (free from your own compute, about 5 seconds per clip) or Gemini Omni (paid, with a cost estimate and explicit consent), with free camera motion for pages you do not select. Setup: `cloudflare/video-queue/README.md` and `colab/README.md`. |
 | <img src="docs/assets/icons/printer.svg" width="36" alt=""> | **Export and print** | Premium PDF templates, print preview in A5, A4 and 21x21, a full ZIP bundle and a story video. |
 | <img src="docs/assets/icons/gamepad-2.svg" width="36" alt=""> | **Science games** | Small interactive labs, a daily challenge and stars to collect. |
 | <img src="docs/assets/icons/graduation-cap.svg" width="36" alt=""> | **Read and learn** | Age-aware fact cards, a free-form question box and a name-meanings section. |
@@ -102,7 +102,7 @@ Type check with `npm run lint`. For the in-app self-test open `/#test`.
 
 ## Changelog
 
-See [CHANGELOG.md](CHANGELOG.md). Current version: **3.3.0**.
+See [CHANGELOG.md](CHANGELOG.md). Current version: **3.4.0**.
 
 ## Rights
 
