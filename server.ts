@@ -37,10 +37,7 @@ const MODELS = {
   image: [
     'gemini-2.5-flash-image',
     'gemini-3.1-flash-image-preview',
-    'gemini-3.1-flash-lite-image',
-    'gemini-nano-banana-2.1',
     'gemini-3-pro-image-preview',
-    'gemini-3-pro-image',
   ],
   tts: [
     'gemini-2.5-flash-preview-tts',
@@ -977,6 +974,13 @@ const runAiFallback = async (
 };
 
 // توليد الصور: أولاً عبر نماذج Gemini المتقدمة (ما لم تكن الجلسة موقوفة مؤقتاً بسبب نفاد حصة الصور)، ثم Cloudflare Flux إن توفر، ثم Pollinations الاحتياطي
+// الجودة العالية تبدأ بنموذج Pro (إن توفر)، والعادية بالأخف
+const orderByQuality = (models: string[], hq: boolean): string[] => {
+  const pro = models.filter((m) => /pro/i.test(m));
+  const rest = models.filter((m) => !/pro/i.test(m));
+  return hq ? [...pro, ...rest] : [...rest, ...pro];
+};
+
 app.post('/api/generate-image', async (req: Request, res: Response) => {
   try {
     const rawPrompt = clip(req.body?.prompt, 4000);
@@ -984,6 +988,7 @@ app.post('/api/generate-image', async (req: Request, res: Response) => {
     const aspectRatio = ASPECTS.has(req.body?.aspectRatio) ? req.body.aspectRatio : '4:3';
     const refs = sanitizeRefs(req.body?.references);
     const session = getSession(req);
+    const hq = req.body?.quality === 'hq';
 
     const prompt = rawPrompt;
 
@@ -999,7 +1004,7 @@ app.post('/api/generate-image', async (req: Request, res: Response) => {
       try {
         const { value, model } = await runChain(
           'image',
-          await chainFor(req, 'image'),
+          orderByQuality(await chainFor(req, 'image'), hq),
           async (m, ai) => {
             const isNoSize = NO_SIZE_IMAGE_MODELS.has(m);
             let currentRefs = refs;
@@ -1013,7 +1018,7 @@ app.post('/api/generate-image', async (req: Request, res: Response) => {
                   contents: [{ role: 'user', parts }],
                   config: {
                     responseModalities: [Modality.TEXT, Modality.IMAGE],
-                    imageConfig: isNoSize ? { aspectRatio } : { aspectRatio, imageSize: '1K' },
+                    imageConfig: isNoSize ? { aspectRatio } : { aspectRatio, imageSize: hq ? '2K' : '1K' },
                   },
                 });
                 const part = (response.candidates?.[0]?.content?.parts ?? []).find((p) => p.inlineData?.data);
@@ -1602,6 +1607,56 @@ const TITLES_SCHEMA: Schema = {
 };
 
 // ب6: اقتراح 3 عناوين بديلة بنفس اللغة واللهجة
+// فحص جودة صورة مرسومة بالرؤية: هل تطابق المشهد؟ هل فيها نص أو تشوه واضح؟ (يفشل بصمت: الأخطاء تعني "لا مشكلة")
+const IMAGE_CHECK_SCHEMA: Schema = {
+  type: Type.OBJECT,
+  properties: {
+    matches_scene: { type: Type.BOOLEAN },
+    has_text_or_watermark: { type: Type.BOOLEAN },
+    has_anatomy_error: { type: Type.BOOLEAN },
+    fix: { type: Type.STRING },
+  },
+  required: ['matches_scene', 'has_text_or_watermark', 'has_anatomy_error', 'fix'],
+};
+
+app.post('/api/check-image', async (req: Request, res: Response) => {
+  try {
+    const refs = sanitizeRefs([{ data: req.body?.data, mimeType: req.body?.mimeType }]);
+    const scene = clip(req.body?.scene, 700);
+    if (!refs.length || !scene) return res.status(400).json({ error: 'Image and scene are required.', code: 'FAILED' });
+    const { value } = await runChain(
+      'check-image',
+      await chainFor(req, 'text'),
+      async (model, ai) => {
+        const response = await ai.models.generateContent({
+          model,
+          contents: [
+            {
+              role: 'user',
+              parts: [
+                { inlineData: { data: refs[0].data, mimeType: refs[0].mimeType } },
+                {
+                  text: `You review one children's storybook illustration. Intended scene: "${scene}". Judge only: (1) does the picture show the main action/setting/characters of the scene, (2) does it contain readable text, letters or a watermark, (3) is there an obvious anatomy error (extra/missing limbs, fused or extra fingers, duplicated characters). If something is wrong, "fix" is ONE short English sentence telling the painter what to correct; otherwise "fix" is an empty string.`,
+                },
+              ],
+            },
+          ],
+          config: { responseMimeType: 'application/json', responseSchema: IMAGE_CHECK_SCHEMA },
+        });
+        const parsed = response.text ? parseJson(response.text) : null;
+        return typeof parsed?.matches_scene === 'boolean' ? parsed : null;
+      },
+      req
+    );
+    return res.json({
+      ok: Boolean(value.matches_scene) && !value.has_text_or_watermark && !value.has_anatomy_error,
+      fix: clip(value.fix, 240),
+    });
+  } catch (err) {
+    return sendError(res, err, 'Image check failed');
+  }
+});
+
 app.post('/api/suggest-titles', async (req: Request, res: Response) => {
   try {
     const currentTitle = clip(req.body?.currentTitle, 120);

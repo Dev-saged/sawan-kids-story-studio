@@ -84,12 +84,12 @@ export default function NavBar({ active, onNavigate, language, onToggleLanguage,
           <button
             type="button"
             onClick={() => onNavigate('studio')}
-            className="group flex min-h-11 items-center gap-2.5 text-start focus-visible:outline-none"
+            className="group flex min-h-11 min-w-0 flex-1 items-center gap-2.5 text-start focus-visible:outline-none md:flex-none"
           >
             <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-lantern via-amber-400 to-amber-600 text-ink shadow-md shadow-lantern/25 transition-transform group-hover:scale-105">
               <LanternSvg className="w-6 h-6" />
             </span>
-            <div className="min-w-0">
+            <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2">
                 <span className="font-display text-base sm:text-lg font-extrabold tracking-tight text-ink dark:text-moonlight truncate">
                   {isAr ? BRAND.name.ar : BRAND.name.en}
@@ -131,7 +131,7 @@ export default function NavBar({ active, onNavigate, language, onToggleLanguage,
           </nav>
 
           {/* Language, Theme & App Health (?) Controls */}
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
             <button
               type="button"
               data-testid="open-app-health-btn"
@@ -149,7 +149,7 @@ export default function NavBar({ active, onNavigate, language, onToggleLanguage,
               aria-label={isAr ? 'تبديل اللغة' : 'Toggle language'}
             >
               <Languages size={15} className="text-lantern" aria-hidden />
-              <span>{isAr ? 'English' : 'العربية'}</span>
+              <span className="hidden min-[400px]:inline">{isAr ? 'English' : 'العربية'}</span>
             </button>
             <button
               type="button"
