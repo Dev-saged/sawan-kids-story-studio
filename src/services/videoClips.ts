@@ -1,9 +1,10 @@
 import type { StoryData, StoryPage } from '../types';
 import { ApiError, authHeaders, postJson } from './api';
+import { deleteColabJob, downloadColabVideo, lastFrameOf, loadColabConfig, submitColabJob, waitColabJob } from './colabQueue';
 import { dbByIndex, dbDelete, dbPut, hashText } from './db';
 import { charactersLineFor, getArtStylePrompt, getCharactersForPage, isAdultStory } from './gemini';
-import { getImage, toReference } from './media';
-import { NO_AUDIO_DIRECTIVE, clipId, partsForText, stripBrandNames, videoAspectFor, type ClipPlan } from '../shared/modelRules';
+import { blobToBase64, getImage, reencode } from './media';
+import { NO_AUDIO_DIRECTIVE, clipId, clipSecondsFor, partsForText, stripBrandNames, videoAspectFor, type ClipPlan, type VideoSource } from '../shared/modelRules';
 
 // مقاطع الفيديو المتحركة (Gemini Omni): تخطيط، توليد عبر الخادم، وحفظ محلي في IndexedDB
 
@@ -14,6 +15,7 @@ export interface StoredClip {
   part: number;
   blob: Blob;
   interactionId?: string;
+  source?: VideoSource;
   createdAt: number;
 }
 
@@ -39,10 +41,11 @@ export const clipsByPage = (clips: StoredClip[]): Map<number, Blob[]> => {
 const DEFAULT_MOTION_FIRST = 'The characters move and react naturally to what is happening in the scene, with soft ambient motion in the environment.';
 const DEFAULT_MOTION_NEXT = 'The action continues and develops naturally.';
 
-// يقسّم القصة إلى مقاطع: كل صفحة 1..3 أجزاء بحسب طول نصها المقروء (8 ثوانٍ تقريباً لكل جزء)
-export const planClips = async (story: StoryData, signal?: AbortSignal): Promise<ClipPlan[]> => {
+// يقسّم القصة إلى مقاطع: كل صفحة 1..3 أجزاء بحسب طول نصها المقروء (≈ 8 ثوانٍ لكل جزء في Omni و5 في Colab)
+export const planClips = async (story: StoryData, signal?: AbortSignal, source: VideoSource = 'omni'): Promise<ClipPlan[]> => {
+  const clipSeconds = clipSecondsFor(source);
   const base: ClipPlan[] = story.pages.flatMap((p) => {
-    const parts = partsForText(p.text);
+    const parts = partsForText(p.text, clipSeconds);
     return Array.from({ length: parts }, (_, i) => ({
       id: clipId(storyKey(story), p.page, i + 1),
       page: p.page,
@@ -56,7 +59,7 @@ export const planClips = async (story: StoryData, signal?: AbortSignal): Promise
   try {
     const res = await postJson<{ clips: { page: number; part: number; motion: string }[] }>(
       '/api/video-plan',
-      { pages: story.pages.map((p) => ({ page: p.page, parts: partsForText(p.text), text: p.text, scene: p.image_prompt })) },
+      { pages: story.pages.map((p) => ({ page: p.page, parts: partsForText(p.text, clipSeconds), text: p.text, scene: p.image_prompt })) },
       signal,
       1
     );
@@ -68,10 +71,11 @@ export const planClips = async (story: StoryData, signal?: AbortSignal): Promise
   }
 };
 
-export const buildClipPrompt = (story: StoryData, plan: ClipPlan): string => {
+export const buildClipPrompt = (story: StoryData, plan: ClipPlan, source: VideoSource = 'omni'): string => {
   const page = story.pages.find((p) => p.page === plan.page) as StoryPage | undefined;
   const motion = stripBrandNames(plan.motion).replace(/\.+$/, '');
-  if (plan.part > 1) {
+  // Omni يمدّد المقطع السابق بنفسه؛ Colab يبدأ كل جزء من صورة (آخر إطار) فيحتاج وصف المشهد كاملاً
+  if (plan.part > 1 && source === 'omni') {
     return [
       'Continue the scene.',
       `Action: ${motion}.`,
@@ -83,7 +87,7 @@ export const buildClipPrompt = (story: StoryData, plan: ClipPlan): string => {
   const style = getArtStylePrompt(story.story_info.art_style, story.story_info.age_group, story.styleConsistency || story.story_info.styleConsistency, adult ? 'adults' : 'kids');
   const chars = page ? charactersLineFor(story, getCharactersForPage(story, page), 14) : '';
   return [
-    "Animate this storybook illustration into a short film clip.",
+    plan.part > 1 ? 'Continue the scene from the starting frame.' : 'Animate this storybook illustration into a short film clip.',
     plan.scene ? `Scene: ${stripBrandNames(plan.scene).replace(/\.+$/, '')}.` : '',
     `Action: ${motion}.`,
     chars,
@@ -116,17 +120,67 @@ interface JobStatus {
 }
 
 // يولّد مقطعاً واحداً: بدء المهمة، استطلاعها، تنزيل الملف، حفظه محلياً
+const saveClip = async (story: StoryData, plan: ClipPlan, blob: Blob, source: VideoSource, interactionId?: string): Promise<StoredClip> => {
+  const clip: StoredClip = {
+    id: plan.id,
+    storyId: storyKey(story),
+    page: plan.page,
+    part: plan.part,
+    blob: blob.type ? blob : new Blob([blob], { type: 'video/mp4' }),
+    interactionId,
+    source,
+    createdAt: Date.now(),
+  };
+  await dbPut('video_clips', clip);
+  return clip;
+};
+
+const pageImage = async (story: StoryData, plan: ClipPlan): Promise<Blob> => {
+  const stored = await getImage(story.pages.find((p) => p.page === plan.page)?.imageId);
+  if (!stored) throw new ApiError('FAILED', 'الصفحة بلا صورة بعد؛ ارسمها أولاً ثم ولّد الحركة.', undefined, '/api/video/start');
+  return stored.blob;
+};
+
+// Colab: المهمة تُرسل للطابور (مفتاح ثابت يمنع التكرار عند الاستئناف)، يعالجها الدفتر، ثم ننزّل المقطع
+const generateColabClip = async (story: StoryData, plan: ClipPlan, previous: StoredClip | undefined, signal: AbortSignal): Promise<StoredClip> => {
+  const cfg = loadColabConfig();
+  if (!cfg) throw new ApiError('FAILED', 'أدخل رابط طابور Cloudflare ورمز الوصول أولاً.', undefined, '/colab');
+  let start: Blob;
+  if (plan.part === 1) start = await pageImage(story, plan);
+  else if (previous?.blob) start = await lastFrameOf(previous.blob);
+  else throw new ApiError('FAILED', 'الجزء السابق من هذا المشهد غير جاهز.', undefined, '/colab');
+
+  const prompt = buildClipPrompt(story, plan, 'colab');
+  const input = { prompt, aspect: videoAspectFor(story.story_info.aspect_ratio), seconds: clipSecondsFor('colab'), image: start };
+  const baseKey = `${plan.id}:${hashText(prompt)}`;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const id = await submitColabJob(cfg, { ...input, key: attempt ? `${baseKey}:${Date.now()}` : baseKey }, signal);
+    await waitColabJob(cfg, id, signal);
+    try {
+      const blob = await downloadColabVideo(cfg, id, signal);
+      void deleteColabJob(cfg, id);
+      return await saveClip(story, plan, blob, 'colab');
+    } catch (err) {
+      // صلاحية المقطع المخزَّن انتهت (مهمة قديمة بنفس المفتاح): نعيد مرة بمفتاح جديد
+      if ((err as Error)?.name === 'AbortError' || attempt === 1) throw err;
+    }
+  }
+  throw new ApiError('FAILED', 'تعذّر الحصول على المقطع من Colab.', undefined, '/colab');
+};
+
 export const generateClip = async (
   story: StoryData,
   plan: ClipPlan,
   previous: StoredClip | undefined,
-  signal: AbortSignal
+  signal: AbortSignal,
+  source: VideoSource = 'omni'
 ): Promise<StoredClip> => {
+  if (source === 'colab') return generateColabClip(story, plan, previous, signal);
   let image: { data: string; mimeType: string } | undefined;
   if (plan.part === 1) {
-    const stored = await getImage(story.pages.find((p) => p.page === plan.page)?.imageId);
-    if (!stored) throw new ApiError('FAILED', 'الصفحة بلا صورة بعد؛ ارسمها أولاً ثم ولّد الحركة.', undefined, '/api/video/start');
-    image = await toReference(stored.blob);
+    // صورة البداية بدقة 1024 (بدل المرجع المصغّر 512) لحفظ تفاصيل الوجوه
+    const small = await reencode(await pageImage(story, plan), 1024, 'image/jpeg', 0.88);
+    image = { data: await blobToBase64(small), mimeType: 'image/jpeg' };
   } else if (!previous?.interactionId) {
     throw new ApiError('FAILED', 'الجزء السابق من هذا المشهد غير جاهز.', undefined, '/api/video/start');
   }
@@ -157,16 +211,5 @@ export const generateClip = async (
 
   const fileRes = await fetch(`/api/video/${jobId}/file`, { headers: authHeaders(), signal });
   if (!fileRes.ok) throw new ApiError('FAILED', 'تعذّر تنزيل المقطع من الخادم.', undefined, '/api/video/file');
-  const blob = await fileRes.blob();
-  const clip: StoredClip = {
-    id: plan.id,
-    storyId: storyKey(story),
-    page: plan.page,
-    part: plan.part,
-    blob: blob.type ? blob : new Blob([blob], { type: 'video/mp4' }),
-    interactionId: status.interactionId,
-    createdAt: Date.now(),
-  };
-  await dbPut('video_clips', clip);
-  return clip;
+  return saveClip(story, plan, await fileRes.blob(), 'omni', status.interactionId);
 };

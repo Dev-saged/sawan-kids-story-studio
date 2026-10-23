@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ArtStyle, Character, StoryData, StoryPage } from '../types';
+import { ArtStyle, AspectRatio, Character, StoryData, StoryPage } from '../types';
 import { getStudioSettings } from '../config';
 import { ApiError } from '../services/api';
 import { checkIllustration } from '../services/imageQA';
-import { buildCoverPrompt, buildPageImagePrompt, buildSheetPrompt, generateIllustration, SkippedImage } from '../services/gemini';
+import { buildCoverPrompt, buildPageImagePrompt, buildSheetPrompt, generateIllustration, getArtStylePrompt, SkippedImage } from '../services/gemini';
+import { captureAspectFor } from '../shared/modelRules';
 import { findSimilarImage, getImage, getNetworkAdaptation, reencode, saveImage, toReference, type ImageKind } from '../services/media';
 import { hashText } from '../services/db';
 
@@ -59,12 +60,12 @@ export function useIllustrator(story: StoryData, update: Updater, focusIndex: nu
 
   // مفتاح الإعادة: نفس الأسلوب + نفس ثبات الأسلوب + نفس الشخصيات + نفس صورة البطل + الفئة العمرية
   const cacheStyle = (s: StoryData) =>
-    `${s.story_info.art_style}|${s.styleConsistency ?? s.story_info.styleConsistency ?? ''}|${s.story_info.age_group ?? ''}|${s.heroPhotoId ?? ''}|${hashText(s.characters.map((c) => c.description).join('|'))}`;
+    `${s.story_info.art_style}|${s.styleConsistency ?? s.story_info.styleConsistency ?? ''}|${s.story_info.age_group ?? ''}|${captureAspectFor(s.story_info.aspect_ratio)}|${s.heroPhotoId ?? ''}|${hashText(s.characters.map((c) => c.description).join('|'))}`;
 
   const usedIds = (s: StoryData) => new Set([s.coverImageId, s.characterSheetId, ...s.pages.map((p) => p.imageId)].filter(Boolean) as string[]);
 
   // التشابه يُقاس على وصف المشهد وحده، ولا تتكرر صورة داخل نفس القصة
-  const create = async (s: StoryData, kind: ImageKind, prompt: string, matchText: string, refs: Ref[], reuse: boolean, signal: AbortSignal, quality: 'hq' | 'std' = kind === 'page' ? 'std' : 'hq') => {
+  const create = async (s: StoryData, kind: ImageKind, prompt: string, matchText: string, refs: Ref[], reuse: boolean, signal: AbortSignal, quality: 'hq' | 'std' = kind === 'page' ? 'std' : 'hq', pageText = '') => {
     if (reuse) {
       const hit = await findSimilarImage(matchText, cacheStyle(s), kind, kind === 'sheet' ? 0.92 : 0.88, usedIds(s));
       if (hit && !hit.url.includes('image/svg')) return hit;
@@ -74,7 +75,7 @@ export function useIllustrator(story: StoryData, update: Updater, focusIndex: nu
       const raw = await generateIllustration(
         {
           prompt: text,
-          aspectRatio: kind === 'sheet' ? '16:9' : s.story_info.aspect_ratio || '4:3',
+          aspectRatio: kind === 'sheet' ? '16:9' : kind === 'page' ? (captureAspectFor(s.story_info.aspect_ratio) as AspectRatio) : s.story_info.aspect_ratio || '4:3',
           references: refs,
           kind,
           artStyle: s.story_info.art_style,
@@ -89,9 +90,10 @@ export function useIllustrator(story: StoryData, update: Updater, focusIndex: nu
     };
 
     let blob = await draw(prompt);
-    // فحص بالرؤية للصور المهمة فقط (غلاف، ورقة، صفحة 1)، ومحاولة تصحيح واحدة؛ ورقة الشخصيات تُفحص تشوّهاتها لا مطابقة المشهد
-    if (quality === 'hq' && kind !== 'photo') {
-      const verdict = await checkIllustration(blob, matchText, signal);
+    // فحص بالرؤية لكل صورة (غلاف، ورقة، كل الصفحات)، ومحاولة تصحيح واحدة؛ فشل الفحص نفسه يُعد سليمة
+    if (kind !== 'photo') {
+      const style = getArtStylePrompt(s.story_info.art_style, s.story_info.age_group, s.styleConsistency || s.story_info.styleConsistency);
+      const verdict = await checkIllustration(blob, matchText, signal, { text: pageText, style, sheet: kind === 'sheet' });
       if (!verdict.ok && verdict.fix) {
         const [first, ...rest] = prompt.split('\n');
         try {
@@ -181,7 +183,7 @@ export function useIllustrator(story: StoryData, update: Updater, focusIndex: nu
       });
       try {
         const refs = await references(signal);
-        const img = await create(storyRef.current, 'page', buildPageImagePrompt(storyRef.current, page), page.image_prompt, refs, !force, signal, pageNo === 1 ? 'hq' : 'std');
+        const img = await create(storyRef.current, 'page', buildPageImagePrompt(storyRef.current, page), page.image_prompt, refs, !force, signal, pageNo === 1 ? 'hq' : 'std', page.text);
         setPage(pageNo, { generatedImage: img.url, imageId: img.id, isGeneratingImage: false, imageError: false });
       } catch (err) {
         setPage(pageNo, { isGeneratingImage: false, imageError: (err as Error).name !== 'AbortError' });

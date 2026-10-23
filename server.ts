@@ -437,6 +437,7 @@ const STORY_RESPONSE_SCHEMA: Schema = {
           image_prompt: { type: Type.STRING },
           chapter: { type: Type.STRING },
           mood: { type: Type.STRING },
+          setting: { type: Type.STRING },
         },
         required: ['page', 'text', 'narration', 'image_prompt', 'mood'],
       },
@@ -758,7 +759,7 @@ app.post('/api/generate-story', async (req: Request, res: Response) => {
       send({ t: 'reset' });
       const fallbackJson = await runFreeTextJson(
         SYSTEM_INSTRUCTION,
-        `${prompt}\nReturn JSON with keys: story_info {title, language, age_group, art_style, lessons[], moral}, characters [{name, description, personality, age, gender}], cover_image_prompt, music_prompt, pages [{page, text, narration, image_prompt, mood}], quiz [{question, options[], answer, page}].`
+        `${prompt}\nReturn JSON with keys: story_info {title, language, age_group, art_style, lessons[], moral}, characters [{name, description, personality, age, gender}], cover_image_prompt, music_prompt, pages [{page, text, narration, image_prompt, mood, setting}], quiz [{question, options[], answer, page}].`
       );
       if (fallbackJson?.pages?.length && fallbackJson?.characters?.length) {
         send({ t: 'done', story: fallbackJson });
@@ -1200,18 +1201,22 @@ app.post('/api/narrate', async (req: Request, res: Response) => {
     const text = clip(req.body?.text, 4000);
     if (!text) return res.status(400).json({ error: 'Narration text is required.', code: 'FAILED' });
     const voice = VOICES.has(req.body?.voice) ? req.body.voice : 'Sulafat';
+    const prefer = typeof req.body?.prefer === 'string' && /^[\w.\-]{3,80}$/.test(req.body.prefer) ? req.body.prefer : '';
 
     const NARRATION_SYSTEM_INSTRUCTION = `STRICT NARRATOR DIRECTIVE: You are an audio story narrator performing voice '${voice}'. Maintain 100% strict acoustic consistency across all narration clips in this book. Use the exact same voice pitch, speaking rate (steady, warm, expressive storytelling cadence), articulation, and audio timbre on every single paragraph. Do not vary pitch or tone randomly between calls. Read ONLY the requested story text cleanly with perfect diction. Do not omit words, do not speak any preamble, intro, or commentary.`;
 
+    // النموذج المثبّت أولاً إن كان ضمن السلسلة المتاحة (ثبات الراوي)، وبقية النماذج احتياط
+    const ttsChain = await chainFor(req, 'tts');
+    const orderedChain = prefer && ttsChain.includes(prefer) ? [prefer, ...ttsChain.filter((m) => m !== prefer)] : ttsChain;
     const { value, model } = await runChain(
       'tts',
-      await chainFor(req, 'tts'),
+      orderedChain,
       async (m, ai) => {
         const supportsDeveloperInstruction = /^gemini-2\.5-/i.test(m);
         try {
           const response = await ai.models.generateContent({
             model: m,
-            contents: [{ role: 'user', parts: [{ text }] }],
+            contents: [{ role: 'user', parts: [{ text: supportsDeveloperInstruction ? text : `Say in the same steady, warm storyteller voice, at a constant pace and pitch: ${text}` }] }],
             config: {
               ...(supportsDeveloperInstruction ? { systemInstruction: NARRATION_SYSTEM_INSTRUCTION } : {}),
               responseModalities: [Modality.AUDIO],
@@ -1225,7 +1230,7 @@ app.post('/api/narrate', async (req: Request, res: Response) => {
           if (/Developer instruction is not enabled/i.test(String(err?.message || ''))) {
             const retryRes = await ai.models.generateContent({
               model: m,
-              contents: [{ role: 'user', parts: [{ text }] }],
+              contents: [{ role: 'user', parts: [{ text: `Say in the same steady, warm storyteller voice, at a constant pace and pitch: ${text}` }] }],
               config: {
                 responseModalities: [Modality.AUDIO],
                 speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voice } } },
@@ -1616,6 +1621,9 @@ const IMAGE_CHECK_SCHEMA: Schema = {
     matches_scene: { type: Type.BOOLEAN },
     has_text_or_watermark: { type: Type.BOOLEAN },
     has_anatomy_error: { type: Type.BOOLEAN },
+    matches_setting: { type: Type.BOOLEAN },
+    matches_style: { type: Type.BOOLEAN },
+    subject_cropped: { type: Type.BOOLEAN },
     fix: { type: Type.STRING },
   },
   required: ['matches_scene', 'has_text_or_watermark', 'has_anatomy_error', 'fix'],
@@ -1625,6 +1633,9 @@ app.post('/api/check-image', async (req: Request, res: Response) => {
   try {
     const refs = sanitizeRefs([{ data: req.body?.data, mimeType: req.body?.mimeType }]);
     const scene = clip(req.body?.scene, 700);
+    const pageText = clip(req.body?.text, 600);
+    const style = clip(req.body?.style, 400);
+    const isSheet = req.body?.sheet === true;
     if (!refs.length || !scene) return res.status(400).json({ error: 'Image and scene are required.', code: 'FAILED' });
     const { value } = await runChain(
       'check-image',
@@ -1638,7 +1649,7 @@ app.post('/api/check-image', async (req: Request, res: Response) => {
               parts: [
                 { inlineData: { data: refs[0].data, mimeType: refs[0].mimeType } },
                 {
-                  text: `You review one children's storybook illustration. Intended scene: "${scene}". Judge only: (1) does the picture show the main action/setting/characters of the scene, (2) does it contain readable text, letters or a watermark, (3) is there an obvious anatomy error (extra/missing limbs, fused or extra fingers, duplicated characters). If something is wrong, "fix" is ONE short English sentence telling the painter what to correct; otherwise "fix" is an empty string.`,
+                  text: `You review one storybook illustration. Intended scene: "${scene}".${pageText ? ` Story text of this page: "${pageText}".` : ''}${style ? ` Required art style: "${style}".` : ''} Judge: (1) matches_scene: the picture shows the main action and characters of the scene, (2) has_text_or_watermark: readable text, letters or a watermark, (3) has_anatomy_error: extra/missing limbs, fused or extra fingers, duplicated characters, distorted faces or strange creature-like bodies on characters that should be ordinary, (4) matches_setting: the place and time of day shown fit the scene and the story text (not a generic or unrelated background), (5) matches_style: the picture really is in the required art style (for example a cartoon must look like a cartoon, anime like anime, not a different medium), (6) subject_cropped: any main character's head, hands or feet are cut off by the frame edge or sit outside the frame.${isSheet ? ' This image is a character reference sheet on a plain background: always answer true for matches_setting and false for subject_cropped, and judge only the other points.' : ''} If something is wrong, "fix" is ONE short English sentence telling the painter what to correct; otherwise "fix" is an empty string.`,
                 },
               ],
             },
@@ -1651,7 +1662,7 @@ app.post('/api/check-image', async (req: Request, res: Response) => {
       req
     );
     return res.json({
-      ok: Boolean(value.matches_scene) && !value.has_text_or_watermark && !value.has_anatomy_error,
+      ok: Boolean(value.matches_scene) && !value.has_text_or_watermark && !value.has_anatomy_error && value.matches_setting !== false && value.matches_style !== false && !value.subject_cropped,
       fix: clip(value.fix, 240),
     });
   } catch (err) {

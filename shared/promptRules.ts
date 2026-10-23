@@ -309,3 +309,7 @@ export const detectCharacterFruit = (name: string, description: string): string 
   }
   return hit[0];
 };
+
+// نسبة التقاط صور الصفحات: القصص 4:3 تُرسم 16:9 (لقطة أوسع للفيديو) ويُقصّ العرض عند الطباعة والقراءة؛ غيرها دون تغيير
+export const captureAspectFor = (storyAspect: string | undefined): string => (!storyAspect || storyAspect === '4:3' ? '16:9' : storyAspect);
+export const isWideCapture = (storyAspect: string | undefined): boolean => captureAspectFor(storyAspect) !== (storyAspect || '4:3');

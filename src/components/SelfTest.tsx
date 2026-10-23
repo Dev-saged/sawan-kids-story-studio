@@ -71,8 +71,11 @@ import {
   computePrintPageDimensionsMm,
   computePrintPageMarginsMm,
 } from '../services/printBook';
-import { estimateCostUsd, getStyleLock, normalizeStyleConsistencyId, partsForText, videoAspectFor } from '../shared/modelRules';
+import { FRAMING_DIRECTIVE, captureAspectFor, clipSecondsFor, estimateCostUsd, getStyleLock, normalizeStyleConsistencyId, partsForText, videoAspectFor } from '../shared/modelRules';
 import { buildClipPrompt } from '../services/videoClips';
+import { normalizeQueueUrl, isWorkerOnline } from '../services/colabQueue';
+import { TARGET_RMS, normalizeWav, wavRms } from '../services/audioLevel';
+import { fitBase } from '../services/video';
 import type { StoryData, StoryPage } from '../types';
 
 interface Result {
@@ -1062,6 +1065,81 @@ export const TESTS: { name: string; run: () => void | Promise<void> }[] = [
       if (first.split(/\s+/).length > 150) throw new Error('Clip prompt too long');
       const next = buildClipPrompt(st, { id: 'b', page: 1, part: 2, parts: 2, scene: '', motion: 'Sami waves from the top.' });
       if (!/^Continue the scene/.test(next) || /starting frame/.test(next)) throw new Error(`Bad continuation prompt: ${next}`);
+    },
+  },
+  {
+    name: 'مصدر Colab: مقاطع 5 ثوانٍ، برومبت الجزء الثاني كامل الوصف، ورابط الطابور آمن',
+    run: () => {
+      eq(clipSecondsFor('colab'), 5);
+      eq(clipSecondsFor('omni'), 8);
+      eq(partsForText('كلمة '.repeat(30), clipSecondsFor('omni')), 2);
+      eq(partsForText('كلمة '.repeat(30), clipSecondsFor('colab')), 3);
+      const st = fixture(2);
+      st.id = 'story-test';
+      const next = buildClipPrompt(st, { id: 'b', page: 1, part: 2, parts: 2, scene: 'Sami at the crystal tree at sunset', motion: 'Sami waves from the top.' }, 'colab');
+      if (!/^Continue the scene from the starting frame/.test(next) || !/crystal tree/.test(next) || !/starting frame\.$/.test(next)) throw new Error(`Bad colab continuation: ${next}`);
+      eq(normalizeQueueUrl('https://sawan-video-queue.abc.workers.dev/jobs?x=1'), 'https://sawan-video-queue.abc.workers.dev');
+      eq(normalizeQueueUrl('http://localhost:8788/'), 'http://localhost:8788');
+      eq([normalizeQueueUrl('http://evil.example.com'), normalizeQueueUrl('javascript:alert(1)'), normalizeQueueUrl('not a url')], [null, null, null]);
+      eq([isWorkerOnline(null), isWorkerOnline({ queued: 0, running: 0, workerSeenSeconds: 20 }), isWorkerOnline({ queued: 0, running: 0, workerSeenSeconds: 400 })], [false, true, false]);
+    },
+  },
+  {
+    name: 'تسوية صوت الراوي: الخافت يرتفع والعالي ينخفض والصمت لا يتغير',
+    run: () => {
+      const wav = (amp: number, n = 24000): ArrayBuffer => {
+        const buf = new ArrayBuffer(44 + n * 2);
+        const v = new DataView(buf);
+        const tag = (o: number, t: string) => [...t].forEach((c, i) => v.setUint8(o + i, c.charCodeAt(0)));
+        tag(0, 'RIFF');
+        v.setUint32(4, 36 + n * 2, true);
+        tag(8, 'WAVEfmt ');
+        v.setUint32(16, 16, true);
+        v.setUint16(20, 1, true);
+        v.setUint16(22, 1, true);
+        v.setUint32(24, 24000, true);
+        v.setUint32(28, 48000, true);
+        v.setUint16(32, 2, true);
+        v.setUint16(34, 16, true);
+        tag(36, 'data');
+        v.setUint32(40, n * 2, true);
+        for (let i = 0; i < n; i++) v.setInt16(44 + i * 2, Math.round(Math.sin(i / 7) * amp * 32767), true);
+        return buf;
+      };
+      const quiet = wavRms(normalizeWav(wav(0.04)))!;
+      const loud = wavRms(normalizeWav(wav(0.6)))!;
+      if (Math.abs(quiet - TARGET_RMS) > 0.02) throw new Error(`quiet ${quiet}`);
+      if (Math.abs(loud - TARGET_RMS) > 0.02) throw new Error(`loud ${loud}`);
+      const silent = wav(0);
+      eq(normalizeWav(silent) === silent, true);
+      const junk = new ArrayBuffer(100);
+      eq(normalizeWav(junk) === junk, true);
+    },
+  },
+  {
+    name: 'تأطير الصور: التقاط 16:9 لقصص 4:3، لقطة واسعة، ومكان المشهد في البرومبت',
+    run: () => {
+      eq([captureAspectFor('4:3'), captureAspectFor(undefined), captureAspectFor('16:9'), captureAspectFor('3:4'), captureAspectFor('1:1')], ['16:9', '16:9', '16:9', '3:4', '1:1']);
+      const st = fixture(2);
+      st.pages[0].image_prompt = 'Sami climbing the glowing crystal tree';
+      st.pages[0].setting = 'moonlit crystal forest, midnight';
+      const prompt = buildPageImagePrompt(st, st.pages[0]);
+      if (!prompt.includes(FRAMING_DIRECTIVE)) throw new Error(`Framing missing: ${prompt}`);
+      if (!/Setting: moonlit crystal forest, midnight\./.test(prompt)) throw new Error(`Setting missing: ${prompt}`);
+      if (prompt.split(/\s+/).length > 125) throw new Error('Prompt over word cap');
+      st.pages[0].image_prompt = 'Sami in the moonlit crystal forest, midnight, climbing';
+      if (/Setting:/.test(buildPageImagePrompt(st, st.pages[0]))) throw new Error('Setting duplicated');
+    },
+  },
+  {
+    name: 'عرض الفيديو: الصورة تُعرض كاملة دون قص عند اختلاف النسبة، وقص بسيط فقط عند التقارب',
+    run: () => {
+      const W = 1280;
+      const H = 720;
+      eq(Math.abs(fitBase(1376, 768, W, H) - W / 1376) < 0.01, true);
+      eq(fitBase(1024, 768, W, H), H / 768);
+      eq(fitBase(768, 1024, W, H), H / 1024);
+      eq(fitBase(1280, 780, W, H), Math.max(W / 1280, H / 780));
     },
   },
 ];

@@ -9,3 +9,5 @@ dist-ssr
 .aistudio/
 public/assets/aistudio/
 bun.lock
+__pycache__/
+*.pyc

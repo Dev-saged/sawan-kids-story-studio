@@ -1,6 +1,7 @@
 import { AudienceLevel, Character, Language, NameAnalysis, QuizItem, StoryData, StoryParams, StoryPage } from '../types';
 import { FIRST_BATCH_PAGES, MAX_IDEA_LENGTH, MAX_STORY_PAGES, NEXT_BATCH_PAGES } from '../constants';
 import {
+  FRAMING_DIRECTIVE,
   POSITIVE_ILLUSTRATION_DIRECTIVE,
   STYLE_CONSISTENCY_PRESETS,
   artDirectionLine,
@@ -348,11 +349,12 @@ export const buildPageImagePrompt = (story: StoryData, page: StoryPage): string 
   const rawScene = (page.image_prompt || page.text || defaultScene).trim().replace(/\.+$/, '');
   const correction = page.correctionNote?.trim() ? ` Correction: ${page.correctionNote.trim().replace(/\.+$/, '')}.` : '';
   const sentiment = analyzeTextSentimentAndPalette(page.text || '', page.image_prompt || '', page.mood);
+  const place = page.setting?.trim() && !rawScene.toLowerCase().includes(page.setting.trim().toLowerCase()) ? ` Setting: ${stripBrandNames(page.setting.trim()).replace(/\.+$/, '')}.` : '';
   return assemblePromptWithWordCap(
-    `Scene: ${stripBrandNames(rawScene)}.${correction}`,
+    `Scene: ${stripBrandNames(rawScene)}.${place}${correction}`,
     charactersLineFor(story, getCharactersForPage(story, page), 18),
     styleLineFor(story, sentiment.paletteDescriptor),
-    POSITIVE_ILLUSTRATION_DIRECTIVE,
+    `${FRAMING_DIRECTIVE} ${POSITIVE_ILLUSTRATION_DIRECTIVE}`,
     120
   );
 };
@@ -552,6 +554,7 @@ const cleanPage = (p: Partial<StoryPage>): StoryPage => ({
   narration: (p.narration ?? '').trim() || (p.text ?? '').trim(),
   image_prompt: p.image_prompt ?? '',
   ...(p.mood && MOODS.includes(p.mood) ? { mood: p.mood } : {}),
+  ...(typeof p.setting === 'string' && p.setting.trim() ? { setting: p.setting.trim().slice(0, 120) } : {}),
   ...(p.chapter?.trim() ? { chapter: p.chapter.trim() } : {}),
 });
 
@@ -939,9 +942,34 @@ export class StoryGenerator {
 
 export { generateIllustration, SkippedImage, type ImageRequest } from './imageEngine';
 
+// تثبيت نموذج الصوت: أول نموذج ينجح يُحفظ ويُطلب أولاً دائماً، كي لا يتبدّل الراوي بين الصفحات
+const TTS_PIN_KEY = 'sawan-tts-model';
+const readTtsPin = (): string | undefined => {
+  try {
+    return localStorage.getItem(TTS_PIN_KEY) || undefined;
+  } catch {
+    return undefined;
+  }
+};
+export const resetTtsPin = () => {
+  try {
+    localStorage.removeItem(TTS_PIN_KEY);
+  } catch {
+    // ignore
+  }
+};
+
 export const narrate = async (text: string, voice: string, signal?: AbortSignal): Promise<Blob> => {
-  const data = await postJson<{ base64: string; mimeType: string }>('/api/narrate', { text, voice }, signal);
+  const prefer = readTtsPin();
+  const data = await postJson<{ base64: string; mimeType: string; model?: string }>('/api/narrate', { text, voice, ...(prefer ? { prefer } : {}) }, signal);
   if (!data?.base64) throw new ApiError('FAILED');
+  if (!prefer && data.model) {
+    try {
+      localStorage.setItem(TTS_PIN_KEY, data.model);
+    } catch {
+      // ignore
+    }
+  }
   return base64ToBlob(data.base64, data.mimeType || 'audio/wav');
 };
 

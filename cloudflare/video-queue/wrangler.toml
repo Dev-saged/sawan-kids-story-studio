@@ -1,0 +1,14 @@
+name = "sawan-video-queue"
+main = "worker.js"
+compatibility_date = "2025-01-01"
+workers_dev = true
+
+# أُنشئت القاعدة والمخزن في حساب Cloudflare الخاص بساجد (المعرّفات ليست أسراراً):
+[[d1_databases]]
+binding = "DB"
+database_name = "sawan-video-queue"
+database_id = "bfe00357-1bbd-4ea2-b904-32dacb55a501"
+
+[[kv_namespaces]]
+binding = "BLOBS"
+id = "72a92250a2d74e17ac025873f90ad08c"
