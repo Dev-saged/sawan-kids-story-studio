@@ -3,14 +3,12 @@ main = "worker.js"
 compatibility_date = "2025-01-01"
 workers_dev = true
 
-# أنشئ القاعدة والمخزن ثم ضع المعرّفات هنا (الأوامر في README.md):
-#   npx wrangler d1 create sawan-video-queue
-#   npx wrangler kv namespace create BLOBS
+# أُنشئت القاعدة والمخزن في حساب Cloudflare الخاص بساجد (المعرّفات ليست أسراراً):
 [[d1_databases]]
 binding = "DB"
 database_name = "sawan-video-queue"
-database_id = "REPLACE_WITH_D1_DATABASE_ID"
+database_id = "bfe00357-1bbd-4ea2-b904-32dacb55a501"
 
 [[kv_namespaces]]
 binding = "BLOBS"
-id = "REPLACE_WITH_KV_NAMESPACE_ID"
+id = "72a92250a2d74e17ac025873f90ad08c"
