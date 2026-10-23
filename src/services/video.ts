@@ -122,6 +122,14 @@ const easeInOut = (x: number) => {
 };
 
 // الصورة تُصغَّر لما يحتاجه الإطار وتدعم SVG والصور النقطية بكفاءة
+// ملاءمة الصورة للإطار: قصّ بسيط فقط إن كان الفارق في النسبة أقل من 12%، وإلا تُعرض كاملة دون قصّ
+const COVER_TOLERANCE = 1.12;
+export const fitBase = (iw: number, ih: number, W: number, H: number): number => {
+  const cover = Math.max(W / iw, H / ih);
+  const contain = Math.min(W / iw, H / ih);
+  return cover / contain <= COVER_TOLERANCE ? cover : contain;
+};
+
 const loadBitmap = async (src: string | undefined, W: number, H: number): Promise<ImageBitmap | null> => {
   if (!src) return null;
   try {
@@ -212,6 +220,32 @@ export class Renderer {
     return `${weight} ${size}px ${fam}, sans-serif`;
   }
 
+  // خلفية ضبابية من الصورة نفسها تملأ الإطار حول الصورة الكاملة (بدل قصّها وتكبيرها)
+  private backdrops = new WeakMap<ImageBitmap, HTMLCanvasElement>();
+  private drawBackdrop(img: ImageBitmap) {
+    const { ctx, W, H } = this;
+    let tiny = this.backdrops.get(img);
+    if (!tiny) {
+      tiny = document.createElement('canvas');
+      tiny.width = 48;
+      tiny.height = Math.max(8, Math.round((48 * H) / W));
+      const t = tiny.getContext('2d');
+      if (t) {
+        const c = Math.max(tiny.width / img.width, tiny.height / img.height);
+        t.imageSmoothingQuality = 'high';
+        t.drawImage(img, (tiny.width - img.width * c) / 2, (tiny.height - img.height * c) / 2, img.width * c, img.height * c);
+      }
+      this.backdrops.set(img, tiny);
+    }
+    ctx.save();
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(tiny, 0, 0, W, H);
+    ctx.fillStyle = 'rgba(8,5,20,0.35)';
+    ctx.fillRect(0, 0, W, H);
+    ctx.restore();
+  }
+
   // صورة بحركة كاميرا Veo 3 مع اختيار المود السينمائي والموشن
   private drawImage(seg: Segment, local: number, extraScale = 1) {
     const { ctx, W, H } = this;
@@ -232,6 +266,7 @@ export class Renderer {
       return;
     }
     const img = seg.image;
+    this.drawBackdrop(img);
     const p = easeInOut(local / (seg.dur + TRANSITION));
     const zoomIn = seg.dir > 0;
     let mode = this.veoMotionMode;
@@ -242,13 +277,13 @@ export class Renderer {
 
     if (mode === 'parallax-script') {
       // مود 2: حركة ديناميكية ثنائية الأبعاد ونصف مع تأثير المنظر ثلاثي الأبعاد (2.5D Parallax)
-      const scale = (zoomIn ? 1.08 + 0.18 * p : 1.25 - 0.18 * p) * extraScale;
-      const base = Math.max(W / img.width, H / img.height);
+      const scale = (zoomIn ? 1.01 + 0.04 * p : 1.05 - 0.04 * p) * extraScale;
+      const base = fitBase(img.width, img.height, W, H);
       const w = img.width * base * scale;
       const h = img.height * base * scale;
-      const panX = Math.sin(local * 1.8) * (W * 0.02) + (seg.dir * (p - 0.5) * W * 0.08);
-      const panY = Math.cos(local * 1.4) * (H * 0.02) + ((zoomIn ? -1 : 1) * (p - 0.5) * H * 0.05);
-      const tilt = Math.sin(local * 2.1) * 0.012;
+      const panX = Math.sin(local * 1.8) * (W * 0.01) + (seg.dir * (p - 0.5) * W * 0.04);
+      const panY = Math.cos(local * 1.4) * (H * 0.01) + ((zoomIn ? -1 : 1) * (p - 0.5) * H * 0.025);
+      const tilt = Math.sin(local * 2.1) * 0.006;
 
       ctx.save();
       ctx.translate(W / 2, H / 2);
@@ -257,13 +292,13 @@ export class Renderer {
       ctx.restore();
     } else if (this.veoMotionMode === 'sweeps-3d') {
       // مود 3: مسح ثلاثي الأبعاد متعدد الزوايا للكاميرا (Multi-Angle 3D Sweeps)
-      const sweepAngle = Math.sin(p * Math.PI) * 0.025 * (seg.dir || 1);
-      const scale = (1.12 + 0.15 * Math.sin(p * Math.PI)) * extraScale;
-      const base = Math.max(W / img.width, H / img.height);
+      const sweepAngle = Math.sin(p * Math.PI) * 0.012 * (seg.dir || 1);
+      const scale = (1.01 + 0.03 * Math.sin(p * Math.PI)) * extraScale;
+      const base = fitBase(img.width, img.height, W, H);
       const w = img.width * base * scale;
       const h = img.height * base * scale;
-      const panX = Math.cos(p * Math.PI) * (W * 0.06);
-      const panY = Math.sin(p * Math.PI * 0.5) * (H * 0.04);
+      const panX = Math.cos(p * Math.PI) * (W * 0.03);
+      const panY = Math.sin(p * Math.PI * 0.5) * (H * 0.02);
 
       ctx.save();
       ctx.translate(W / 2, H / 2);
@@ -272,15 +307,15 @@ export class Renderer {
       ctx.restore();
     } else {
       // مود 1 (مُستَحسَن): مجموعة كاملة من المؤثرات السينمائية مع تحريك الكاميرا وعمقها
-      const scale = (zoomIn ? 1.05 + 0.13 * p : 1.18 - 0.13 * p) * extraScale;
-      const base = Math.max(W / img.width, H / img.height);
+      const scale = (zoomIn ? 1.0 + 0.05 * p : 1.05 - 0.05 * p) * extraScale;
+      const base = fitBase(img.width, img.height, W, H);
       const w = img.width * base * scale;
       const h = img.height * base * scale;
       const breath = Math.sin(local * 2.3) * (H * 0.005);
       const sway = Math.sin(local * 1.5) * (W * 0.004);
       const tilt = Math.sin(local * 1.6) * 0.005;
-      const panX = seg.dir * (p - 0.5) * W * 0.05 + sway;
-      const panY = (zoomIn ? -1 : 1) * (p - 0.5) * H * 0.03 + breath;
+      const panX = seg.dir * (p - 0.5) * W * 0.03 + sway;
+      const panY = (zoomIn ? -1 : 1) * (p - 0.5) * H * 0.02 + breath;
 
       ctx.save();
       ctx.translate(W / 2, H / 2);
@@ -504,7 +539,7 @@ export class Renderer {
 
   private drawSegment(seg: Segment, local: number, alpha = 1, mode: 'normal' | 'zoomOut' = 'normal') {
     const { ctx, W, H, portrait } = this;
-    const extra = mode === 'zoomOut' ? 1 + 0.12 * ease(local) : 1;
+    const extra = mode === 'zoomOut' ? 1 + 0.04 * ease(local) : 1;
     this.drawImage(seg, local, extra);
     if (seg.kind === 'cover') {
       this.overlay(1.1);

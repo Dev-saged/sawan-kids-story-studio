@@ -2,6 +2,7 @@ import { NarratorVoice, StoryData, StoryPage } from '../types';
 import { dbDelete, dbGet, dbPut, hashText } from './db';
 import { generateMusic, narrate } from './gemini';
 import { getClonedVoiceProfile } from './voiceClone';
+import { normalizeWavBlob } from './audioLevel';
 
 interface AudioRecord {
   id: string;
@@ -48,7 +49,9 @@ const cached = async (id: string, make: () => Promise<Blob>): Promise<Blob> => {
   } catch {
     // ignore
   }
-  const blob = await make();
+  const raw = await make();
+  // تسوية مستوى الصوت لمقاطع الراوي فقط (ليس الموسيقى)
+  const blob = id.startsWith('tts:') ? await normalizeWavBlob(raw) : raw;
   dbPut<AudioRecord>('audio', { id, blob, createdAt: Date.now() }).catch(() => undefined);
   return blob;
 };

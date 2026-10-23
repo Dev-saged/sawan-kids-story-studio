@@ -16,6 +16,9 @@ export const NO_SIZE_IMAGE_MODELS = new Set<string>([
 export const POSITIVE_ILLUSTRATION_DIRECTIVE =
   'Depict each character once with proportionate anatomy and clean hands; no text, letters, or watermarks.';
 
+// تأطير واسع: الشخصيات كاملة داخل الإطار والحدث في الوسط (يُقصّ العرض لاحقاً للطباعة 4:3 دون فقد شيء مهم)
+export const FRAMING_DIRECTIVE = 'Wide shot, every character fully in frame head to toe, action centered in the middle 70% of the frame.';
+
 // الأساليب الفنية الـ 18: مشتقة من ART_DIRECTION (مصدر واحد) بوصف بصري بلا مبالغات ولا أسماء استوديوهات
 export const SHARED_ART_STYLE_OPTIONS: { value: ArtStyle; labelAr: string; prompt: string }[] = (
   Object.keys(ART_DIRECTION) as ArtStyle[]
@@ -67,6 +70,8 @@ PAGES & SCENE-TO-TEXT FIDELITY
 - "image_prompt" is ALWAYS ENGLISH, 40-65 words. It MUST faithfully depict the EXACT event, action, setting, and emotion happening in "text" on that specific page:
   * Mention the focal character(s) by their English/transliterated name AND brief visual tag (e.g. "Tariq (tall 30-year-old man in a dark coat)") performing the exact action of the page.
   * Specify camera angle, environment details, lighting, and mood.
+  * FRAMING: always a wide or medium-wide shot. Every character fully in frame head to toe with breathing room; never extreme close-ups; keep the action in the middle of the frame.
+- "setting": for EVERY page, 4-10 ENGLISH words naming the exact physical place and time of day where this page happens (e.g. "sunlit village bakery, early morning"). It MUST match the page text; reuse the identical place name on every page that happens in the same place.
 - "mood": for EVERY page one word from this list that best fits the emotion of that page: happy, sad, tense, mysterious, wonder, serene.
   * Never write generic filler scenes that ignore what happened in the page text.
   * Never put words, letters, captions, signs, or watermarks in the image.
