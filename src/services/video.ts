@@ -12,6 +12,8 @@ export interface VideoOptions {
   veoMotionMode?: VeoMotionMode;
   brand: string;
   tagline?: string;
+  // مقاطع متحركة مولّدة بالذكاء الاصطناعي لكل صفحة (صوتها مُهمل دائماً؛ الصوت من الراوي فقط)
+  clips?: Map<number, Blob[]>;
 }
 
 export interface VideoResult {
@@ -33,7 +35,75 @@ const END_DUR = 5;
 const LANTERN = '#ffc94a';
 const DUSK = '#140f28';
 
-interface Segment {
+// مقطع/مقاطع متحركة لصفحة: تُعرض بالتتابع ثم يثبت آخر إطار إن انتهت قبل الراوي
+export interface ClipPlayer {
+  items: { el: HTMLVideoElement; url: string; dur: number }[];
+  total: number;
+  active: HTMLVideoElement | null;
+}
+
+const waitEvent = (el: HTMLVideoElement, ok: string, ms: number): Promise<boolean> =>
+  new Promise((resolve) => {
+    const done = (v: boolean) => {
+      clearTimeout(t);
+      el.removeEventListener(ok, onOk);
+      el.removeEventListener('error', onErr);
+      resolve(v);
+    };
+    const onOk = () => done(true);
+    const onErr = () => done(false);
+    const t = setTimeout(() => done(false), ms);
+    el.addEventListener(ok, onOk);
+    el.addEventListener('error', onErr);
+  });
+
+export const loadClipPlayer = async (blobs: Blob[]): Promise<ClipPlayer | undefined> => {
+  const items: ClipPlayer['items'] = [];
+  for (const blob of blobs) {
+    const url = URL.createObjectURL(blob);
+    const el = document.createElement('video');
+    el.muted = true;
+    el.playsInline = true;
+    el.preload = 'auto';
+    el.src = url;
+    const ok = await waitEvent(el, 'loadeddata', 15000);
+    if (ok && Number.isFinite(el.duration) && el.duration > 0.3 && el.videoWidth > 0) items.push({ el, url, dur: el.duration });
+    else URL.revokeObjectURL(url);
+  }
+  return items.length ? { items, total: items.reduce((a, b) => a + b.dur, 0), active: null } : undefined;
+};
+
+// يضع المقطع على الزمن المحلي المطلوب (يتنقل بين المقاطع المتتابعة ويثبت على آخر إطار بعد نهايتها)
+export const seekClip = async (player: ClipPlayer, localTime: number): Promise<void> => {
+  let local = localTime;
+  let target = player.items[player.items.length - 1];
+  let at = Math.max(0, target.dur - 0.05);
+  if (local < player.total) {
+    for (const it of player.items) {
+      if (local < it.dur) {
+        target = it;
+        at = local;
+        break;
+      }
+      local -= it.dur;
+    }
+  }
+  if (Math.abs(target.el.currentTime - at) > 0.001) {
+    target.el.currentTime = at;
+    await waitEvent(target.el, 'seeked', 2500);
+  }
+  player.active = target.el;
+};
+
+export const disposeClipPlayer = (p?: ClipPlayer) => {
+  p?.items.forEach((i) => {
+    i.el.removeAttribute('src');
+    i.el.load();
+    URL.revokeObjectURL(i.url);
+  });
+};
+
+export interface Segment {
   kind: 'cover' | 'page' | 'end';
   start: number;
   dur: number;
@@ -42,6 +112,7 @@ interface Segment {
   audio?: AudioBuffer;
   voiceStart: number;
   dir: number;
+  clip?: ClipPlayer;
 }
 
 const ease = (x: number) => 1 - Math.pow(1 - Math.min(Math.max(x, 0), 1), 3);
@@ -94,7 +165,7 @@ const timingsFor = (words: string[], duration: number) => {
   });
 };
 
-class Renderer {
+export class Renderer {
   private ctx: CanvasRenderingContext2D;
   private particles: { x: number; y: number; r: number; s: number; p: number }[];
   private timings = new Map<Segment, { start: number; end: number }[]>();
@@ -144,6 +215,14 @@ class Renderer {
   // صورة بحركة كاميرا Veo 3 مع اختيار المود السينمائي والموشن
   private drawImage(seg: Segment, local: number, extraScale = 1) {
     const { ctx, W, H } = this;
+    const live = seg.clip?.active;
+    if (live && live.videoWidth > 0) {
+      const base = Math.max(W / live.videoWidth, H / live.videoHeight) * extraScale;
+      const w = live.videoWidth * base;
+      const h = live.videoHeight * base;
+      ctx.drawImage(live, (W - w) / 2, (H - h) / 2, w, h);
+      return;
+    }
     if (!seg.image) {
       const g = ctx.createLinearGradient(0, 0, W, H);
       g.addColorStop(0, '#2a1f4f');
@@ -495,6 +574,24 @@ class Renderer {
     return buf.canvas;
   }
 
+  // يوقف المقاطع المتحركة (مسار التسجيل اللحظي لا يستطيع القفز بين الإطارات)
+  disableClips() {
+    this.segments.forEach((s) => {
+      if (s.clip) s.clip.active = null;
+    });
+  }
+
+  // يضبط إطار كل مقطع متحرك ظاهر عند الزمن t (التصدير غير اللحظي فقط)؛ يُستدعى قبل frame
+  async prepare(t: number): Promise<void> {
+    let i = this.segments.findIndex((s) => t < s.start + s.dur);
+    if (i < 0) i = this.segments.length - 1;
+    const involved = [this.segments[i]];
+    if (this.segments[i - 1] && t - this.segments[i].start < TRANSITION) involved.push(this.segments[i - 1]);
+    for (const seg of involved) {
+      if (seg.clip) await seekClip(seg.clip, Math.max(0, t - seg.start));
+    }
+  }
+
   frame(t: number) {
     const { ctx, W, H } = this;
     ctx.setTransform(this.scale, 0, 0, this.scale, 0, 0);
@@ -588,7 +685,7 @@ const createFallbackPageAudio = (actx: BaseAudioContext, wordsCount: number): Au
   return buf;
 };
 
-const buildSegments = async (story: StoryData, voice: NarratorVoice, actx: BaseAudioContext, size: { w: number; h: number }, onProgress: Progress, signal: AbortSignal): Promise<Segment[]> => {
+const buildSegments = async (story: StoryData, voice: NarratorVoice, actx: BaseAudioContext, size: { w: number; h: number }, onProgress: Progress, signal: AbortSignal, clips?: Map<number, Blob[]>): Promise<Segment[]> => {
   const segs: Segment[] = [];
   const cover = await loadBitmap(story.coverImage || story.pages[0]?.generatedImage, size.w, size.h);
   segs.push({ kind: 'cover', start: 0, dur: COVER_DUR, image: cover, words: [], voiceStart: 0, dir: 1 });
@@ -618,7 +715,8 @@ const buildSegments = async (story: StoryData, voice: NarratorVoice, actx: BaseA
     lastImage = image;
     const voiceStart = TRANSITION * 0.7;
     const dur = voiceStart + audio.duration + 0.9;
-    segs.push({ kind: 'page', start: t, dur, image, words, audio, voiceStart, dir: i % 2 ? -1 : 1 });
+    const clip = clips?.get(page.page)?.length ? await loadClipPlayer(clips.get(page.page)!) : undefined;
+    segs.push({ kind: 'page', start: t, dur, image, words, audio, voiceStart, dir: i % 2 ? -1 : 1, clip });
     t += dur;
   }
   segs.push({ kind: 'end', start: t, dur: END_DUR, image: lastImage, words: [], voiceStart: 0, dir: -1 });
@@ -769,6 +867,7 @@ const encodeMp4 = async (renderer: Renderer, canvas: HTMLCanvasElement, audio: A
   for (let i = 0; i < frames; i++) {
     if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
     if (failure) throw failure;
+    await renderer.prepare(i / FPS);
     renderer.frame(i / FPS);
     const vf = new VideoFrame(canvas, { timestamp: Math.round((i * 1e6) / FPS), duration: Math.round(1e6 / FPS) });
     ve.encode(vf, { keyFrame: i % (FPS * 2) === 0 });
@@ -860,7 +959,7 @@ const render = async (story: StoryData, opts: VideoOptions, onProgress: Progress
   }
 
   const decoder = new OfflineAudioContext(2, SR, SR);
-  const segs = await buildSegments(story, opts.voice, decoder, { w: W, h: H }, onProgress, signal);
+  const segs = await buildSegments(story, opts.voice, decoder, { w: W, h: H }, onProgress, signal, opts.clips);
 
   let music: AudioBuffer | null = null;
   let musicFailed = false;
@@ -902,13 +1001,18 @@ const render = async (story: StoryData, opts: VideoOptions, onProgress: Progress
       result = { blob: await encodeMp4(renderer, canvas, mixed, duration, codec, bitrate, onProgress, signal, ar), ext: 'mp4' };
     } catch (err) {
       if ((err as Error).name === 'AbortError') throw err;
+      renderer.disableClips();
       result = await recordRealtime(renderer, canvas, mixed, duration, bitrate, onProgress, signal, ar);
     }
   } else {
+    renderer.disableClips();
     result = await recordRealtime(renderer, canvas, mixed, duration, bitrate, onProgress, signal, ar);
   }
 
-  segs.forEach((s) => s.image?.close());
+  segs.forEach((s) => {
+    s.image?.close();
+    disposeClipPlayer(s.clip);
+  });
   onProgress(1, ar ? 'الفيديو جاهز!' : 'Video ready!');
   return { ...result, musicFailed, quality, width: W, height: H };
 };

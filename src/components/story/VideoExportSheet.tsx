@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Clapperboard, Download, Loader2, Music2, Share2, X } from 'lucide-react';
+import { Clapperboard, Download, Loader2, Music2, Share2, Sparkles, X } from 'lucide-react';
 import { saveAs } from 'file-saver';
 import { NarratorVoice, StoryData, VeoMotionMode } from '../../types';
 import { exportStoryVideo, type VideoResult } from '../../services/video';
@@ -7,6 +7,7 @@ import { maxQuality, VIDEO_FORMATS, VIDEO_QUALITIES, type VideoFormatId, type Vi
 import { safeFileName } from '../../services/export';
 import { BRAND } from '../../config';
 import ErrorDetails from '../common/ErrorDetails';
+import AiClipsPanel from './AiClipsPanel';
 
 interface Props {
   storyData: StoryData;
@@ -21,6 +22,8 @@ export default function VideoExportSheet({ storyData, ar, voice, onClose }: Prop
   const [quality, setQuality] = useState<VideoQualityId>(VIDEO_QUALITIES[Math.min(1, allowed)].id);
   const [veoMotionMode, setVeoMotionMode] = useState<VeoMotionMode>('auto-composite');
   const [withMusic, setWithMusic] = useState(true);
+  const [useAi, setUseAi] = useState(false);
+  const [aiClips, setAiClips] = useState<Map<number, Blob[]>>(new Map());
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState(0);
   const [message, setMessage] = useState('');
@@ -49,7 +52,7 @@ export default function VideoExportSheet({ storyData, ar, voice, onClose }: Prop
     try {
       const res = await exportStoryVideo(
         storyData,
-        { format, quality, veoMotionMode, withMusic, voice, brand: ar ? `${BRAND.name.ar} · ${BRAND.author.ar}` : `${BRAND.name.en} · ${BRAND.author.en}`, tagline: ar ? BRAND.madeIn.ar : BRAND.madeIn.en },
+        { format, quality, veoMotionMode, withMusic, voice, clips: useAi ? aiClips : undefined, brand: ar ? `${BRAND.name.ar} · ${BRAND.author.ar}` : `${BRAND.name.en} · ${BRAND.author.en}`, tagline: ar ? BRAND.madeIn.ar : BRAND.madeIn.en },
         (p, m) => {
           setProgress(p);
           setMessage(m);
@@ -106,6 +109,14 @@ export default function VideoExportSheet({ storyData, ar, voice, onClose }: Prop
                 ? 'فيديو سينمائي: صور القصة بحركة كاميرا، صوت الراوي، النص مكتوب ومتزامن كلمة بكلمة، انتقالات وموشن وموسيقى مولّدة بالذكاء الاصطناعي.'
                 : 'Cinematic video: moving illustrations, narration, word-by-word synced captions, transitions, motion and AI-composed music.'}
             </p>
+            <label className="flex min-h-12 cursor-pointer items-center justify-between rounded-2xl border border-lantern/50 bg-lantern/10 px-4 text-sm font-bold text-ink dark:text-moonlight">
+              <span className="flex items-center gap-2">
+                <Sparkles size={18} className="text-lantern" aria-hidden />
+                {ar ? 'حرّك المشاهد بالذكاء الاصطناعي' : 'Animate scenes with AI'}
+              </span>
+              <input type="checkbox" data-testid="use-ai-clips" checked={useAi} disabled={busy} onChange={(e) => setUseAi(e.target.checked)} className="h-5 w-5 accent-[var(--color-lantern)]" />
+            </label>
+            {useAi && <AiClipsPanel story={storyData} ar={ar} locked={busy} onClips={setAiClips} />}
             <div role="radiogroup" aria-label={ar ? 'صيغة الفيديو' : 'Video format'} className="grid grid-cols-2 gap-2">
               {VIDEO_FORMATS.map((f) => (
                 <button key={f.id} type="button" role="radio" aria-checked={format === f.id} disabled={busy} className={`${option(format === f.id)} flex-col !items-start gap-0.5 py-2 text-start`} onClick={() => setFormat(f.id)}>
@@ -129,18 +140,18 @@ export default function VideoExportSheet({ storyData, ar, voice, onClose }: Prop
               <p className="text-xs text-ink/60 dark:text-moonlight/60">{ar ? 'الجودات الأعلى معطّلة لحماية ذاكرة هذا الجهاز.' : 'Higher qualities are disabled to protect this device memory.'}</p>
             )}
 
-            {/* وضعيات حركة الكاميرا Veo 3 */}
-            <div className="space-y-1.5">
-              <label className="text-xs font-bold text-ink/80 dark:text-moonlight/80">
-                {ar ? 'نمط حركة كاميرا Veo 3:' : 'Veo 3 Camera Motion Mode:'}
-              </label>
-              <div role="radiogroup" aria-label={ar ? 'نمط حركة كاميرا Veo 3' : 'Veo 3 Camera Motion Mode'} className="flex flex-col gap-1.5">
+            {/* حركة الكاميرا المجانية */}
+            <details className="space-y-1.5 rounded-2xl border border-dream/25 px-3 py-2">
+              <summary className="min-h-11 cursor-pointer list-none py-2 text-xs font-bold text-ink/80 dark:text-moonlight/80">
+                {ar ? 'حركة الكاميرا (للصفحات بلا مقطع متحرك)' : 'Camera motion (pages without an animated clip)'}
+              </summary>
+              <div role="radiogroup" aria-label={ar ? 'نمط حركة الكاميرا' : 'Camera motion mode'} className="flex flex-col gap-1.5">
                 {(
                   [
                     {
                       id: 'auto-composite',
-                      title: { ar: 'مونتاج آلي شامل (دمج جميع حركات Veo 3 تلقائياً)', en: 'Full Auto Production (Combines All Veo 3 Motions)' },
-                      desc: { ar: 'تبديل آلي ذكي بين الحركة السينمائية و2.5D والمسح متعدد الزوايا لكل مشهد', en: 'Smart automated switching between Cinematic, 2.5D Depth, and 3D Sweeps per scene' },
+                      title: { ar: 'مونتاج آلي شامل', en: 'Full auto mix' },
+                      desc: { ar: 'تبديل آلي ذكي بين الحركة السينمائية و2.5D والمسح متعدد الزوايا لكل مشهد', en: 'Automatic switching between cinematic, 2.5D and sweeping moves per scene' },
                     },
                     {
                       id: 'cinematic-pack',
@@ -173,7 +184,7 @@ export default function VideoExportSheet({ storyData, ar, voice, onClose }: Prop
                   </button>
                 ))}
               </div>
-            </div>
+            </details>
             <label className="flex min-h-12 cursor-pointer items-center justify-between rounded-2xl border border-dream/30 px-4 text-sm font-semibold text-ink dark:text-moonlight">
               <span className="flex items-center gap-2">
                 <Music2 size={18} className="text-dream" aria-hidden />

@@ -71,7 +71,8 @@ import {
   computePrintPageDimensionsMm,
   computePrintPageMarginsMm,
 } from '../services/printBook';
-import { getStyleLock, normalizeStyleConsistencyId } from '../shared/modelRules';
+import { estimateCostUsd, getStyleLock, normalizeStyleConsistencyId, partsForText, videoAspectFor } from '../shared/modelRules';
+import { buildClipPrompt } from '../services/videoClips';
 import type { StoryData, StoryPage } from '../types';
 
 interface Result {
@@ -1036,6 +1037,31 @@ export const TESTS: { name: string; run: () => void | Promise<void> }[] = [
       eq(analyzeTextSentimentAndPalette('نص محايد', '', 'tense').sentiment, 'tense');
       const neutral = analyzeTextSentimentAndPalette('ذهب الولد إلى المدرسة', 'boy walking');
       if (/glowing|moody|dramatic/i.test(neutral.paletteDescriptor)) throw new Error(`Neutral text got loud palette: ${neutral.paletteDescriptor}`);
+    },
+  },
+  {
+    name: 'فيديو القصة: عدد المقاطع من طول النص، التكلفة التقديرية، ونسبة الفيديو',
+    run: () => {
+      eq(partsForText('كلمة '.repeat(10)), 1);
+      eq(partsForText('كلمة '.repeat(30)), 2);
+      eq(partsForText('كلمة '.repeat(400)), 3);
+      eq(estimateCostUsd(10), 8);
+      eq([videoAspectFor('4:3'), videoAspectFor('3:4'), videoAspectFor('9:16'), videoAspectFor('1:1')], ['16:9', '9:16', '9:16', '16:9']);
+    },
+  },
+  {
+    name: 'فيديو القصة: برومبت المقطع إنجليزي، بلا صوت، يبدأ من صورة الصفحة، والجزء الثاني يكمل المشهد',
+    run: () => {
+      const st = fixture(2);
+      st.id = 'story-test';
+      st.pages[0].image_prompt = 'Sami climbing the glowing crystal tree at sunset';
+      const first = buildClipPrompt(st, { id: 'a', page: 1, part: 1, parts: 2, scene: st.pages[0].image_prompt, motion: 'Sami climbs higher as leaves shimmer.' });
+      if (/[\u0600-\u06FF]/.test(first)) throw new Error(`Arabic in clip prompt: ${first}`);
+      if (!/No music, no speech/.test(first)) throw new Error('Audio directive missing');
+      if (!/starting frame/.test(first)) throw new Error('First-frame cue missing');
+      if (first.split(/\s+/).length > 150) throw new Error('Clip prompt too long');
+      const next = buildClipPrompt(st, { id: 'b', page: 1, part: 2, parts: 2, scene: '', motion: 'Sami waves from the top.' });
+      if (!/^Continue the scene/.test(next) || /starting frame/.test(next)) throw new Error(`Bad continuation prompt: ${next}`);
     },
   },
 ];

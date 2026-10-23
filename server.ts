@@ -1,12 +1,15 @@
 import express, { type Request, type Response } from 'express';
 import fs from 'fs';
 import crypto from 'crypto';
+import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { GoogleGenAI, Modality, Type, type Schema } from '@google/genai';
 import {
   NO_SIZE_IMAGE_MODELS,
   POSITIVE_ILLUSTRATION_DIRECTIVE,
+  MAX_PARTS_PER_PAGE,
+  OMNI_MODEL,
   SHARED_ART_STYLE_OPTIONS,
   artDirectionLine,
   getStyleLock,
@@ -694,7 +697,7 @@ app.post('/api/generate-story', async (req: Request, res: Response) => {
     `Audience level: ${isAdult ? 'Adults (18+)' : `Kids (${ageGroupVal})`}`,
     `Age group: ${isAdult ? '18+' : ageGroupVal}`,
     maturityLine,
-    `Story type: ${typeSpec.value} — Narrative Arc: [Beginning: ${typeSpec.arc.beginning} | Middle: ${typeSpec.arc.middle} | Climax: ${typeSpec.arc.climax} | Ending: ${typeSpec.arc.ending}]. Rule: ${typeSpec.promptRule}`,
+    `Story type: ${typeSpec.value} — Narrative Arc: [Beginning: ${typeSpec.arc.beginning} | Middle: ${typeSpec.arc.middle} | Climax: ${typeSpec.arc.climax} | Ending: ${typeSpec.arc.ending}]. Rule: ${typeSpec.pageRule}`,
     `Exact page count: ${first}`,
     total > first
       ? `LONG STORY: the finished book will have ${total} pages in ${Math.ceil(total / 6)} chapters. Write ONLY the opening ${first} pages now (chapter 1 and its set-up). Do NOT conclude the story: end on a natural moment that leads into what comes next. Give page 1 a "chapter" title. The quiz and moral can be provisional.`
@@ -921,8 +924,7 @@ const AI_IMAGE_SIZES: Record<string, [number, number]> = {
 const runAiFallback = async (
   prompt: string,
   aspectRatio: string,
-  artStyle?: string,
-  styleConsistency?: string
+  artStyle?: string
 ): Promise<{ base64: string; mimeType: string; model: string; engine: 'pollinations'; promptSnippet: string }> => {
   const dims = AI_IMAGE_SIZES[aspectRatio] || [1024, 768];
   const cleanPrompt = fluxPrompt(prompt, aspectRatio === '1:1', artStyle);
@@ -1072,7 +1074,7 @@ app.post('/api/generate-image', async (req: Request, res: Response) => {
         // fallback to Pollinations
       }
     }
-    const fallback = await runAiFallback(prompt, aspectRatio, req.body?.artStyle, styleConsistency);
+    const fallback = await runAiFallback(prompt, aspectRatio, req.body?.artStyle);
     return res.json(fallback);
   } catch (err) {
     return sendError(res, err, 'Failed to generate image');
@@ -1839,6 +1841,188 @@ app.post('/api/improve-idea', async (req: Request, res: Response) => {
     }
   } catch (err) {
     return sendError(res, err, 'Failed to improve idea');
+  }
+});
+
+// ===== فيديو القصة: Gemini Omni (مدفوع) =====
+// المهمة تعمل في الخادم وتُستطلع من العميل (طلب HTTP واحد طويل ينقطع خلف البروكسيات)
+interface VideoJob {
+  status: 'running' | 'done' | 'error';
+  created: number;
+  interactionId?: string;
+  buffer?: Buffer;
+  error?: { code: ErrorCode; message: string };
+}
+
+const videoJobs = new Map<string, VideoJob>();
+const VIDEO_JOB_TTL = 30 * 60 * 1000;
+const MAX_RUNNING_VIDEO_JOBS = 3;
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [id, job] of videoJobs) if (now - job.created > VIDEO_JOB_TTL) videoJobs.delete(id);
+}, 60_000).unref();
+
+const videoFailure = (err: any): { code: ErrorCode; message: string } => {
+  const raw = String(err?.message || err || 'Video generation failed');
+  const status = Number(err?.status ?? err?.code ?? 0);
+  if (status === 401 || /API key not valid|API_KEY_INVALID/i.test(raw)) {
+    return { code: 'AUTH', message: 'مفتاح Gemini مرفوض. تأكد من المفتاح في الإعدادات.' };
+  }
+  if (status === 403 || status === 404 || /not found|not supported|permission|billing|paid|upgrade|only available/i.test(raw)) {
+    return { code: 'BILLING', message: 'نموذج Omni لتوليد الفيديو يتطلب مفتاحاً بخطة مدفوعة (Billing مفعّل). فعّل الفوترة في Google AI Studio أو استخدم الحركة المجانية داخل التطبيق.' };
+  }
+  if (status === 429 || /RESOURCE_EXHAUSTED|quota|rate limit/i.test(raw)) {
+    return { code: 'QUOTA', message: 'وصلت لحد الاستخدام المؤقت لتوليد الفيديو. انتظر دقائق ثم أعد المحاولة.' };
+  }
+  if (/safety|blocked|policy|prohibited|minor|recognizable/i.test(raw)) {
+    return { code: 'FAILED', message: 'رفض النموذج هذا المشهد لأسباب تتعلق بسياسة المحتوى. جرّب تعديل وصف المشهد.' };
+  }
+  return { code: 'FAILED', message: raw.slice(0, 300) };
+};
+
+const fileNameFromUri = (uri: string): string | null => {
+  const m = /files\/([A-Za-z0-9_-]+)/.exec(uri);
+  return m ? `files/${m[1]}` : null;
+};
+
+const runVideoJob = async (job: VideoJob, ai: GoogleGenAI, body: { prompt: string; aspect: string; resolution: string; image?: InlineRef; previousId?: string }) => {
+  const tmp = path.join(os.tmpdir(), `omni-${crypto.randomBytes(6).toString('hex')}.mp4`);
+  try {
+    const input: any[] = [];
+    if (body.image) input.push({ type: 'image', data: body.image.data, mime_type: body.image.mimeType });
+    input.push({ type: 'text', text: body.prompt });
+    const params: any = {
+      model: OMNI_MODEL,
+      input,
+      response_format: { type: 'video', aspect_ratio: body.aspect, resolution: body.resolution, delivery: 'uri' },
+      store: true,
+    };
+    if (body.previousId) params.previous_interaction_id = body.previousId;
+    const inter: any = await (ai as any).interactions.create(params, { timeout: 12 * 60_000 });
+    if (inter?.status && /failed|cancelled|budget/i.test(String(inter.status))) {
+      throw new Error(inter?.errors?.[0]?.message || `Video interaction ${inter.status}`);
+    }
+    job.interactionId = inter?.id;
+    const out = inter?.output_video ?? inter?.steps?.flatMap((s: any) => s?.content ?? []).find((c: any) => c?.type === 'video');
+    if (out?.data) {
+      job.buffer = Buffer.from(String(out.data), 'base64');
+    } else if (out?.uri) {
+      const name = fileNameFromUri(String(out.uri));
+      if (!name) throw new Error('Unrecognized video file URI.');
+      const started = Date.now();
+      for (;;) {
+        const f: any = await ai.files.get({ name });
+        if (f?.state === 'ACTIVE') break;
+        if (f?.state === 'FAILED') throw new Error('Video file processing failed.');
+        if (Date.now() - started > 4 * 60_000) throw new Error('Timed out waiting for the video file.');
+        await sleep(5000);
+      }
+      await ai.files.download({ file: name, downloadPath: tmp });
+      job.buffer = fs.readFileSync(tmp);
+    } else {
+      throw new Error('The model returned no video.');
+    }
+    job.status = 'done';
+  } catch (err: any) {
+    job.status = 'error';
+    job.error = videoFailure(err);
+  } finally {
+    fs.promises.unlink(tmp).catch(() => undefined);
+  }
+};
+
+app.post('/api/video/start', async (req: Request, res: Response) => {
+  try {
+    const prompt = clip(req.body?.prompt, 2400);
+    if (!prompt) return res.status(400).json({ error: 'Video prompt is required.', code: 'FAILED' });
+    const aspect = req.body?.aspectRatio === '9:16' ? '9:16' : '16:9';
+    const resolution = req.body?.resolution === '360p' ? '360p' : '720p';
+    const image = sanitizeRefs([req.body?.image])[0];
+    const previousId = clip(req.body?.previousInteractionId, 200) || undefined;
+    const running = [...videoJobs.values()].filter((j) => j.status === 'running').length;
+    if (running >= MAX_RUNNING_VIDEO_JOBS) {
+      return res.status(429).json({ error: 'Too many video jobs running. Try again shortly.', code: 'BUSY' });
+    }
+    const session = getCandidateSessions(req)[0];
+    const id = crypto.randomBytes(9).toString('hex');
+    const job: VideoJob = { status: 'running', created: Date.now() };
+    videoJobs.set(id, job);
+    void runVideoJob(job, session.ai, { prompt, aspect, resolution, image, previousId });
+    return res.json({ jobId: id });
+  } catch (err) {
+    return sendError(res, err, 'Could not start video job');
+  }
+});
+
+app.get('/api/video/:id', (req: Request, res: Response) => {
+  const job = videoJobs.get(String(req.params.id));
+  if (!job) return res.status(404).json({ error: 'Video job not found or expired.', code: 'FAILED' });
+  return res.json({
+    status: job.status,
+    interactionId: job.interactionId,
+    bytes: job.buffer?.length,
+    ...(job.error ? { error: job.error.message, code: job.error.code } : {}),
+  });
+});
+
+app.get('/api/video/:id/file', (req: Request, res: Response) => {
+  const job = videoJobs.get(String(req.params.id));
+  if (!job?.buffer) return res.status(404).json({ error: 'Video not ready.', code: 'FAILED' });
+  res.setHeader('Content-Type', 'video/mp4');
+  res.setHeader('Content-Length', String(job.buffer.length));
+  res.setHeader('Cache-Control', 'no-store');
+  return res.end(job.buffer);
+});
+
+// خطة المقاطع: لكل صفحة حركة إنجليزية قصيرة لكل جزء (نص عربي → توجيه حركة)، مع احتياط حتمي عند الفشل
+const VIDEO_PLAN_SCHEMA: Schema = {
+  type: Type.OBJECT,
+  properties: {
+    clips: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: { page: { type: Type.NUMBER }, part: { type: Type.NUMBER }, motion: { type: Type.STRING } },
+        required: ['page', 'part', 'motion'],
+      },
+    },
+  },
+  required: ['clips'],
+};
+
+app.post('/api/video-plan', async (req: Request, res: Response) => {
+  try {
+    const pages = (Array.isArray(req.body?.pages) ? req.body.pages : []).slice(0, 60).map((p: any) => ({
+      page: Math.max(1, Number(p?.page) || 1),
+      parts: Math.min(MAX_PARTS_PER_PAGE, Math.max(1, Number(p?.parts) || 1)),
+      text: clip(p?.text, 700),
+      scene: clip(p?.scene, 400),
+    }));
+    if (!pages.length) return res.status(400).json({ error: 'Pages are required.', code: 'FAILED' });
+    const prompt = `You are the animation director of a children's picture-book film. For each page below write the on-screen ACTION for each of its parts, in English, one sentence (max 22 words) per part: concrete character movement, expression and small environment motion (wind, water, light) that matches the page text and scene. Parts of the same page continue each other in time. Never describe sound, dialogue, music or text. Return JSON {"clips":[{"page":N,"part":K,"motion":"..."}]} with exactly "parts" entries per page.\n\n${pages
+      .map((p: any) => `PAGE ${p.page} (parts: ${p.parts})\nText: ${p.text}\nScene: ${p.scene}`)
+      .join('\n\n')}`;
+    const { value } = await runChain(
+      'video-plan',
+      await chainFor(req, 'text'),
+      async (model, ai) => {
+        const response = await ai.models.generateContent({
+          model,
+          contents: prompt,
+          config: { responseMimeType: 'application/json', responseSchema: VIDEO_PLAN_SCHEMA },
+        });
+        const parsed = response.text ? parseJson(response.text) : null;
+        return Array.isArray(parsed?.clips) && parsed.clips.length ? parsed : null;
+      },
+      req
+    );
+    const clips = (value.clips as any[])
+      .map((c) => ({ page: Number(c?.page), part: Number(c?.part), motion: clip(c?.motion, 220) }))
+      .filter((c) => c.page > 0 && c.part > 0 && c.motion);
+    return res.json({ clips });
+  } catch (err) {
+    return sendError(res, err, 'Video plan failed');
   }
 });
 

@@ -18,3 +18,4 @@ export {
   stripBrandNames,
   type StyleConsistencyPreset,
 } from '../../shared/promptRules.ts';
+export * from '../../shared/videoRules.ts';

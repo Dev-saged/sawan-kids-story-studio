@@ -338,7 +338,7 @@ const styleLineFor = (story: StoryData, palette?: string): string => {
   return `Style: ${base}.${palette ? ` Palette: ${palette}.` : ''}`;
 };
 
-const charactersLineFor = (story: StoryData, chars: Character[], maxWords: number): string =>
+export const charactersLineFor = (story: StoryData, chars: Character[], maxWords: number): string =>
   chars.length ? `Characters: ${chars.map((c) => formatCharacterLine(c, story, maxWords)).join('; ')}.` : '';
 
 // مصدر واحد للتجميع: Scene ثم Characters ثم Style ثم التوجيه (<= 120 كلمة)، ولا يُضاف شيء بعد السقف

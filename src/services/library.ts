@@ -103,7 +103,11 @@ export const loadStory = async (id: string): Promise<StoryData | null> => {
   }
 };
 
-export const deleteStory = (id: string) => dbDelete('stories', id).catch(() => undefined);
+export const deleteStory = async (id: string) => {
+  await dbDelete('stories', id).catch(() => undefined);
+  const { deleteClipsOf } = await import('./videoClips');
+  await deleteClipsOf(id).catch(() => undefined);
+};
 
 export const latestStory = async (): Promise<StoryData | null> => {
   const list = await listStories();
