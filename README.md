@@ -10,7 +10,7 @@
 
 **اكتب فكرة بسيطة، وشاهد قصتك تُكتب وتُرسم وتُروى بصوت دافئ، بالعربية أولاً.**
 
-الإصدار 3.4.0 &nbsp;|&nbsp; تطبيق ويب تقدّمي (PWA) &nbsp;|&nbsp; واجهة عربية وإنجليزية &nbsp;|&nbsp; [English](README.en.md)
+الإصدار 3.4.1 &nbsp;|&nbsp; تطبيق ويب تقدّمي (PWA) &nbsp;|&nbsp; واجهة عربية وإنجليزية &nbsp;|&nbsp; [English](README.en.md)
 
 </div>
 
@@ -131,7 +131,7 @@ docs/assets/           cover, screenshots and icons used here
 
 ## سجل الإصدارات
 
-التفاصيل الكاملة في [CHANGELOG.md](CHANGELOG.md). الإصدار الحالي **3.4.0**.
+التفاصيل الكاملة في [CHANGELOG.md](CHANGELOG.md). الإصدار الحالي **3.4.1**.
 
 ## الحقوق
 
