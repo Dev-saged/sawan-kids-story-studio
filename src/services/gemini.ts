@@ -107,6 +107,77 @@ const capWords = (text: string, maxWords: number): string => {
   return w.length <= maxWords ? w.join(' ') : w.slice(0, maxWords).join(' ');
 };
 
+// ضغط وصف دون قصّ منتصف العبارة: نُبقي عبارات كاملة بترتيبها (الهوية أولاً) ونتخطى ما لا يتسع
+const DANGLING_TAIL = /\s+(?:a|an|the|with|and|of|in|on|to|for|wearing|holding|carrying|has|having|its|his|her|their)$/i;
+const tidyTail = (text: string): string => {
+  let t = text.trim().replace(/[\s,;:]+$/, '');
+  for (let prev = ''; prev !== t; ) {
+    prev = t;
+    t = t.replace(DANGLING_TAIL, '').replace(/[\s,;:]+$/, '');
+  }
+  return t;
+};
+// "with" يفصل العبارة الأولى فقط (الكائن | ملامحه)؛ داخل بقية العبارات يبقى ("carved with birds") كي لا تتيتّم الكلمات
+const splitClauses = (text: string): string[] => {
+  const parts = text
+    .split(/\s*[,;]\s+|\s+(?=(?:and|wearing|holding|carrying|has)\s)/i)
+    .map((c) => c.trim())
+    .filter(Boolean);
+  if (!parts.length) return [];
+  const [head, ...tail] = parts[0].split(/\s+(?=with\s)/i);
+  return [head, ...tail, ...parts.slice(1)].map((c) => c.trim()).filter(Boolean);
+};
+// أولوية العبارات في وصف الشخصية: الألوان والملابس والإكسسوار أهم لتثبيت الشكل من التفاصيل العامة
+const CLAUSE_COLOR = /\b(red|blue|green|yellow|orange|pink|purple|violet|white|black|brown|golden|gold|silver|gr[ae]y|cream|sandy|beige|turquoise|teal|navy|maroon|crimson|scarlet|mustard|dark|ginger|blond|blonde)\b/i;
+const CLAUSE_WEAR = /\b(dress|shirt|t-shirt|thobe|robe|scarf|hat|cap|shoes?|sandals|boots|jacket|coat|hijab|veil|glasses|backpack|bag|crown|cape|apron|skirt|shorts|pants|vest|sweater|hoodie|tie|beard|mustache|stick|collar|bow)\b/i;
+const CLAUSE_FACE = /\b(hair|eyes?|ears?|tail|fur|wings?|horns?|freckles|skin)\b/i;
+const clauseScore = (c: string): number => (CLAUSE_COLOR.test(c) ? 2 : 0) + (CLAUSE_WEAR.test(c) ? 2 : 0) + (CLAUSE_FACE.test(c) ? 1 : 0);
+
+const capClauses = (text: string, maxWords: number, byPriority = false): string => {
+  if (maxWords <= 0) return '';
+  const all = wordsOf(text);
+  if (all.length <= maxWords) return all.join(' ');
+  const clauses = splitClauses(text).map((c, i) => (i === 0 ? c : c.replace(/^(?:and|with|has)\s+/i, '')));
+  const first = clauses[0] ?? '';
+  if (countWords(first) > maxWords) return tidyTail(wordsOf(first).slice(0, maxWords).join(' '));
+  const rest = clauses.slice(1).map((c, i) => ({ c, i, n: countWords(c), score: byPriority ? clauseScore(c) : 0 }));
+  const order = [...rest].sort((a, b) => b.score - a.score || a.i - b.i);
+  const picked = new Set<number>();
+  let used = countWords(first);
+  for (const r of order) {
+    if (used + r.n <= maxWords) {
+      picked.add(r.i);
+      used += r.n;
+    }
+  }
+  return [first, ...rest.filter((r) => picked.has(r.i)).map((r) => r.c)].join(', ');
+};
+const identityWords = (text: string): number => Math.min(10, countWords(splitClauses(text)[0] ?? text));
+
+// توزيع عادل لميزانية الكلمات: من يحتاج أقل من حصته يُرجع الباقي للبقية
+const fitItems = (items: string[], budget: number): string[] => {
+  const nat = items.map(countWords);
+  if (!items.length || nat.reduce((a, b) => a + b, 0) <= budget) return items;
+  const alloc: number[] = items.map(() => 0);
+  let open = items.map((_, i) => i);
+  let remaining = Math.max(0, budget);
+  while (open.length) {
+    const share = Math.floor(remaining / open.length);
+    const small = open.filter((i) => nat[i] <= share);
+    if (!small.length) {
+      let extra = remaining - share * open.length;
+      open.forEach((i) => (alloc[i] = share + (extra-- > 0 ? 1 : 0)));
+      break;
+    }
+    small.forEach((i) => {
+      alloc[i] = nat[i];
+      remaining -= nat[i];
+    });
+    open = open.filter((i) => !small.includes(i));
+  }
+  return items.map((t, i) => capClauses(t, alloc[i], true));
+};
+
 // فاكهة فقط إن اختارها المستخدم صراحةً، أو كانت شخصية بعينها فاكهة (لا نص الصفحات ولا العنوان)
 export const isFruitStory = (story: StoryData): boolean =>
   Boolean(story.story_info?.fruitFantasy) || (story.characters ?? []).some((c) => detectCharacterFruit(c.name, c.description));
@@ -165,7 +236,7 @@ const formatCharacterLine = (c: Character, story: StoryData, maxWords = 18): str
     const [head, ...tail] = baseDesc.split(' ');
     raw = `${head.replace(/,$/, '')}, ${tag}${tail.join(' ')}`;
   } else raw = `${!startsWithName && latinName ? `${latinName}: ` : ''}${tag}${baseDesc}`;
-  return capWords(stripBrandNames(raw), maxWords);
+  return capClauses(stripBrandNames(raw), maxWords, true);
 };
 
 
@@ -187,44 +258,61 @@ export const getCharactersForPage = (story: StoryData, page?: StoryPage): Charac
   return matched.length > 0 ? matched : chars.slice(0, 2);
 };
 
-// أ1 + أ3: تجميع الطلب مع سقف صارم 120 كلمة؛ إن تجاوز نقصّ وصف الشخصيات أولاً ثم الأسلوب، ولا نقصّ المشهد أبداً
+// تجميع الطلب بسقف 120 كلمة. الأولوية: المشهد والتوجيه كاملان، ثم هوية كل شخصية كاملة، ثم الأسلوب، ثم لوحة الألوان.
+// الضغط يتم عند حدود العبارات فلا تُقطع جملة في منتصفها ولا تضيع ملامح الشخصية المميزة
+interface StyleParts {
+  main: string;
+  palette: string;
+}
+
 const assemblePromptWithWordCap = (
   sceneLine: string,
-  charactersLine: string,
-  styleLine: string,
+  charItems: string[],
+  style: StyleParts,
   directiveLine: string,
   maxTotalWords = 120
 ): string => {
   const scene = sceneLine.trim();
   let directive = directiveLine.trim();
-  let chars = charactersLine.trim();
-  let style = styleLine.trim();
+  let items = charItems.map((t) => t.trim()).filter(Boolean);
+  let main = style.main.trim();
+  let pal = style.palette.trim();
 
-  const total = () => countWords([scene, chars, style, directive].filter(Boolean).join(' '));
+  const charsOf = (list: string[]) => (list.length ? `Characters: ${list.join('; ')}.` : '');
+  const styleOf = () => (main ? `Style: ${main}.${pal ? ` Palette: ${pal}.` : ''}` : '');
+  const build = () => [scene, charsOf(items), styleOf(), directive].filter(Boolean).join('\n');
+  const total = () => countWords(build());
 
+  if (total() <= maxTotalWords) return build();
+
+  const labels = (items.length ? 1 : 0) + (main ? 1 : 0) + (pal ? 1 : 0);
+  const room = maxTotalWords - countWords(scene) - countWords(directive) - labels;
+  const charsNat = items.reduce((n, t) => n + countWords(t), 0);
+  const charsFloor = items.reduce((n, t) => n + identityWords(t), 0);
+  const styleNat = countWords(main);
+  const styleFloor = Math.min(styleNat, 10);
+  const palNat = countWords(pal);
+  const palFloor = Math.min(palNat, countWords(splitClauses(pal)[0] ?? ''));
+
+  const charsBudget = Math.min(charsNat, Math.max(charsFloor, room - styleFloor - palFloor));
+  const afterChars = room - charsBudget;
+  const styleBudget = Math.min(styleNat, Math.max(0, afterChars - palFloor));
+  const palBudget = Math.min(palNat, Math.max(0, afterChars - styleBudget));
+
+  items = fitItems(items, charsBudget);
+  main = capClauses(main, styleBudget);
+  pal = capClauses(pal, palBudget);
+
+  // حماية أخيرة عند مشهد طويل جداً: لوحة الألوان ثم الأسلوب ثم تفاصيل الشخصيات، والمشهد لا يُمس أبداً
+  if (total() > maxTotalWords) pal = '';
+  if (total() > maxTotalWords) main = '';
+  if (total() > maxTotalWords) items = items.map((t) => capClauses(t, identityWords(t), true));
+  if (total() > maxTotalWords) directive = capClauses(directive, Math.max(0, maxTotalWords - countWords(scene) - countWords(charsOf(items))));
   if (total() > maxTotalWords) {
-    // 1) قصّ وصف الشخصيات أولاً
-    const fixedWithoutChars = countWords([scene, style, directive].filter(Boolean).join(' '));
-    const allowedForChars = Math.max(0, maxTotalWords - fixedWithoutChars);
-    chars = capWords(chars, allowedForChars);
+    items = [];
+    directive = capClauses(directive, Math.max(0, maxTotalWords - countWords(scene)));
   }
-
-  if (total() > maxTotalWords) {
-    // 2) قصّ الأسلوب ثانياً
-    const fixedWithoutStyle = countWords([scene, chars, directive].filter(Boolean).join(' '));
-    const allowedForStyle = Math.max(0, maxTotalWords - fixedWithoutStyle);
-    style = capWords(style, allowedForStyle);
-  }
-
-  if (total() > maxTotalWords) {
-    // 3) إذا بقي المجموع أكبر من 120 بسبب طول المشهد، نقلص التوجيه الإيجابي دون المساس بالمشهد أبداً
-    chars = '';
-    style = '';
-    const allowedForDirective = Math.max(0, maxTotalWords - countWords(scene));
-    directive = capWords(directive, allowedForDirective);
-  }
-
-  return [scene, chars, style, directive].filter(Boolean).join('\n');
+  return build();
 };
 
 export type SentimentTone = 'happy' | 'sad' | 'mysterious' | 'tense' | 'wonder' | 'serene';
@@ -328,7 +416,7 @@ export const analyzeTextSentimentAndPalette = (text: string, scenePrompt = '', m
   return { sentiment: bestTone, paletteDescriptor: chosen.paletteDescriptor, label: chosen.label, swatchHex: chosen.swatchHex };
 };
 
-const styleLineFor = (story: StoryData, palette?: string): string => {
+const styleLineFor = (story: StoryData, palette?: string): StyleParts => {
   const adult = isAdultStory(story);
   const base = getArtStylePrompt(
     story.story_info.art_style,
@@ -336,11 +424,14 @@ const styleLineFor = (story: StoryData, palette?: string): string => {
     story.styleConsistency || story.story_info.styleConsistency,
     adult ? 'adults' : 'kids'
   );
-  return `Style: ${base}.${palette ? ` Palette: ${palette}.` : ''}`;
+  return { main: base.trim().replace(/\.+$/, ''), palette: (palette ?? '').trim().replace(/\.+$/, '') };
 };
 
+export const characterItemsFor = (story: StoryData, chars: Character[], maxWords: number): string[] =>
+  chars.map((c) => formatCharacterLine(c, story, maxWords)).filter(Boolean);
+
 export const charactersLineFor = (story: StoryData, chars: Character[], maxWords: number): string =>
-  chars.length ? `Characters: ${chars.map((c) => formatCharacterLine(c, story, maxWords)).join('; ')}.` : '';
+  chars.length ? `Characters: ${characterItemsFor(story, chars, maxWords).join('; ')}.` : '';
 
 // مصدر واحد للتجميع: Scene ثم Characters ثم Style ثم التوجيه (<= 120 كلمة)، ولا يُضاف شيء بعد السقف
 export const buildPageImagePrompt = (story: StoryData, page: StoryPage): string => {
@@ -352,7 +443,7 @@ export const buildPageImagePrompt = (story: StoryData, page: StoryPage): string 
   const place = page.setting?.trim() && !rawScene.toLowerCase().includes(page.setting.trim().toLowerCase()) ? ` Setting: ${stripBrandNames(page.setting.trim()).replace(/\.+$/, '')}.` : '';
   return assemblePromptWithWordCap(
     `Scene: ${stripBrandNames(rawScene)}.${place}${correction}`,
-    charactersLineFor(story, getCharactersForPage(story, page), 18),
+    characterItemsFor(story, getCharactersForPage(story, page), 30),
     styleLineFor(story, sentiment.paletteDescriptor),
     `${FRAMING_DIRECTIVE} ${POSITIVE_ILLUSTRATION_DIRECTIVE}`,
     120
@@ -368,7 +459,7 @@ export const buildCoverPrompt = (story: StoryData): string => {
   const sentiment = analyzeTextSentimentAndPalette(`${story.story_info.title || ''} ${first?.text || ''}`, story.cover_image_prompt || first?.image_prompt || '', first?.mood);
   return assemblePromptWithWordCap(
     `Scene: ${stripBrandNames(rawCover)}.${genre}`,
-    charactersLineFor(story, (story.characters ?? []).slice(0, 2), 18),
+    characterItemsFor(story, (story.characters ?? []).slice(0, 2), 30),
     styleLineFor(story, sentiment.paletteDescriptor),
     POSITIVE_ILLUSTRATION_DIRECTIVE,
     120
@@ -382,7 +473,7 @@ export const buildSheetPrompt = (story: StoryData, withPhoto: boolean, simplifie
     : `Character reference sheet: Full-body turnaround model sheet on clean plain background.${photoNote}`;
   return assemblePromptWithWordCap(
     sceneLine,
-    charactersLineFor(story, story.characters ?? [], simplified ? 12 : 18),
+    characterItemsFor(story, story.characters ?? [], simplified ? 14 : 30),
     styleLineFor(story),
     POSITIVE_ILLUSTRATION_DIRECTIVE,
     120

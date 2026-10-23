@@ -10,7 +10,7 @@
 
 **Type one simple idea and watch your story get written, illustrated and narrated in a warm voice, Arabic first.**
 
-Version 3.4.0 &nbsp;|&nbsp; Progressive Web App &nbsp;|&nbsp; Arabic and English UI &nbsp;|&nbsp; [العربية](README.md)
+Version 3.4.1 &nbsp;|&nbsp; Progressive Web App &nbsp;|&nbsp; Arabic and English UI &nbsp;|&nbsp; [العربية](README.md)
 
 </div>
 
@@ -102,7 +102,7 @@ Type check with `npm run lint`. For the in-app self-test open `/#test`.
 
 ## Changelog
 
-See [CHANGELOG.md](CHANGELOG.md). Current version: **3.4.0**.
+See [CHANGELOG.md](CHANGELOG.md). Current version: **3.4.1**.
 
 ## Rights
 

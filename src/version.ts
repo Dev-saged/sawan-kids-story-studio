@@ -11,10 +11,10 @@ export interface VersionComparable {
 }
 
 export const CURRENT_VERSION: VersionInfo = {
-  version: '3.4.0',
-  buildNumber: 2111,
+  version: '3.4.1',
+  buildNumber: 2112,
   releaseDate: '2026-10-23',
-  commitTag: 'v3.4.0-colab-video-and-framing',
+  commitTag: 'v3.4.1-full-character-prompts',
 };
 
 type BumpType = 'patch' | 'minor' | 'major';

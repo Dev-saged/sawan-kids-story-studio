@@ -383,6 +383,55 @@ export const TESTS: { name: string; run: () => void | Promise<void> }[] = [
   },
   { name: 'الهوية والروابط موجودة', run: () => eq([Boolean(BRAND.name.ar), Boolean(SOCIAL_LINKS.whatsapp), Boolean(CONFIG.GITHUB_OWNER), Boolean(CONFIG.GITHUB_REPO)], [true, true, true, true]) },
 
+  // ═══ حفظ وصف الشخصية كاملاً في طلب الصورة (v3.4.1) ═══
+  {
+    name: 'طلب الصورة: وصف الشخصية لا يُقطع منتصف العبارة وتبقى الهوية والألوان وكل الإضافات <= 120 كلمة',
+    run: () => {
+      const dangling = /\b(a|an|the|with|and|of|in|on|to|for|wearing|holding|carrying|has|having|its|his|her|their)[;.]?\s*$/i;
+      const st: StoryData = {
+        ...fixture(1),
+        story_info: { ...fixture(1).story_info, art_style: '3D Pixar Style' },
+        characters: [
+          { name: 'Yasmin', age: '7', gender: 'girl', personality: 'kind', description: 'A 7-year-old Arab girl with dark curly hair in two puffs, big brown eyes, a mustard-yellow dress with white flower embroidery and red leather sandals, a small green backpack' },
+          { name: 'Fenek', age: '3', gender: 'male', personality: 'playful', description: 'A small sandy fennec fox with huge ears, cream belly and a tiny blue scarf' },
+          { name: 'Omar', age: '70', gender: 'man', personality: 'wise', description: 'An elderly Arab man with a white beard, round golden glasses, a brown thobe and a walking stick carved with birds' },
+        ],
+      };
+      const scene = 'Yasmin, Fenek and Omar sit under a big palm tree sharing dates';
+      const p = buildPageImagePrompt(st, { page: 1, text: 'ياسمين وفنك وعمر', image_prompt: scene, setting: 'oasis' } as StoryPage);
+      const lines = p.split('\n');
+      const chars = lines.find((l) => l.startsWith('Characters:')) ?? '';
+      if (!p.startsWith(`Scene: ${scene}.`)) throw new Error('scene was altered');
+      if (countPromptWords(p) > 120) throw new Error(`prompt has ${countPromptWords(p)} words`);
+      for (const item of chars.replace(/^Characters:\s*/, '').split(/;\s*/)) {
+        if (dangling.test(item.trim())) throw new Error(`character description cut mid-phrase: "${item}"`);
+      }
+      for (const name of ['Yasmin', 'Fenek', 'Omar']) if (!chars.includes(`${name}:`)) throw new Error(`missing ${name}`);
+      if (!/dress/.test(chars) || !/scarf/.test(chars)) throw new Error('key outfit details were dropped');
+      if (/, birds\b/.test(chars)) throw new Error('orphan clause left behind');
+      if (!p.includes('every character fully in frame')) throw new Error('framing directive missing');
+      if (!p.includes('no text, letters, or watermarks')) throw new Error('positive directive missing');
+      if (!/Style: .*Palette: /.test(p)) throw new Error('style or palette line missing');
+    },
+  },
+  {
+    name: 'طلب الصورة: مشهد طويل جداً لا يُقص ويبقى التأطير وهوية كل شخصية ضمن 120 كلمة',
+    run: () => {
+      const long = 'Yasmin and Fenek walk through a bustling old city market at sunset, colorful lanterns hanging above, vendors selling spices and sweets, a small cat watching from a rooftop, warm golden light spilling over the stone alleys and a fountain in the middle of the square';
+      const st: StoryData = {
+        ...fixture(1),
+        characters: [
+          { name: 'Yasmin', age: '7', gender: 'girl', personality: 'kind', description: 'A 7-year-old Arab girl with dark curly hair in two puffs and a mustard-yellow dress' },
+          { name: 'Fenek', age: '3', gender: 'male', personality: 'playful', description: 'A small sandy fennec fox with huge ears and a tiny blue scarf' },
+        ],
+      };
+      const p = buildPageImagePrompt(st, { page: 1, text: 'ياسمين وفنك', image_prompt: long } as StoryPage);
+      if (!p.startsWith(`Scene: ${long}.`)) throw new Error('long scene was cut');
+      if (countPromptWords(p) > 120) throw new Error(`prompt has ${countPromptWords(p)} words`);
+      if (!p.includes('every character fully in frame')) throw new Error('framing directive dropped');
+      if (!/Yasmin: A 7-year-old/.test(p) || !/Fenek: A small sandy fennec fox/.test(p)) throw new Error('character identity dropped');
+    },
+  },
   // ═══ اختبارات الإصدار 3.0.x ═══
   {
     name: 'أ7 (1): طول طلب الصورة لأي صفحة من القوالب <= 120 كلمة + الغلاف وورقة الشخصيات دون قص المشهد',
