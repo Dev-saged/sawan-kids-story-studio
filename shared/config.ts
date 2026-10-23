@@ -1,5 +1,6 @@
 import type { ArtStyle } from '../src/types.ts';
 import { STORY_TYPE_SPECS } from '../src/data/storyTypes.ts';
+import { ART_DIRECTION, artDirectionLine } from './promptRules.ts';
 
 export { STORY_TYPE_SPECS };
 
@@ -15,99 +16,10 @@ export const NO_SIZE_IMAGE_MODELS = new Set<string>([
 export const POSITIVE_ILLUSTRATION_DIRECTIVE =
   'Depict each character once with proportionate anatomy and clean hands; no text, letters, or watermarks.';
 
-// الأساليب الفنية الـ 18 الموحدة: وصف إيجابي مكثف وفخم (< 30 كلمة) بدون أي قوائم سلبية
-export const SHARED_ART_STYLE_OPTIONS: { value: ArtStyle; labelAr: string; prompt: string }[] = [
-  {
-    value: 'Cute Cartoon',
-    labelAr: 'كرتون لطيف',
-    prompt: 'Masterpiece cute animated cartoon with expressive characters, smooth clean linework, vibrant cheerful color palette, rich lighting, and award-winning digital storybook artwork.',
-  },
-  {
-    value: 'Hand-drawn Cartoon',
-    labelAr: 'كرتون مرسوم باليد',
-    prompt: 'Masterpiece hand-drawn illustration with organic ink outlines, expressive human brush strokes, rich harmonious colors, dramatic lighting, and authentic artistic warmth.',
-  },
-  {
-    value: 'Watercolor',
-    labelAr: 'ألوان مائية فاخرة',
-    prompt: 'Luxury fine-art watercolor illustration with luminous translucent washes, delicate ink line detail, cold-press paper texture, and atmospheric golden lighting.',
-  },
-  {
-    value: '3D Pixar Style',
-    labelAr: 'ثلاثي الأبعاد سينمائي (بيكسار)',
-    prompt: 'Masterpiece 3D CGI feature-film studio render with cinematic volumetric lighting, expressive facial acting, intricate hair and fabric textures, and rich depth.',
-  },
-  {
-    value: 'Pastel Dream',
-    labelAr: 'باستيل حالم',
-    prompt: 'Luxury pastel illustration with dreamy atmospheric glow, luminous velvety gradients, cinematic soft lighting, and delicate harmonious fine-art brushwork.',
-  },
-  {
-    value: 'Doodle Sketch',
-    labelAr: 'رسومات فنية تخطيطية',
-    prompt: 'Expressive artistic ink-and-wash sketch illustration with dynamic pen lines, masterful cross-hatching, rich watercolor accents, and lively composition.',
-  },
-  {
-    value: 'Anime',
-    labelAr: 'أنمي احترافي فخم',
-    prompt: 'Masterpiece Japanese studio anime key visual, Ufotable and Makoto Shinkai quality, razor-sharp cel-shading, dynamic cinematic rim lighting, expressive eyes, and lush background.',
-  },
-  {
-    value: 'Paper Cutout',
-    labelAr: 'قصاصات ورقية فنية',
-    prompt: 'Masterpiece layered handmade paper cut-out diorama illustration with rich craft paper textures, dramatic dimensional drop shadows, and vibrant tactile depth.',
-  },
-  {
-    value: 'Educational Line Cartoon',
-    labelAr: 'كرتون تعليمي واضح',
-    prompt: 'Crisp educational vector-line illustration with clean bold outlines, vibrant balanced colors, expressive character poses, and crystal-clear visual storytelling.',
-  },
-  {
-    value: 'Claymation',
-    labelAr: 'صلصال / ستوب موشن',
-    prompt: 'Masterpiece sculpted clay stop-motion studio frame with tactile handcrafted textures, cinematic miniature set lighting, and expressive detailed figures.',
-  },
-  {
-    value: 'Flat Vector',
-    labelAr: 'فلات فيكتور حديث',
-    prompt: 'Luxury modern flat vector illustration with bold geometric composition, razor-sharp clean edges, dramatic lighting gradients, and sophisticated color harmony.',
-  },
-  {
-    value: 'Fantasy Fairy Tale',
-    labelAr: 'فانتازيا ملحمية ساحرة',
-    prompt: 'Luxury enchanted fantasy illustration with dramatic golden chiaroscuro lighting, magical luminous particles, intricate world architecture, and rich painterly depth.',
-  },
-  {
-    value: 'Bedtime Story',
-    labelAr: 'قصة مسائية دافئة',
-    prompt: 'Cozy atmospheric night illustration with serene moonlit indigo palette, warm golden lantern glow, rich painterly textures, and soothing cinematic lighting.',
-  },
-  {
-    value: 'Classic Storybook',
-    labelAr: 'رسم فني كلاسيكي فاخر',
-    prompt: 'Timeless masterpiece book illustration in rich gouache and fine ink with masterful brushwork, dramatic lighting, intricate setting details, and expressive characters.',
-  },
-  {
-    value: 'Pixel Art',
-    labelAr: 'بكسل آرت متقن',
-    prompt: 'Masterpiece high-bit pixel art scene with crisp pixel craftsmanship, dynamic lighting effects, rich parallax environment details, and expressive character sprites.',
-  },
-  {
-    value: 'Chalk Drawing',
-    labelAr: 'رسم بالطباشير الملون',
-    prompt: 'Rich pastel chalk artwork on textured dark slate with luminous hand-blended strokes, dramatic highlights, and vibrant artistic depth.',
-  },
-  {
-    value: 'Comic Book',
-    labelAr: 'قصص مصورة (كوميكس فخم)',
-    prompt: 'Masterpiece graphic novel comic illustration with bold dynamic ink linework, dramatic cel shading, heroic character anatomy, and cinematic action framing.',
-  },
-  {
-    value: 'Photorealistic',
-    labelAr: 'واقعي سينمائي فخم',
-    prompt: 'Ultra-detailed cinematic photorealistic photography, 85mm prime lens, dramatic volumetric lighting, lifelike skin and fabric textures, and rich film color grading.',
-  },
-];
+// الأساليب الفنية الـ 18: مشتقة من ART_DIRECTION (مصدر واحد) بوصف بصري بلا مبالغات ولا أسماء استوديوهات
+export const SHARED_ART_STYLE_OPTIONS: { value: ArtStyle; labelAr: string; prompt: string }[] = (
+  Object.keys(ART_DIRECTION) as ArtStyle[]
+).map((value) => ({ value, labelAr: ART_DIRECTION[value].labelAr, prompt: artDirectionLine(value) }));
 
 export const buildSharedSystemInstruction = (): string => {
   const stylesBlock = SHARED_ART_STYLE_OPTIONS.map((s) => `  * "${s.value}": ${s.prompt}`).join('\n');
@@ -138,10 +50,10 @@ NARRATION (field "narration", one per page)
 - Arabic dialect: same words as "text", add tashkeel only where pronunciation would be ambiguous.
 - English: identical to "text".
 
-CHARACTERS & VISUAL DESIGN (STRICT & LUXURY QUALITY)
+CHARACTERS & VISUAL DESIGN
 - 1-3 fixed main characters. Respect the exact characters, names, ages, and roles from the user's prompt.
 - "description": Concise ENGLISH visual model sheet (14-22 words) starting with the character's English/transliterated name, exact age and maturity ("adult 30-year-old man", "17-year-old teen boy", or "7-year-old child"), skin tone, hairstyle/color, eye color, facial details (e.g., beard, glasses), and signature outfit with exact colors.
-- Supported Art Styles (all 18 official ArtStyle values from types.ts):
+- Supported Art Styles (visual directions for the chosen style):
 ${stylesBlock}
 - Consistency & Style Rule: On every single page, keep the character's exact visual identity and tailor the scene composition to the chosen Art Style (e.g., for "Anime", write dramatic Japanese studio anime key-visual framing, intense expressions, dynamic lighting, and detailed anime wardrobe).
 - Never introduce random new characters later.
@@ -154,12 +66,13 @@ PAGES & SCENE-TO-TEXT FIDELITY
 - Optional "chapter": a short chapter title (3-5 words, in the story language) ONLY on the first page of each chapter.
 - "image_prompt" is ALWAYS ENGLISH, 40-65 words. It MUST faithfully depict the EXACT event, action, setting, and emotion happening in "text" on that specific page:
   * Mention the focal character(s) by their English/transliterated name AND brief visual tag (e.g. "Tariq (tall 30-year-old man in a dark coat)") performing the exact action of the page.
-  * Specify camera angle, environment details, dramatic lighting, and mood.
+  * Specify camera angle, environment details, lighting, and mood.
+- "mood": for EVERY page one word from this list that best fits the emotion of that page: happy, sad, tense, mysterious, wonder, serene.
   * Never write generic filler scenes that ignore what happened in the page text.
   * Never put words, letters, captions, signs, or watermarks in the image.
 
 COVER, MUSIC, MORAL, QUIZ
-- "cover_image_prompt": ENGLISH, 40-60 words, a breathtaking masterpiece cover composition of the main character(s) (with their exact age look and outfit) in the story's signature setting, dramatic cinematic lighting, no text.
+- "cover_image_prompt": ENGLISH, 40-60 words, a striking cover composition of the main character(s) (with their exact age look and outfit) in the story's signature setting, cinematic lighting, no text.
 - "music_prompt": ENGLISH, one sentence describing an instrumental soundtrack for this story (mood, tempo, instruments), no vocals.
 - "moral": one short sentence capturing the core takeaway or reflection of the story.
 - "quiz": exactly 3 comprehension questions, each with 3 short options, "answer" = index (0-2) of the correct option, "page" = the page number the question is about.

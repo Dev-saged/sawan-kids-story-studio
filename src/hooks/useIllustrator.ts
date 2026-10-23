@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ArtStyle, AudienceLevel, Character, StoryData, StoryPage } from '../types';
+import { ArtStyle, Character, StoryData, StoryPage } from '../types';
 import { getStudioSettings } from '../config';
 import { ApiError } from '../services/api';
-import { buildCoverPrompt, buildPageImagePrompt, buildSheetPrompt, generateIllustration, isAdultStory, resolveStyleConsistencyKeywords, SkippedImage } from '../services/gemini';
+import { checkIllustration } from '../services/imageQA';
+import { buildCoverPrompt, buildPageImagePrompt, buildSheetPrompt, generateIllustration, SkippedImage } from '../services/gemini';
 import { findSimilarImage, getImage, getNetworkAdaptation, reencode, saveImage, toReference, type ImageKind } from '../services/media';
 import { hashText } from '../services/db';
 
@@ -63,33 +64,44 @@ export function useIllustrator(story: StoryData, update: Updater, focusIndex: nu
   const usedIds = (s: StoryData) => new Set([s.coverImageId, s.characterSheetId, ...s.pages.map((p) => p.imageId)].filter(Boolean) as string[]);
 
   // التشابه يُقاس على وصف المشهد وحده، ولا تتكرر صورة داخل نفس القصة
-  const create = async (s: StoryData, kind: ImageKind, prompt: string, matchText: string, refs: Ref[], reuse: boolean, signal: AbortSignal) => {
+  const create = async (s: StoryData, kind: ImageKind, prompt: string, matchText: string, refs: Ref[], reuse: boolean, signal: AbortSignal, quality: 'hq' | 'std' = kind === 'page' ? 'std' : 'hq') => {
     if (reuse) {
       const hit = await findSimilarImage(matchText, cacheStyle(s), kind, kind === 'sheet' ? 0.92 : 0.88, usedIds(s));
       if (hit && !hit.url.includes('image/svg')) return hit;
     }
-    const styleConsistency = resolveStyleConsistencyKeywords(
-      s.story_info.art_style,
-      s.styleConsistency ?? s.story_info.styleConsistency
-    );
-    const audienceLevel: AudienceLevel = isAdultStory(s) ? 'adults' : 'kids';
-    const raw = await generateIllustration(
-      {
-        prompt,
-        aspectRatio: kind === 'sheet' ? '16:9' : s.story_info.aspect_ratio || '4:3',
-        references: refs,
-        kind,
-        artStyle: s.story_info.art_style,
-        styleConsistency,
-        audienceLevel,
-      },
-      signal
-    );
-    if (raw.type.includes('svg')) {
-      throw new Error('SVG format is prohibited for story illustrations.');
-    }
     const net = getNetworkAdaptation();
-    return saveImage(await reencode(raw, net.maxImageSide, 'image/webp', net.compressionQuality), kind, cacheStyle(s), matchText);
+    const draw = async (text: string): Promise<Blob> => {
+      const raw = await generateIllustration(
+        {
+          prompt: text,
+          aspectRatio: kind === 'sheet' ? '16:9' : s.story_info.aspect_ratio || '4:3',
+          references: refs,
+          kind,
+          artStyle: s.story_info.art_style,
+          quality,
+        },
+        signal
+      );
+      if (raw.type.includes('svg')) {
+        throw new Error('SVG format is prohibited for story illustrations.');
+      }
+      return reencode(raw, net.maxImageSide, 'image/webp', net.compressionQuality);
+    };
+
+    let blob = await draw(prompt);
+    // فحص بالرؤية للصور المهمة فقط (غلاف، ورقة، صفحة 1)، ومحاولة تصحيح واحدة؛ ورقة الشخصيات تُفحص تشوّهاتها لا مطابقة المشهد
+    if (quality === 'hq' && kind !== 'photo') {
+      const verdict = await checkIllustration(blob, matchText, signal);
+      if (!verdict.ok && verdict.fix) {
+        const [first, ...rest] = prompt.split('\n');
+        try {
+          blob = await draw([`${first} Correction: ${verdict.fix.replace(/\.+$/, '')}.`, ...rest].join('\n'));
+        } catch (err) {
+          if ((err as Error)?.name === 'AbortError') throw err;
+        }
+      }
+    }
+    return saveImage(blob, kind, cacheStyle(s), matchText);
   };
 
   // أ5: محاولة أولى لورقة الشخصيات، فإن فشلت نعيد مرة واحدة بوصف مبسّط، فإن تم تخطيها (محرك مجاني لا يدعم المراجع) نكمل مباشرة بدون تلويث المراجع
@@ -169,7 +181,7 @@ export function useIllustrator(story: StoryData, update: Updater, focusIndex: nu
       });
       try {
         const refs = await references(signal);
-        const img = await create(storyRef.current, 'page', buildPageImagePrompt(storyRef.current, page), page.image_prompt, refs, !force, signal);
+        const img = await create(storyRef.current, 'page', buildPageImagePrompt(storyRef.current, page), page.image_prompt, refs, !force, signal, pageNo === 1 ? 'hq' : 'std');
         setPage(pageNo, { generatedImage: img.url, imageId: img.id, isGeneratingImage: false, imageError: false });
       } catch (err) {
         setPage(pageNo, { isGeneratingImage: false, imageError: (err as Error).name !== 'AbortError' });

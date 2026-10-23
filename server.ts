@@ -1,13 +1,19 @@
 import express, { type Request, type Response } from 'express';
 import fs from 'fs';
 import crypto from 'crypto';
+import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { GoogleGenAI, Modality, Type, type Schema } from '@google/genai';
 import {
   NO_SIZE_IMAGE_MODELS,
   POSITIVE_ILLUSTRATION_DIRECTIVE,
+  MAX_PARTS_PER_PAGE,
+  OMNI_MODEL,
   SHARED_ART_STYLE_OPTIONS,
+  artDirectionLine,
+  getStyleLock,
+  resolveAudience,
   STORY_TYPE_SPECS,
   buildSharedSystemInstruction,
 } from './src/shared/modelRules.ts';
@@ -34,10 +40,7 @@ const MODELS = {
   image: [
     'gemini-2.5-flash-image',
     'gemini-3.1-flash-image-preview',
-    'gemini-3.1-flash-lite-image',
-    'gemini-nano-banana-2.1',
     'gemini-3-pro-image-preview',
-    'gemini-3-pro-image',
   ],
   tts: [
     'gemini-2.5-flash-preview-tts',
@@ -358,8 +361,8 @@ const chainFor = async (req: Request, kind: ChainKind): Promise<string[]> => {
   if (!catalog.names.size) return base;
   const listed = base.filter((m) => catalog.names.has(m));
   const found = [...catalog.names].filter((n) => DISCOVER[kind].test(n) && !base.includes(n)).sort((a, b) => versionOf(b) - versionOf(a));
-  const unlisted = base.filter((m) => !catalog.names.has(m));
-  return [...listed, ...found, ...unlisted];
+  const chain = [...listed, ...found];
+  return chain.length ? chain : base;
 };
 
 app.get('/api/preflight', async (req: Request, res: Response) => {
@@ -433,8 +436,9 @@ const STORY_RESPONSE_SCHEMA: Schema = {
           narration: { type: Type.STRING },
           image_prompt: { type: Type.STRING },
           chapter: { type: Type.STRING },
+          mood: { type: Type.STRING },
         },
-        required: ['page', 'text', 'narration', 'image_prompt'],
+        required: ['page', 'text', 'narration', 'image_prompt', 'mood'],
       },
     },
     quiz: {
@@ -651,22 +655,19 @@ app.post('/api/generate-story', async (req: Request, res: Response) => {
   const storyTypeKey = (clip(params.storyType, 30) || 'Bedtime') as keyof typeof STORY_TYPE_SPECS;
   const typeSpec = STORY_TYPE_SPECS[storyTypeKey] ?? STORY_TYPE_SPECS.Bedtime;
   const ageGroupVal = clip(params.ageGroup, 10) || '4-6';
-  const audienceLevelVal = clip(params.audienceLevel, 15) || (ageGroupVal === '18+' ? 'adults' : 'kids');
-  const isAdult =
-    audienceLevelVal === 'adults' ||
-    ageGroupVal === '18+' ||
-    Boolean(params.adultMode) ||
-    params.heroAgeStage === 'adult' ||
-    req.body?.classification?.targetAudience === 'adult';
-  const heroStage = params.heroAgeStage === 'adult' || isAdult ? 'adult' : params.heroAgeStage === 'teen' || ageGroupVal === '13-18' ? 'teen' : 'child';
+  const heroPhotoId = clip(params.heroPhotoId, 80);
+  const audience = resolveAudience({
+    audienceLevel: params.audienceLevel === 'adults' ? 'adults' : 'kids',
+    ageGroup: ageGroupVal,
+    adultMode: Boolean(params.adultMode),
+    heroAgeStage: params.heroAgeStage,
+    heroPhotoId,
+  });
+  const isAdult = audience.adult;
+  const heroStage = isAdult ? 'adult' : params.heroAgeStage === 'teen' || ageGroupVal === '13-18' ? 'teen' : 'child';
   const artStyleVal = clip(params.artStyle, 40) || 'Classic Storybook';
-  const artStyleSpec = SHARED_ART_STYLE_OPTIONS.find((s) => s.value === artStyleVal)?.prompt || artStyleVal;
-  const styleConsistencyVal = clip(params.styleConsistency || req.body?.classification?.styleConsistency, 200);
-  const qaModifiersVal =
-    clip(req.body?.classification?.qaModifiers, 200) ||
-    (isAdult
-      ? 'cinematic lighting, high-fidelity masterpiece, concept art style, detailed textures, mature adult proportions'
-      : 'cinematic lighting, high-fidelity illustration, concept art style, detailed textures');
+  const styleLock = getStyleLock(clip(params.styleConsistency, 200));
+  const artStyleSpec = `${artDirectionLine(artStyleVal, isAdult)}${styleLock ? `; ${styleLock}` : ''}`;
   const customChars = Array.isArray(params.customCharacters)
     ? params.customCharacters
         .slice(0, 4)
@@ -683,12 +684,11 @@ app.post('/api/generate-story', async (req: Request, res: Response) => {
     : ageGroupVal === '13-18'
       ? 'AUDIENCE LEVEL: YOUNG ADULTS / TEENS (13-18). Depict characters with teen/young-adult proportions and expressive cinematic drama.'
       : 'AUDIENCE LEVEL: KIDS. Write warm, imaginative, age-appropriate prose and expressive storybook visuals.';
-  const styleConsistencyLine = `STYLE CONSISTENCY & QUALITY ASSURANCE: Lock the visual theme strictly to [${styleConsistencyVal || artStyleSpec}] with mandatory quality modifiers [${qaModifiersVal}]. Never deviate from this artistic theme regardless of story content.`;
   const heroLine = heroName
     ? heroStage === 'adult'
-      ? `HERO: the main protagonist is a real ADULT person named "${heroName}". Describe the hero in English as "${heroName}, an adult protagonist${params.hasHeroPhoto ? ' matching the reference photo' : ''}" with mature adult facial structure, realistic adult build, and a fixed signature outfit with specific colors.`
+      ? `HERO: the main protagonist is a real ADULT person named "${heroName}". Describe the hero in English as "${heroName}, an adult protagonist${heroPhotoId ? ' matching the reference photo' : ''}" with mature adult facial structure, realistic adult build, and a fixed signature outfit with specific colors.`
       : heroStage === 'teen'
-        ? `HERO: the main protagonist is a teenager named "${heroName}". Describe the hero in English as "${heroName}, a teen protagonist${params.hasHeroPhoto ? ' matching the reference photo' : ''}" with a fixed signature outfit with specific colors.`
+        ? `HERO: the main protagonist is a teenager named "${heroName}". Describe the hero in English as "${heroName}, a teen protagonist${heroPhotoId ? ' matching the reference photo' : ''}" with a fixed signature outfit with specific colors.`
         : `HERO: the main character is a real child named "${heroName}". A reference photo of this child may be used for the illustrations, so describe the hero as "${heroName}, the child from the reference photo" plus a fixed outfit with colors.`
     : '';
   const prompt = [
@@ -697,13 +697,12 @@ app.post('/api/generate-story', async (req: Request, res: Response) => {
     `Audience level: ${isAdult ? 'Adults (18+)' : `Kids (${ageGroupVal})`}`,
     `Age group: ${isAdult ? '18+' : ageGroupVal}`,
     maturityLine,
-    `Story type: ${typeSpec.value} — Narrative Arc: [Beginning: ${typeSpec.arc.beginning} | Middle: ${typeSpec.arc.middle} | Climax: ${typeSpec.arc.climax} | Ending: ${typeSpec.arc.ending}]. Rule: ${typeSpec.promptRule}`,
+    `Story type: ${typeSpec.value} — Narrative Arc: [Beginning: ${typeSpec.arc.beginning} | Middle: ${typeSpec.arc.middle} | Climax: ${typeSpec.arc.climax} | Ending: ${typeSpec.arc.ending}]. Rule: ${typeSpec.pageRule}`,
     `Exact page count: ${first}`,
     total > first
       ? `LONG STORY: the finished book will have ${total} pages in ${Math.ceil(total / 6)} chapters. Write ONLY the opening ${first} pages now (chapter 1 and its set-up). Do NOT conclude the story: end on a natural moment that leads into what comes next. Give page 1 a "chapter" title. The quiz and moral can be provisional.`
       : '',
-    `Art style: ${artStyleVal} — Visual directive for every image_prompt and cover_image_prompt: ${artStyleSpec}. Ensure every page image_prompt vividly depicts the exact action, setting, and character emotions of that page in this style.`,
-    styleConsistencyLine,
+    `Art style: ${artStyleVal} — Visual direction: ${artStyleSpec}. Every image_prompt must depict the exact action, setting, and character emotions of that page; keep the same style on every page.`,
     themeLine,
     customChars
       ? `CUSTOM / ALBUM CHARACTERS (include these exact characters in "characters" with their exact names, ages, and visual traits translated to English): ${customChars}`
@@ -759,7 +758,7 @@ app.post('/api/generate-story', async (req: Request, res: Response) => {
       send({ t: 'reset' });
       const fallbackJson = await runFreeTextJson(
         SYSTEM_INSTRUCTION,
-        `${prompt}\nReturn JSON with keys: story_info {title, language, age_group, art_style, lessons[], moral}, characters [{name, description, personality, age, gender}], cover_image_prompt, music_prompt, pages [{page, text, narration, image_prompt}], quiz [{question, options[], answer, page}].`
+        `${prompt}\nReturn JSON with keys: story_info {title, language, age_group, art_style, lessons[], moral}, characters [{name, description, personality, age, gender}], cover_image_prompt, music_prompt, pages [{page, text, narration, image_prompt, mood}], quiz [{question, options[], answer, page}].`
       );
       if (fallbackJson?.pages?.length && fallbackJson?.characters?.length) {
         send({ t: 'done', story: fallbackJson });
@@ -816,56 +815,30 @@ const getFreeCreds = (req: Request): FreeCreds | null => {
   return CF_ACCOUNT_RE.test(account) && CF_TOKEN_RE.test(token) ? { account, token, source: user ? 'user' : 'env' } : null;
 };
 
-// أ2: المشهد أولاً مع قفل الأسلوب الفني في الصدارة؛ إزالة الحروف العربية من رابط محركات الصور لتفادي فشل التوليد
-const fluxPrompt = (prompt: string, square: boolean, artStyle?: string, styleConsistency?: string): string => {
-  const sanitized = prompt
+// Flux: يحذف الحروف العربية ويحافظ على ترتيب (الأسلوب، المشهد، الشخصيات) ضمن ميزانية 900 حرف؛ الشخصيات تُقصّ آخراً
+const FLUX_BUDGET = 900;
+const fluxPrompt = (prompt: string, square: boolean, artStyle?: string): string => {
+  const lines = prompt
     .replace(/[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]+/g, ' ')
     .replace(/["«»“”]/g, '')
-    .replace(/\(\s*\)/g, '');
-  const lines = sanitized
+    .replace(/\(\s*\)/g, '')
     .split('\n')
     .map((l) => l.replace(/\s+/g, ' ').trim())
     .filter(Boolean);
-  const sceneIdx = lines.findIndex((l) => /^(?:Scene|Character reference sheet|Composition):/i.test(l));
-  const sceneLine = sceneIdx >= 0 ? lines[sceneIdx] : lines[0] || sanitized.trim();
-  const styleIdx = lines.findIndex((l) => /^Style:/i.test(l));
-  const styleLine = styleIdx >= 0 ? lines[styleIdx] : '';
-  const restLines = lines.filter((_, idx) => idx !== (sceneIdx >= 0 ? sceneIdx : 0) && idx !== styleIdx);
-
-  // استخراج أو بناء قفل الأسلوب الفني الصارم لمنع انحراف الأنمي أو الـ 3D أو الكرتون
-  let explicitStyle = '';
-  if (artStyle) {
-    const sLower = artStyle.toLowerCase();
-    if (sLower.includes('anime')) {
-      explicitStyle = 'Masterpiece Japanese studio anime key visual, cel-shaded anime aesthetic, vibrant anime character design';
-    } else if (sLower.includes('3d') || sLower.includes('pixar')) {
-      explicitStyle = 'Masterpiece 3D CGI Pixar feature-film studio render, volumetric lighting, rich 3D character design';
-    } else if (sLower.includes('cute cartoon')) {
-      explicitStyle = 'Masterpiece cute animated cartoon illustration, smooth clean linework, vibrant cheerful palette';
-    } else if (sLower.includes('hand-drawn')) {
-      explicitStyle = 'Masterpiece hand-drawn ink and brush cartoon illustration, organic strokes, artistic warmth';
-    } else if (sLower.includes('pixel')) {
-      explicitStyle = 'Masterpiece high-bit pixel art scene, crisp pixel craftsmanship, vibrant sprites';
-    } else if (sLower.includes('photorealistic') || sLower.includes('realistic')) {
-      explicitStyle = 'Cinematic photorealistic portrait photography, lifelike textures, 85mm prime lens';
-    } else if (sLower.includes('watercolor')) {
-      explicitStyle = 'Luxury fine-art watercolor illustration, luminous translucent washes, cold-press paper';
-    } else {
-      explicitStyle = `${artStyle} masterpiece illustration, high-fidelity artwork`;
-    }
-  }
-
-  const consistencyKeywords = (styleConsistency && styleConsistency !== 'auto') ? `, ${styleConsistency}` : '';
-  const styleBlock = styleLine ? styleLine : (explicitStyle ? `Style: ${explicitStyle}${consistencyKeywords}.` : '');
-
-  const framing = square ? '' : ' Centered composition.';
-  const maxRestChars = Math.max(0, 350 - sceneLine.length - styleBlock.length);
-  const rest = restLines.join(' ').slice(0, maxRestChars).trim();
-
-  // تجميع البرومبت مع تصدر الأسلوب الفني أولاً لضمان عدم ضياع هوية الرسم عند تقليص الحجم
-  const base = [styleBlock, sceneLine, rest, framing.trim()].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
-  const hasDirective = base.toLowerCase().includes('expressive eyes, cohesive palette');
-  return (hasDirective ? base : `${base} ${POSITIVE_ILLUSTRATION_DIRECTIVE}`).replace(/\s+/g, ' ').trim();
+  const find = (re: RegExp) => lines.find((l) => re.test(l)) ?? '';
+  const scene = find(/^(?:Scene|Character reference sheet|Composition):/i) || lines[0] || '';
+  const chars = find(/^Characters:/i);
+  const style = find(/^Style:/i) || (artStyle ? `Style: ${artDirectionLine(artStyle)}.` : '');
+  const used = new Set([scene, chars, style]);
+  const rest = lines.filter((l) => !used.has(l)).join(' ');
+  const fixed = [style, scene, square ? '' : 'Centered composition.', POSITIVE_ILLUSTRATION_DIRECTIVE].filter(Boolean).join(' ');
+  const room = Math.max(0, FLUX_BUDGET - fixed.length - 1);
+  const extra = [chars, rest].filter(Boolean).join(' ').slice(0, room).trim();
+  return [style, scene, extra, square ? '' : 'Centered composition.', POSITIVE_ILLUSTRATION_DIRECTIVE]
+    .filter(Boolean)
+    .join(' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 };
 
 const runFlux = async (creds: FreeCreds, prompt: string, steps = 6): Promise<string> => {
@@ -951,11 +924,10 @@ const AI_IMAGE_SIZES: Record<string, [number, number]> = {
 const runAiFallback = async (
   prompt: string,
   aspectRatio: string,
-  artStyle?: string,
-  styleConsistency?: string
+  artStyle?: string
 ): Promise<{ base64: string; mimeType: string; model: string; engine: 'pollinations'; promptSnippet: string }> => {
   const dims = AI_IMAGE_SIZES[aspectRatio] || [1024, 768];
-  const cleanPrompt = fluxPrompt(prompt, aspectRatio === '1:1', artStyle, styleConsistency);
+  const cleanPrompt = fluxPrompt(prompt, aspectRatio === '1:1', artStyle);
   const encodedPrompt = encodeURIComponent(cleanPrompt);
   const seed = Math.floor(Math.random() * 2 ** 31);
 
@@ -1004,29 +976,23 @@ const runAiFallback = async (
 };
 
 // توليد الصور: أولاً عبر نماذج Gemini المتقدمة (ما لم تكن الجلسة موقوفة مؤقتاً بسبب نفاد حصة الصور)، ثم Cloudflare Flux إن توفر، ثم Pollinations الاحتياطي
+// الجودة العالية تبدأ بنموذج Pro (إن توفر)، والعادية بالأخف
+const orderByQuality = (models: string[], hq: boolean): string[] => {
+  const pro = models.filter((m) => /pro/i.test(m));
+  const rest = models.filter((m) => !/pro/i.test(m));
+  return hq ? [...pro, ...rest] : [...rest, ...pro];
+};
+
 app.post('/api/generate-image', async (req: Request, res: Response) => {
   try {
     const rawPrompt = clip(req.body?.prompt, 4000);
     if (!rawPrompt) return res.status(400).json({ error: 'Image prompt is required.', code: 'FAILED' });
     const aspectRatio = ASPECTS.has(req.body?.aspectRatio) ? req.body.aspectRatio : '4:3';
-    const styleConsistency = clip(req.body?.styleConsistency, 240);
-    const audienceLevel = clip(req.body?.audienceLevel, 20);
     const refs = sanitizeRefs(req.body?.references);
     const session = getSession(req);
+    const hq = req.body?.quality === 'hq';
 
-    const hasConsistencyInPrompt =
-      styleConsistency && rawPrompt.toLowerCase().includes(styleConsistency.slice(0, 18).toLowerCase());
-    const consistencyTail =
-      styleConsistency && styleConsistency.toLowerCase() !== 'auto' && !hasConsistencyInPrompt
-        ? `\nStyle consistency: ${styleConsistency}, cinematic lighting, high-fidelity, concept art style, detailed textures.`
-        : !/cinematic lighting/i.test(rawPrompt)
-          ? '\nQuality: cinematic lighting, high-fidelity, concept art style, detailed textures.'
-          : '';
-    const audienceTail =
-      audienceLevel === 'adults' && !/\b(adult|mature)\b/i.test(rawPrompt)
-        ? ' Depict characters with mature adult proportions.'
-        : '';
-    const prompt = `${rawPrompt}${consistencyTail}${audienceTail}`;
+    const prompt = rawPrompt;
 
     // المشهد يبقى في البداية؛ ملاحظة المرجع تأتي في النهاية مع إلزام النموذج برسم المشهد الجديد بالكامل
     const refTail = refs.length
@@ -1040,7 +1006,7 @@ app.post('/api/generate-image', async (req: Request, res: Response) => {
       try {
         const { value, model } = await runChain(
           'image',
-          await chainFor(req, 'image'),
+          orderByQuality(await chainFor(req, 'image'), hq),
           async (m, ai) => {
             const isNoSize = NO_SIZE_IMAGE_MODELS.has(m);
             let currentRefs = refs;
@@ -1054,7 +1020,7 @@ app.post('/api/generate-image', async (req: Request, res: Response) => {
                   contents: [{ role: 'user', parts }],
                   config: {
                     responseModalities: [Modality.TEXT, Modality.IMAGE],
-                    imageConfig: isNoSize ? { aspectRatio } : { aspectRatio, imageSize: '1K' },
+                    imageConfig: isNoSize ? { aspectRatio } : { aspectRatio, imageSize: hq ? '2K' : '1K' },
                   },
                 });
                 const part = (response.candidates?.[0]?.content?.parts ?? []).find((p) => p.inlineData?.data);
@@ -1095,7 +1061,7 @@ app.post('/api/generate-image', async (req: Request, res: Response) => {
     const freeCreds = getFreeCreds(req);
     if (freeCreds) {
       try {
-        const cfPrompt = fluxPrompt(prompt, aspectRatio === '1:1', req.body?.artStyle, styleConsistency);
+        const cfPrompt = fluxPrompt(prompt, aspectRatio === '1:1', req.body?.artStyle);
         const base64 = await runFree(freeCreds, cfPrompt, 6);
         return res.json({
           base64,
@@ -1108,7 +1074,7 @@ app.post('/api/generate-image', async (req: Request, res: Response) => {
         // fallback to Pollinations
       }
     }
-    const fallback = await runAiFallback(prompt, aspectRatio, req.body?.artStyle, styleConsistency);
+    const fallback = await runAiFallback(prompt, aspectRatio, req.body?.artStyle);
     return res.json(fallback);
   } catch (err) {
     return sendError(res, err, 'Failed to generate image');
@@ -1643,6 +1609,56 @@ const TITLES_SCHEMA: Schema = {
 };
 
 // ب6: اقتراح 3 عناوين بديلة بنفس اللغة واللهجة
+// فحص جودة صورة مرسومة بالرؤية: هل تطابق المشهد؟ هل فيها نص أو تشوه واضح؟ (يفشل بصمت: الأخطاء تعني "لا مشكلة")
+const IMAGE_CHECK_SCHEMA: Schema = {
+  type: Type.OBJECT,
+  properties: {
+    matches_scene: { type: Type.BOOLEAN },
+    has_text_or_watermark: { type: Type.BOOLEAN },
+    has_anatomy_error: { type: Type.BOOLEAN },
+    fix: { type: Type.STRING },
+  },
+  required: ['matches_scene', 'has_text_or_watermark', 'has_anatomy_error', 'fix'],
+};
+
+app.post('/api/check-image', async (req: Request, res: Response) => {
+  try {
+    const refs = sanitizeRefs([{ data: req.body?.data, mimeType: req.body?.mimeType }]);
+    const scene = clip(req.body?.scene, 700);
+    if (!refs.length || !scene) return res.status(400).json({ error: 'Image and scene are required.', code: 'FAILED' });
+    const { value } = await runChain(
+      'check-image',
+      await chainFor(req, 'text'),
+      async (model, ai) => {
+        const response = await ai.models.generateContent({
+          model,
+          contents: [
+            {
+              role: 'user',
+              parts: [
+                { inlineData: { data: refs[0].data, mimeType: refs[0].mimeType } },
+                {
+                  text: `You review one children's storybook illustration. Intended scene: "${scene}". Judge only: (1) does the picture show the main action/setting/characters of the scene, (2) does it contain readable text, letters or a watermark, (3) is there an obvious anatomy error (extra/missing limbs, fused or extra fingers, duplicated characters). If something is wrong, "fix" is ONE short English sentence telling the painter what to correct; otherwise "fix" is an empty string.`,
+                },
+              ],
+            },
+          ],
+          config: { responseMimeType: 'application/json', responseSchema: IMAGE_CHECK_SCHEMA },
+        });
+        const parsed = response.text ? parseJson(response.text) : null;
+        return typeof parsed?.matches_scene === 'boolean' ? parsed : null;
+      },
+      req
+    );
+    return res.json({
+      ok: Boolean(value.matches_scene) && !value.has_text_or_watermark && !value.has_anatomy_error,
+      fix: clip(value.fix, 240),
+    });
+  } catch (err) {
+    return sendError(res, err, 'Image check failed');
+  }
+});
+
 app.post('/api/suggest-titles', async (req: Request, res: Response) => {
   try {
     const currentTitle = clip(req.body?.currentTitle, 120);
@@ -1825,6 +1841,188 @@ app.post('/api/improve-idea', async (req: Request, res: Response) => {
     }
   } catch (err) {
     return sendError(res, err, 'Failed to improve idea');
+  }
+});
+
+// ===== فيديو القصة: Gemini Omni (مدفوع) =====
+// المهمة تعمل في الخادم وتُستطلع من العميل (طلب HTTP واحد طويل ينقطع خلف البروكسيات)
+interface VideoJob {
+  status: 'running' | 'done' | 'error';
+  created: number;
+  interactionId?: string;
+  buffer?: Buffer;
+  error?: { code: ErrorCode; message: string };
+}
+
+const videoJobs = new Map<string, VideoJob>();
+const VIDEO_JOB_TTL = 30 * 60 * 1000;
+const MAX_RUNNING_VIDEO_JOBS = 3;
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [id, job] of videoJobs) if (now - job.created > VIDEO_JOB_TTL) videoJobs.delete(id);
+}, 60_000).unref();
+
+const videoFailure = (err: any): { code: ErrorCode; message: string } => {
+  const raw = String(err?.message || err || 'Video generation failed');
+  const status = Number(err?.status ?? err?.code ?? 0);
+  if (status === 401 || /API key not valid|API_KEY_INVALID/i.test(raw)) {
+    return { code: 'AUTH', message: 'مفتاح Gemini مرفوض. تأكد من المفتاح في الإعدادات.' };
+  }
+  if (status === 403 || status === 404 || /not found|not supported|permission|billing|paid|upgrade|only available/i.test(raw)) {
+    return { code: 'BILLING', message: 'نموذج Omni لتوليد الفيديو يتطلب مفتاحاً بخطة مدفوعة (Billing مفعّل). فعّل الفوترة في Google AI Studio أو استخدم الحركة المجانية داخل التطبيق.' };
+  }
+  if (status === 429 || /RESOURCE_EXHAUSTED|quota|rate limit/i.test(raw)) {
+    return { code: 'QUOTA', message: 'وصلت لحد الاستخدام المؤقت لتوليد الفيديو. انتظر دقائق ثم أعد المحاولة.' };
+  }
+  if (/safety|blocked|policy|prohibited|minor|recognizable/i.test(raw)) {
+    return { code: 'FAILED', message: 'رفض النموذج هذا المشهد لأسباب تتعلق بسياسة المحتوى. جرّب تعديل وصف المشهد.' };
+  }
+  return { code: 'FAILED', message: raw.slice(0, 300) };
+};
+
+const fileNameFromUri = (uri: string): string | null => {
+  const m = /files\/([A-Za-z0-9_-]+)/.exec(uri);
+  return m ? `files/${m[1]}` : null;
+};
+
+const runVideoJob = async (job: VideoJob, ai: GoogleGenAI, body: { prompt: string; aspect: string; resolution: string; image?: InlineRef; previousId?: string }) => {
+  const tmp = path.join(os.tmpdir(), `omni-${crypto.randomBytes(6).toString('hex')}.mp4`);
+  try {
+    const input: any[] = [];
+    if (body.image) input.push({ type: 'image', data: body.image.data, mime_type: body.image.mimeType });
+    input.push({ type: 'text', text: body.prompt });
+    const params: any = {
+      model: OMNI_MODEL,
+      input,
+      response_format: { type: 'video', aspect_ratio: body.aspect, resolution: body.resolution, delivery: 'uri' },
+      store: true,
+    };
+    if (body.previousId) params.previous_interaction_id = body.previousId;
+    const inter: any = await (ai as any).interactions.create(params, { timeout: 12 * 60_000 });
+    if (inter?.status && /failed|cancelled|budget/i.test(String(inter.status))) {
+      throw new Error(inter?.errors?.[0]?.message || `Video interaction ${inter.status}`);
+    }
+    job.interactionId = inter?.id;
+    const out = inter?.output_video ?? inter?.steps?.flatMap((s: any) => s?.content ?? []).find((c: any) => c?.type === 'video');
+    if (out?.data) {
+      job.buffer = Buffer.from(String(out.data), 'base64');
+    } else if (out?.uri) {
+      const name = fileNameFromUri(String(out.uri));
+      if (!name) throw new Error('Unrecognized video file URI.');
+      const started = Date.now();
+      for (;;) {
+        const f: any = await ai.files.get({ name });
+        if (f?.state === 'ACTIVE') break;
+        if (f?.state === 'FAILED') throw new Error('Video file processing failed.');
+        if (Date.now() - started > 4 * 60_000) throw new Error('Timed out waiting for the video file.');
+        await sleep(5000);
+      }
+      await ai.files.download({ file: name, downloadPath: tmp });
+      job.buffer = fs.readFileSync(tmp);
+    } else {
+      throw new Error('The model returned no video.');
+    }
+    job.status = 'done';
+  } catch (err: any) {
+    job.status = 'error';
+    job.error = videoFailure(err);
+  } finally {
+    fs.promises.unlink(tmp).catch(() => undefined);
+  }
+};
+
+app.post('/api/video/start', async (req: Request, res: Response) => {
+  try {
+    const prompt = clip(req.body?.prompt, 2400);
+    if (!prompt) return res.status(400).json({ error: 'Video prompt is required.', code: 'FAILED' });
+    const aspect = req.body?.aspectRatio === '9:16' ? '9:16' : '16:9';
+    const resolution = req.body?.resolution === '360p' ? '360p' : '720p';
+    const image = sanitizeRefs([req.body?.image])[0];
+    const previousId = clip(req.body?.previousInteractionId, 200) || undefined;
+    const running = [...videoJobs.values()].filter((j) => j.status === 'running').length;
+    if (running >= MAX_RUNNING_VIDEO_JOBS) {
+      return res.status(429).json({ error: 'Too many video jobs running. Try again shortly.', code: 'BUSY' });
+    }
+    const session = getCandidateSessions(req)[0];
+    const id = crypto.randomBytes(9).toString('hex');
+    const job: VideoJob = { status: 'running', created: Date.now() };
+    videoJobs.set(id, job);
+    void runVideoJob(job, session.ai, { prompt, aspect, resolution, image, previousId });
+    return res.json({ jobId: id });
+  } catch (err) {
+    return sendError(res, err, 'Could not start video job');
+  }
+});
+
+app.get('/api/video/:id', (req: Request, res: Response) => {
+  const job = videoJobs.get(String(req.params.id));
+  if (!job) return res.status(404).json({ error: 'Video job not found or expired.', code: 'FAILED' });
+  return res.json({
+    status: job.status,
+    interactionId: job.interactionId,
+    bytes: job.buffer?.length,
+    ...(job.error ? { error: job.error.message, code: job.error.code } : {}),
+  });
+});
+
+app.get('/api/video/:id/file', (req: Request, res: Response) => {
+  const job = videoJobs.get(String(req.params.id));
+  if (!job?.buffer) return res.status(404).json({ error: 'Video not ready.', code: 'FAILED' });
+  res.setHeader('Content-Type', 'video/mp4');
+  res.setHeader('Content-Length', String(job.buffer.length));
+  res.setHeader('Cache-Control', 'no-store');
+  return res.end(job.buffer);
+});
+
+// خطة المقاطع: لكل صفحة حركة إنجليزية قصيرة لكل جزء (نص عربي → توجيه حركة)، مع احتياط حتمي عند الفشل
+const VIDEO_PLAN_SCHEMA: Schema = {
+  type: Type.OBJECT,
+  properties: {
+    clips: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: { page: { type: Type.NUMBER }, part: { type: Type.NUMBER }, motion: { type: Type.STRING } },
+        required: ['page', 'part', 'motion'],
+      },
+    },
+  },
+  required: ['clips'],
+};
+
+app.post('/api/video-plan', async (req: Request, res: Response) => {
+  try {
+    const pages = (Array.isArray(req.body?.pages) ? req.body.pages : []).slice(0, 60).map((p: any) => ({
+      page: Math.max(1, Number(p?.page) || 1),
+      parts: Math.min(MAX_PARTS_PER_PAGE, Math.max(1, Number(p?.parts) || 1)),
+      text: clip(p?.text, 700),
+      scene: clip(p?.scene, 400),
+    }));
+    if (!pages.length) return res.status(400).json({ error: 'Pages are required.', code: 'FAILED' });
+    const prompt = `You are the animation director of a children's picture-book film. For each page below write the on-screen ACTION for each of its parts, in English, one sentence (max 22 words) per part: concrete character movement, expression and small environment motion (wind, water, light) that matches the page text and scene. Parts of the same page continue each other in time. Never describe sound, dialogue, music or text. Return JSON {"clips":[{"page":N,"part":K,"motion":"..."}]} with exactly "parts" entries per page.\n\n${pages
+      .map((p: any) => `PAGE ${p.page} (parts: ${p.parts})\nText: ${p.text}\nScene: ${p.scene}`)
+      .join('\n\n')}`;
+    const { value } = await runChain(
+      'video-plan',
+      await chainFor(req, 'text'),
+      async (model, ai) => {
+        const response = await ai.models.generateContent({
+          model,
+          contents: prompt,
+          config: { responseMimeType: 'application/json', responseSchema: VIDEO_PLAN_SCHEMA },
+        });
+        const parsed = response.text ? parseJson(response.text) : null;
+        return Array.isArray(parsed?.clips) && parsed.clips.length ? parsed : null;
+      },
+      req
+    );
+    const clips = (value.clips as any[])
+      .map((c) => ({ page: Number(c?.page), part: Number(c?.part), motion: clip(c?.motion, 220) }))
+      .filter((c) => c.page > 0 && c.part > 0 && c.motion);
+    return res.json({ clips });
+  } catch (err) {
+    return sendError(res, err, 'Video plan failed');
   }
 });
 

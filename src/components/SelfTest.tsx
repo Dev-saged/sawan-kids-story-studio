@@ -32,6 +32,7 @@ import {
   canRequestImproveIdea,
   countPromptWords,
   IMPROVE_IDEA_COOLDOWN_MS,
+  isAdultStory,
   isFruitStory,
   isIncomplete,
   resolveStyleConsistencyKeywords,
@@ -70,6 +71,8 @@ import {
   computePrintPageDimensionsMm,
   computePrintPageMarginsMm,
 } from '../services/printBook';
+import { estimateCostUsd, getStyleLock, normalizeStyleConsistencyId, partsForText, videoAspectFor } from '../shared/modelRules';
+import { buildClipPrompt } from '../services/videoClips';
 import type { StoryData, StoryPage } from '../types';
 
 interface Result {
@@ -886,7 +889,7 @@ export const TESTS: { name: string; run: () => void | Promise<void> }[] = [
       if (!adultClass.styleConsistency.includes('studio ghibli')) {
         throw new Error(`Expected studio ghibli in styleConsistency, got: ${adultClass.styleConsistency}`);
       }
-      if (!/cinematic lighting.*high-fidelity.*concept art style.*detailed textures/i.test(adultClass.qaModifiers)) {
+      if (!/cinematic lighting.*sharp focus.*adult proportions/i.test(adultClass.qaModifiers)) {
         throw new Error(`Missing required QA modifiers in: ${adultClass.qaModifiers}`);
       }
 
@@ -895,11 +898,11 @@ export const TESTS: { name: string; run: () => void | Promise<void> }[] = [
         audienceLevel: 'kids',
         ageGroup: '4-6',
         artStyle: 'Photorealistic',
-        styleConsistency: 'hyper-realistic digital painting',
+        styleConsistency: 'digital-realism',
       });
       eq(kidsClass.targetAudience, 'children');
       eq(kidsClass.audienceLevel, 'kids');
-      if (!resolveStyleConsistencyKeywords('Photorealistic', 'hyper-realistic digital painting').includes('hyper-realistic digital painting')) {
+      if (!resolveStyleConsistencyKeywords('Photorealistic', 'digital-realism').includes('realistic digital painting')) {
         throw new Error('Failed to lock hyper-realistic digital painting keyword');
       }
     },
@@ -943,23 +946,20 @@ export const TESTS: { name: string; run: () => void | Promise<void> }[] = [
   {
     name: 'تثبيت الأسلوب الفني الصارم (Strict Art Style Lock) وحظر رسومات SVG نهائياً',
     run: () => {
-      // 1) اختبار تثبيت أسلوب الأنمي في صدارة البرومبت
-      const animeText = buildFinalImageText('Scene: Hero standing on a high cliff', false, 'studio ghibli', 'kids', 'Anime');
-      if (!/anime/i.test(animeText)) {
-        throw new Error(`Expected Anime style lock in prompt, got: ${animeText}`);
+      // 1-3) الأسلوب المختار يظهر في سطر Style: لكل أسلوب، بلا أسماء استوديوهات ولا مبالغات
+      for (const [style, re] of [
+        ['Anime', /anime/i],
+        ['3D Pixar Style', /3D/i],
+        ['Cute Cartoon', /cartoon/i],
+      ] as const) {
+        const st = fixture(1);
+        st.story_info.art_style = style;
+        const built = buildPageImagePrompt(st, st.pages[0]);
+        if (!re.test(built)) throw new Error(`Expected ${style} direction in prompt, got: ${built}`);
+        if (/pixar|ghibli|ufotable|shinkai|masterpiece|award-winning/i.test(built)) throw new Error(`Brand or superlative leaked for ${style}: ${built}`);
       }
-
-      // 2) اختبار تثبيت أسلوب 3D بيكسار
-      const pixarText = buildFinalImageText('Scene: Little robot exploring the garden', false, 'pixar 3d animation', 'kids', '3D Pixar Style');
-      if (!/3D|pixar/i.test(pixarText)) {
-        throw new Error(`Expected 3D Pixar style lock in prompt, got: ${pixarText}`);
-      }
-
-      // 3) اختبار تثبيت الكرتون اللطيف
-      const cartoonText = buildFinalImageText('Scene: Cat playing with a ball of yarn', false, 'auto', 'kids', 'Cute Cartoon');
-      if (!/cartoon/i.test(cartoonText)) {
-        throw new Error(`Expected Cute Cartoon style lock in prompt, got: ${cartoonText}`);
-      }
+      const finalText = buildFinalImageText('Scene: Cat playing.', false);
+      if (finalText.split('\n').length > 2) throw new Error('buildFinalImageText must not append extra lines');
 
       // 4) التحقق من أن buildPageImagePrompt يحافظ على كلمة Style في سطر الأسلوب
       const s = fixture(2);
@@ -977,6 +977,91 @@ export const TESTS: { name: string; run: () => void | Promise<void> }[] = [
       const svgMime = 'image/svg+xml';
       const isSvgForbidden = svgMime.includes('svg');
       eq(isSvgForbidden, true);
+    },
+  },
+  {
+    name: 'مرحلة 1: فكرة فيها "ملك/رجل" لا تقلب القصة لكبار، وصورة طفل تقفل الجمهور على الأطفال',
+    run: () => {
+      const kids = StoryGenerator.classifyPrompt({ idea: 'قصة عن الملك والرجل الطيب والأم', audienceLevel: 'kids', ageGroup: '4-6' });
+      eq(kids.targetAudience, 'children');
+      const blocked = StoryGenerator.classifyPrompt({ audienceLevel: 'adults', ageGroup: '18+', heroAgeStage: 'child', heroPhotoId: 'photo-1' });
+      eq([blocked.targetAudience, blocked.blockedByChildHero], ['children', true]);
+      const explicit = StoryGenerator.classifyPrompt({ audienceLevel: 'adults' });
+      eq(explicit.targetAudience, 'adult');
+    },
+  },
+  {
+    name: 'مرحلة 1: شخصية بالغة في قصة أطفال لا تجعل القصة بالغة، والحيوان لا يأخذ وسم "adult"',
+    run: () => {
+      const st = fixture(1);
+      st.characters = [
+        { name: 'بابا', description: 'Baba, kind father in a green sweater', personality: 'calm', age: '35', gender: 'male' },
+        { name: 'أرنوب', description: 'Arnoob, a small white rabbit with long ears', personality: 'curious', age: '5', gender: 'male' },
+      ];
+      st.pages[0].image_prompt = 'Baba and Arnoob in the garden';
+      st.pages[0].text = 'ذهب بابا وأرنوب إلى الحديقة';
+      eq(isAdultStory(st), false);
+      const p = buildPageImagePrompt(st, st.pages[0]);
+      const rabbitPart = p.split(';').find((x) => /rabbit/i.test(x)) ?? '';
+      if (/adult/i.test(rabbitPart)) throw new Error(`Rabbit tagged adult: ${p}`);
+      if (!/Baba, adult 35-year-old man/.test(p)) throw new Error(`Father not tagged adult after name: ${p}`);
+      if (/[\u0600-\u06FF]/.test(p)) throw new Error(`Arabic leaked into image prompt: ${p}`);
+    },
+  },
+  {
+    name: 'مرحلة 1: كلمة "apple" في نص الصفحة لا تحوّل القصة كلها لفواكه',
+    run: () => {
+      const st = fixture(2);
+      st.pages[0].text = 'Sami ate an apple and a lemon cake';
+      st.pages[0].image_prompt = 'Sami eating an apple under a tree';
+      eq(isFruitStory(st), false);
+      if (/face and limbs/i.test(buildPageImagePrompt(st, st.pages[0]))) throw new Error('Fruit boost applied to a human character');
+    },
+  },
+  {
+    name: 'مرحلة 2: ثبات الأسلوب القديم المحفوظ يُنقّى من أسماء الاستوديوهات، والقيمة المجهولة تعني تلقائي',
+    run: () => {
+      eq(getStyleLock('studio ghibli').includes('ghibli'), false);
+      eq(getStyleLock('auto'), '');
+      eq(getStyleLock('some random saved text'), '');
+      eq(normalizeStyleConsistencyId('studio ghibli'), 'pastoral-anime');
+      eq(normalizeStyleConsistencyId('garbage'), 'auto');
+      for (const o of ART_STYLE_OPTIONS) {
+        if (/masterpiece|luxury|award-winning|ufotable|shinkai|pixar/i.test(o.prompt)) throw new Error(`Superlative or brand in ${o.value}`);
+      }
+    },
+  },
+  {
+    name: 'مرحلة 2: المزاج القادم من النموذج يتفوق على التحليل بالكلمات، والنص المحايد لا يعطي لوحة مبالغاً فيها',
+    run: () => {
+      eq(analyzeTextSentimentAndPalette('نص محايد', '', 'tense').sentiment, 'tense');
+      const neutral = analyzeTextSentimentAndPalette('ذهب الولد إلى المدرسة', 'boy walking');
+      if (/glowing|moody|dramatic/i.test(neutral.paletteDescriptor)) throw new Error(`Neutral text got loud palette: ${neutral.paletteDescriptor}`);
+    },
+  },
+  {
+    name: 'فيديو القصة: عدد المقاطع من طول النص، التكلفة التقديرية، ونسبة الفيديو',
+    run: () => {
+      eq(partsForText('كلمة '.repeat(10)), 1);
+      eq(partsForText('كلمة '.repeat(30)), 2);
+      eq(partsForText('كلمة '.repeat(400)), 3);
+      eq(estimateCostUsd(10), 8);
+      eq([videoAspectFor('4:3'), videoAspectFor('3:4'), videoAspectFor('9:16'), videoAspectFor('1:1')], ['16:9', '9:16', '9:16', '16:9']);
+    },
+  },
+  {
+    name: 'فيديو القصة: برومبت المقطع إنجليزي، بلا صوت، يبدأ من صورة الصفحة، والجزء الثاني يكمل المشهد',
+    run: () => {
+      const st = fixture(2);
+      st.id = 'story-test';
+      st.pages[0].image_prompt = 'Sami climbing the glowing crystal tree at sunset';
+      const first = buildClipPrompt(st, { id: 'a', page: 1, part: 1, parts: 2, scene: st.pages[0].image_prompt, motion: 'Sami climbs higher as leaves shimmer.' });
+      if (/[\u0600-\u06FF]/.test(first)) throw new Error(`Arabic in clip prompt: ${first}`);
+      if (!/No music, no speech/.test(first)) throw new Error('Audio directive missing');
+      if (!/starting frame/.test(first)) throw new Error('First-frame cue missing');
+      if (first.split(/\s+/).length > 150) throw new Error('Clip prompt too long');
+      const next = buildClipPrompt(st, { id: 'b', page: 1, part: 2, parts: 2, scene: '', motion: 'Sami waves from the top.' });
+      if (!/^Continue the scene/.test(next) || /starting frame/.test(next)) throw new Error(`Bad continuation prompt: ${next}`);
     },
   },
 ];

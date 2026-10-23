@@ -3,7 +3,7 @@ import { getUserApiKey, keyShape } from './apiKey';
 import { hashText } from './db';
 import { base64ToBlob, cropToAspect } from './media';
 import { NO_SIZE_IMAGE_MODELS, POSITIVE_ILLUSTRATION_DIRECTIVE } from '../../shared/config.ts';
-import type { AspectRatio, AudienceLevel } from '../types';
+import type { AspectRatio } from '../types';
 
 // طبقة الصور الموحدة: كل رسم في التطبيق يمر من هنا
 export type EngineId = 'direct-user' | 'server' | 'direct-env';
@@ -15,8 +15,8 @@ export interface ImageRequest {
   references?: { data: string; mimeType: string }[];
   kind?: string;
   artStyle?: string;
-  styleConsistency?: string;
-  audienceLevel?: AudienceLevel;
+  // hq: غلاف/ورقة شخصيات/الصفحة الأولى — نموذج أقوى ودقة 2K؛ std: بقية الصفحات
+  quality?: 'hq' | 'std';
 }
 
 // سجل تقني لكل صورة مرسومة: المحرك الذي رسمها وأول 300 حرف من الطلب المرسل فعلاً
@@ -53,14 +53,14 @@ export const subscribeDrawnImages = (fn: () => void): (() => void) => {
 export class SkippedImage extends Error {}
 
 // نماذج Gemini الفعلية لتوليد الصور
-export const DIRECT_MODELS = [
-  'gemini-2.5-flash-image',
-  'gemini-3.1-flash-lite-image',
-  'gemini-3.1-flash-image-preview',
-  'gemini-nano-banana-2.1',
-  'gemini-3-pro-image-preview',
-  'gemini-3-pro-image',
-];
+export const DIRECT_MODELS = ['gemini-2.5-flash-image', 'gemini-3.1-flash-image-preview', 'gemini-3-pro-image-preview'];
+
+// الجودة العالية تبدأ بنموذج Pro؛ العادية تبدأ بالأخف لتوفير الحصة
+export const orderModelsByQuality = (models: string[], quality: 'hq' | 'std' = 'std'): string[] => {
+  const pro = models.filter((m) => /pro/i.test(m));
+  const rest = models.filter((m) => !/pro/i.test(m));
+  return quality === 'hq' ? [...pro, ...rest] : [...rest, ...pro];
+};
 const DIRECT_TIMEOUT = 60_000;
 const HARD_DOWN_MS = 30 * 60_000;
 const SOFT_DOWN_MS = 5 * 60_000;
@@ -144,37 +144,12 @@ const withTimeout = <T,>(p: Promise<T>, ms: number): Promise<T> => {
 
 const failed = (trail: TrailItem[]): Error & { trail: TrailItem[] } => Object.assign(new Error('engine failed'), { trail });
 
-// يبني النص النهائي المرسل للنموذج مع الحفاظ على الأسلوب الفني والمشهد (Scene:) في الصدارة دائماً وتثبيت الأسلوب
-export const buildFinalImageText = (
-  rawPrompt: string,
-  hasRefs: boolean,
-  styleConsistency?: string,
-  audienceLevel?: AudienceLevel,
-  artStyle?: string
-): string => {
+// النص النهائي = البرومبت المجمّع كما هو (الأسلوب والشخصيات داخله أصلاً) + إشارة المرجع إن وُجد؛ بلا أي إضافات بعد السقف
+export const buildFinalImageText = (rawPrompt: string, hasRefs: boolean): string => {
   const base = rawPrompt.trim();
-  const cleanConsistency = (styleConsistency ?? '').trim();
-  const hasConsistencyAlready = cleanConsistency && base.toLowerCase().includes(cleanConsistency.slice(0, 18).toLowerCase());
-
-  // تعزيز الأسلوب الفني المختار في صدارة التوجيهات
-  let explicitStyleLine = '';
-  if (artStyle && !base.toLowerCase().includes(artStyle.toLowerCase())) {
-    explicitStyleLine = `\nArt style: Masterpiece ${artStyle} illustration, unified aesthetic theme.`;
-  }
-
-  const consistencyLine =
-    cleanConsistency && cleanConsistency.toLowerCase() !== 'auto' && !hasConsistencyAlready
-      ? `\nStyle consistency: ${cleanConsistency}, cinematic lighting, high-fidelity, concept art style, detailed textures.`
-      : '';
-  const audienceLine =
-    audienceLevel === 'adults' && !/mature|adult/i.test(base)
-      ? '\nAudience: Adult story — depict characters with mature adult proportions and sophisticated cinematic atmosphere.'
-      : '';
-  const withDirective = base.includes(POSITIVE_ILLUSTRATION_DIRECTIVE)
-    ? `${base}${explicitStyleLine}${consistencyLine}${audienceLine}`
-    : `${base}${explicitStyleLine}${consistencyLine}${audienceLine}\n${POSITIVE_ILLUSTRATION_DIRECTIVE}`;
+  const withDirective = base.includes(POSITIVE_ILLUSTRATION_DIRECTIVE) ? base : `${base}\n${POSITIVE_ILLUSTRATION_DIRECTIVE}`;
   return hasRefs
-    ? `${withDirective}\nUse attached image strictly as character face/outfit reference while composing the full dynamic scene above.`
+    ? `${withDirective}\nUse attached image only as character face/outfit reference; compose the full scene described above.`
     : withDirective;
 };
 
@@ -195,7 +170,7 @@ const runDirect = async (eng: Engine, req: ImageRequest, signal?: AbortSignal): 
     .filter((r) => r.data.length > 200 && r.data.length < 5_000_000);
 
   const readyModels = DIRECT_MODELS.filter((m) => !isModelDown(eng.slot, m));
-  const modelsToTry = readyModels.length > 0 ? readyModels : DIRECT_MODELS;
+  const modelsToTry = orderModelsByQuality(readyModels.length > 0 ? readyModels : DIRECT_MODELS, req.quality);
 
   for (const model of modelsToTry) {
     const isNoSize = NO_SIZE_IMAGE_MODELS.has(model);
@@ -203,7 +178,7 @@ const runDirect = async (eng: Engine, req: ImageRequest, signal?: AbortSignal): 
     let retriedWithoutRef = false;
     for (let attempt = 0; attempt < 2; attempt++) {
       if (signal?.aborted) throw abortError();
-      const text = buildFinalImageText(req.prompt, currentRefs.length > 0, req.styleConsistency, req.audienceLevel, req.artStyle);
+      const text = buildFinalImageText(req.prompt, currentRefs.length > 0);
       try {
         const parts: any[] = currentRefs.length
           ? [...currentRefs.map((r) => ({ inlineData: { data: r.data, mimeType: r.mimeType } })), { text }]
@@ -215,7 +190,7 @@ const runDirect = async (eng: Engine, req: ImageRequest, signal?: AbortSignal): 
             contents: { parts },
             config: {
               abortSignal: signal,
-              imageConfig: isNoSize ? { aspectRatio: req.aspectRatio } : { aspectRatio: req.aspectRatio, imageSize: '1K' },
+              imageConfig: isNoSize ? { aspectRatio: req.aspectRatio } : { aspectRatio: req.aspectRatio, imageSize: req.quality === 'hq' ? '2K' : '1K' },
             },
           }),
           DIRECT_TIMEOUT
@@ -310,8 +285,7 @@ const runServer = async (req: ImageRequest, signal?: AbortSignal): Promise<Blob>
       references: req.references,
       kind: req.kind,
       artStyle: req.artStyle,
-      styleConsistency: req.styleConsistency,
-      audienceLevel: req.audienceLevel,
+      quality: req.quality,
     },
     signal
   );

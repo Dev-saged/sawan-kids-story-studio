@@ -3,7 +3,7 @@ import type { BrandPreset } from '../config';
 import type { SavedCharacter } from '../types';
 
 export const DB_NAME = 'sawan_studio';
-export const DB_VERSION = 4;
+export const DB_VERSION = 5;
 
 export type ImageKind = 'page' | 'cover' | 'sheet' | 'hero' | 'explain';
 
@@ -110,6 +110,11 @@ export const upgradeDbSchema = (db: IDBDatabase, tx: IDBTransaction | null): voi
   if (!db.objectStoreNames.contains('custom_presets')) {
     const p = db.createObjectStore('custom_presets', { keyPath: 'id' });
     p.createIndex('createdAt', 'createdAt');
+  }
+  // v5: مقاطع الفيديو المتحركة المولّدة (مدفوعة، تُحفظ محلياً كي لا تضيع)
+  if (!db.objectStoreNames.contains('video_clips')) {
+    const v = db.createObjectStore('video_clips', { keyPath: 'id' });
+    v.createIndex('storyId', 'storyId');
   }
 };
 
