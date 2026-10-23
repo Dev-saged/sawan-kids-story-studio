@@ -5,3 +5,16 @@ export {
   STORY_TYPE_SPECS,
   buildSharedSystemInstruction,
 } from '../../shared/config.ts';
+export {
+  ART_DIRECTION,
+  STYLE_CONSISTENCY_PRESETS,
+  artDirectionLine,
+  detectCharacterFruit,
+  getStyleLock,
+  isNonHumanDescription,
+  normalizeStyleConsistencyId,
+  resolveAudience,
+  resolveStyleConsistencyKeywords,
+  stripBrandNames,
+  type StyleConsistencyPreset,
+} from '../../shared/promptRules.ts';

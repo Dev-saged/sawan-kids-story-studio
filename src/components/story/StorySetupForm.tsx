@@ -105,12 +105,13 @@ import {
   canRequestImproveIdea,
   IMPROVE_IDEA_COOLDOWN_MS,
   improveStoryIdea,
-   resolveStyleConsistencyKeywords,
+  resolveStyleConsistencyKeywords,
   restoreOriginalIdea,
   sanitizeUserIdeaText,
   STYLE_CONSISTENCY_PRESETS,
 } from '../../services/gemini';
 import { ApiError } from '../../services/api';
+import { normalizeStyleConsistencyId } from '../../shared/modelRules';
 
 export interface TeenDramaTemplate {
   id: string;
@@ -363,7 +364,7 @@ export default function StorySetupForm({ initialIdea, language, onSubmit, onLoad
   const [storyType, setStoryType] = useState<StoryType>(() => savedWizard?.storyType ?? 'Bedtime');
   const [pageCount, setPageCount] = useState<number>(() => savedWizard?.pageCount ?? 6);
   const [artStyle, setArtStyle] = useState<ArtStyle>(() => series?.artStyle ?? savedWizard?.artStyle ?? readPreset().artStyle);
-  const [styleConsistency, setStyleConsistency] = useState<string>(() => series?.styleConsistency ?? savedWizard?.styleConsistency ?? 'auto');
+  const [styleConsistency, setStyleConsistency] = useState<string>(() => normalizeStyleConsistencyId(series?.styleConsistency ?? savedWizard?.styleConsistency));
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>(() => series?.aspectRatio ?? savedWizard?.aspectRatio ?? '4:3');
   const [hero, setHero] = useState<ChildProfile | null>(() => savedWizard?.hero ?? null);
   const [presetId, setPresetId] = useState<string>(() => savedWizard?.presetId ?? readPreset().id);
@@ -812,10 +813,13 @@ export default function StorySetupForm({ initialIdea, language, onSubmit, onLoad
     }
     clearStoryDraft();
     const chosenAlbumChars = albumCharacters.filter((c) => selectedAlbumCharIds.includes(c.id));
-    const hasAdultAlbumChar = chosenAlbumChars.some((c) => /adult|18\+|2\d|3\d|بالغ|كبير|رجل|امرأة/i.test(`${c.age} ${c.gender} ${c.description}`));
-    const isAdultStoryMode = audienceLevel === 'adults' || ageGroup === '18+' || hero?.ageStage === 'adult' || hasAdultAlbumChar;
+    const albumAdultAge = (c: { age?: string; gender?: string }) => {
+      const n = parseInt(String(c.age ?? '').replace(/[^\d]/g, ''), 10);
+      return Number.isNaN(n) ? /\b(adult|man|woman)\b|بالغ|رجل|امرأة/i.test(`${c.age ?? ''} ${c.gender ?? ''}`) : n >= 18;
+    };
+    const allAlbumAdult = chosenAlbumChars.length > 0 && chosenAlbumChars.every(albumAdultAge);
+    const isAdultStoryMode = audienceLevel === 'adults' || ageGroup === '18+' || hero?.ageStage === 'adult' || allAlbumAdult;
     const effectiveAudienceLevel: AudienceLevel = isAdultStoryMode ? 'adults' : 'kids';
-    const resolvedStyleConsistency = resolveStyleConsistencyKeywords(artStyle, styleConsistency);
     const params: StoryParams = {
       idea,
       language,
@@ -825,7 +829,7 @@ export default function StorySetupForm({ initialIdea, language, onSubmit, onLoad
       storyType,
       length,
       artStyle,
-      styleConsistency: resolvedStyleConsistency,
+      styleConsistency,
       aspectRatio,
       heroName: series?.heroName ?? hero?.name,
       heroPhotoId: series?.heroPhotoId ?? hero?.photoId,
@@ -2011,8 +2015,8 @@ export default function StorySetupForm({ initialIdea, language, onSubmit, onLoad
               </div>
               <p className="text-[11px] font-medium text-ink/75 dark:text-moonlight/80">
                 {ar
-                  ? `الكلمات المقفلة لضمان فخامة وثبات الرسم: ${resolveStyleConsistencyKeywords(artStyle, styleConsistency)}`
-                  : `Locked theme keywords: ${resolveStyleConsistencyKeywords(artStyle, styleConsistency)}`}
+                  ? `الأسلوب المعتمد في كل الصور: ${resolveStyleConsistencyKeywords(artStyle, styleConsistency)}`
+                  : `Style used on every image: ${resolveStyleConsistencyKeywords(artStyle, styleConsistency)}`}
               </p>
             </div>
           </div>

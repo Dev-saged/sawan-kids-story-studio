@@ -172,6 +172,8 @@ export interface StoryPage {
   text: string;
   image_prompt: string;
   narration?: string;
+  // مزاج الصفحة من النموذج (يحدد لوحة الألوان)
+  mood?: 'happy' | 'sad' | 'tense' | 'mysterious' | 'wonder' | 'serene';
   // ملاحظة تصحيح من المستخدم للمشهد عند عدم التطابق
   correctionNote?: string;
   // عنوان الفصل: على أول صفحة في كل فصل فقط

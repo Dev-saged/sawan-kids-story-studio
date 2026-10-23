@@ -8,6 +8,9 @@ import {
   NO_SIZE_IMAGE_MODELS,
   POSITIVE_ILLUSTRATION_DIRECTIVE,
   SHARED_ART_STYLE_OPTIONS,
+  artDirectionLine,
+  getStyleLock,
+  resolveAudience,
   STORY_TYPE_SPECS,
   buildSharedSystemInstruction,
 } from './src/shared/modelRules.ts';
@@ -358,8 +361,8 @@ const chainFor = async (req: Request, kind: ChainKind): Promise<string[]> => {
   if (!catalog.names.size) return base;
   const listed = base.filter((m) => catalog.names.has(m));
   const found = [...catalog.names].filter((n) => DISCOVER[kind].test(n) && !base.includes(n)).sort((a, b) => versionOf(b) - versionOf(a));
-  const unlisted = base.filter((m) => !catalog.names.has(m));
-  return [...listed, ...found, ...unlisted];
+  const chain = [...listed, ...found];
+  return chain.length ? chain : base;
 };
 
 app.get('/api/preflight', async (req: Request, res: Response) => {
@@ -433,8 +436,9 @@ const STORY_RESPONSE_SCHEMA: Schema = {
           narration: { type: Type.STRING },
           image_prompt: { type: Type.STRING },
           chapter: { type: Type.STRING },
+          mood: { type: Type.STRING },
         },
-        required: ['page', 'text', 'narration', 'image_prompt'],
+        required: ['page', 'text', 'narration', 'image_prompt', 'mood'],
       },
     },
     quiz: {
@@ -651,22 +655,19 @@ app.post('/api/generate-story', async (req: Request, res: Response) => {
   const storyTypeKey = (clip(params.storyType, 30) || 'Bedtime') as keyof typeof STORY_TYPE_SPECS;
   const typeSpec = STORY_TYPE_SPECS[storyTypeKey] ?? STORY_TYPE_SPECS.Bedtime;
   const ageGroupVal = clip(params.ageGroup, 10) || '4-6';
-  const audienceLevelVal = clip(params.audienceLevel, 15) || (ageGroupVal === '18+' ? 'adults' : 'kids');
-  const isAdult =
-    audienceLevelVal === 'adults' ||
-    ageGroupVal === '18+' ||
-    Boolean(params.adultMode) ||
-    params.heroAgeStage === 'adult' ||
-    req.body?.classification?.targetAudience === 'adult';
-  const heroStage = params.heroAgeStage === 'adult' || isAdult ? 'adult' : params.heroAgeStage === 'teen' || ageGroupVal === '13-18' ? 'teen' : 'child';
+  const heroPhotoId = clip(params.heroPhotoId, 80);
+  const audience = resolveAudience({
+    audienceLevel: params.audienceLevel === 'adults' ? 'adults' : 'kids',
+    ageGroup: ageGroupVal,
+    adultMode: Boolean(params.adultMode),
+    heroAgeStage: params.heroAgeStage,
+    heroPhotoId,
+  });
+  const isAdult = audience.adult;
+  const heroStage = isAdult ? 'adult' : params.heroAgeStage === 'teen' || ageGroupVal === '13-18' ? 'teen' : 'child';
   const artStyleVal = clip(params.artStyle, 40) || 'Classic Storybook';
-  const artStyleSpec = SHARED_ART_STYLE_OPTIONS.find((s) => s.value === artStyleVal)?.prompt || artStyleVal;
-  const styleConsistencyVal = clip(params.styleConsistency || req.body?.classification?.styleConsistency, 200);
-  const qaModifiersVal =
-    clip(req.body?.classification?.qaModifiers, 200) ||
-    (isAdult
-      ? 'cinematic lighting, high-fidelity masterpiece, concept art style, detailed textures, mature adult proportions'
-      : 'cinematic lighting, high-fidelity illustration, concept art style, detailed textures');
+  const styleLock = getStyleLock(clip(params.styleConsistency, 200));
+  const artStyleSpec = `${artDirectionLine(artStyleVal, isAdult)}${styleLock ? `; ${styleLock}` : ''}`;
   const customChars = Array.isArray(params.customCharacters)
     ? params.customCharacters
         .slice(0, 4)
@@ -683,12 +684,11 @@ app.post('/api/generate-story', async (req: Request, res: Response) => {
     : ageGroupVal === '13-18'
       ? 'AUDIENCE LEVEL: YOUNG ADULTS / TEENS (13-18). Depict characters with teen/young-adult proportions and expressive cinematic drama.'
       : 'AUDIENCE LEVEL: KIDS. Write warm, imaginative, age-appropriate prose and expressive storybook visuals.';
-  const styleConsistencyLine = `STYLE CONSISTENCY & QUALITY ASSURANCE: Lock the visual theme strictly to [${styleConsistencyVal || artStyleSpec}] with mandatory quality modifiers [${qaModifiersVal}]. Never deviate from this artistic theme regardless of story content.`;
   const heroLine = heroName
     ? heroStage === 'adult'
-      ? `HERO: the main protagonist is a real ADULT person named "${heroName}". Describe the hero in English as "${heroName}, an adult protagonist${params.hasHeroPhoto ? ' matching the reference photo' : ''}" with mature adult facial structure, realistic adult build, and a fixed signature outfit with specific colors.`
+      ? `HERO: the main protagonist is a real ADULT person named "${heroName}". Describe the hero in English as "${heroName}, an adult protagonist${heroPhotoId ? ' matching the reference photo' : ''}" with mature adult facial structure, realistic adult build, and a fixed signature outfit with specific colors.`
       : heroStage === 'teen'
-        ? `HERO: the main protagonist is a teenager named "${heroName}". Describe the hero in English as "${heroName}, a teen protagonist${params.hasHeroPhoto ? ' matching the reference photo' : ''}" with a fixed signature outfit with specific colors.`
+        ? `HERO: the main protagonist is a teenager named "${heroName}". Describe the hero in English as "${heroName}, a teen protagonist${heroPhotoId ? ' matching the reference photo' : ''}" with a fixed signature outfit with specific colors.`
         : `HERO: the main character is a real child named "${heroName}". A reference photo of this child may be used for the illustrations, so describe the hero as "${heroName}, the child from the reference photo" plus a fixed outfit with colors.`
     : '';
   const prompt = [
@@ -702,8 +702,7 @@ app.post('/api/generate-story', async (req: Request, res: Response) => {
     total > first
       ? `LONG STORY: the finished book will have ${total} pages in ${Math.ceil(total / 6)} chapters. Write ONLY the opening ${first} pages now (chapter 1 and its set-up). Do NOT conclude the story: end on a natural moment that leads into what comes next. Give page 1 a "chapter" title. The quiz and moral can be provisional.`
       : '',
-    `Art style: ${artStyleVal} — Visual directive for every image_prompt and cover_image_prompt: ${artStyleSpec}. Ensure every page image_prompt vividly depicts the exact action, setting, and character emotions of that page in this style.`,
-    styleConsistencyLine,
+    `Art style: ${artStyleVal} — Visual direction: ${artStyleSpec}. Every image_prompt must depict the exact action, setting, and character emotions of that page; keep the same style on every page.`,
     themeLine,
     customChars
       ? `CUSTOM / ALBUM CHARACTERS (include these exact characters in "characters" with their exact names, ages, and visual traits translated to English): ${customChars}`
@@ -759,7 +758,7 @@ app.post('/api/generate-story', async (req: Request, res: Response) => {
       send({ t: 'reset' });
       const fallbackJson = await runFreeTextJson(
         SYSTEM_INSTRUCTION,
-        `${prompt}\nReturn JSON with keys: story_info {title, language, age_group, art_style, lessons[], moral}, characters [{name, description, personality, age, gender}], cover_image_prompt, music_prompt, pages [{page, text, narration, image_prompt}], quiz [{question, options[], answer, page}].`
+        `${prompt}\nReturn JSON with keys: story_info {title, language, age_group, art_style, lessons[], moral}, characters [{name, description, personality, age, gender}], cover_image_prompt, music_prompt, pages [{page, text, narration, image_prompt, mood}], quiz [{question, options[], answer, page}].`
       );
       if (fallbackJson?.pages?.length && fallbackJson?.characters?.length) {
         send({ t: 'done', story: fallbackJson });
@@ -816,56 +815,30 @@ const getFreeCreds = (req: Request): FreeCreds | null => {
   return CF_ACCOUNT_RE.test(account) && CF_TOKEN_RE.test(token) ? { account, token, source: user ? 'user' : 'env' } : null;
 };
 
-// أ2: المشهد أولاً مع قفل الأسلوب الفني في الصدارة؛ إزالة الحروف العربية من رابط محركات الصور لتفادي فشل التوليد
-const fluxPrompt = (prompt: string, square: boolean, artStyle?: string, styleConsistency?: string): string => {
-  const sanitized = prompt
+// Flux: يحذف الحروف العربية ويحافظ على ترتيب (الأسلوب، المشهد، الشخصيات) ضمن ميزانية 900 حرف؛ الشخصيات تُقصّ آخراً
+const FLUX_BUDGET = 900;
+const fluxPrompt = (prompt: string, square: boolean, artStyle?: string): string => {
+  const lines = prompt
     .replace(/[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]+/g, ' ')
     .replace(/["«»“”]/g, '')
-    .replace(/\(\s*\)/g, '');
-  const lines = sanitized
+    .replace(/\(\s*\)/g, '')
     .split('\n')
     .map((l) => l.replace(/\s+/g, ' ').trim())
     .filter(Boolean);
-  const sceneIdx = lines.findIndex((l) => /^(?:Scene|Character reference sheet|Composition):/i.test(l));
-  const sceneLine = sceneIdx >= 0 ? lines[sceneIdx] : lines[0] || sanitized.trim();
-  const styleIdx = lines.findIndex((l) => /^Style:/i.test(l));
-  const styleLine = styleIdx >= 0 ? lines[styleIdx] : '';
-  const restLines = lines.filter((_, idx) => idx !== (sceneIdx >= 0 ? sceneIdx : 0) && idx !== styleIdx);
-
-  // استخراج أو بناء قفل الأسلوب الفني الصارم لمنع انحراف الأنمي أو الـ 3D أو الكرتون
-  let explicitStyle = '';
-  if (artStyle) {
-    const sLower = artStyle.toLowerCase();
-    if (sLower.includes('anime')) {
-      explicitStyle = 'Masterpiece Japanese studio anime key visual, cel-shaded anime aesthetic, vibrant anime character design';
-    } else if (sLower.includes('3d') || sLower.includes('pixar')) {
-      explicitStyle = 'Masterpiece 3D CGI Pixar feature-film studio render, volumetric lighting, rich 3D character design';
-    } else if (sLower.includes('cute cartoon')) {
-      explicitStyle = 'Masterpiece cute animated cartoon illustration, smooth clean linework, vibrant cheerful palette';
-    } else if (sLower.includes('hand-drawn')) {
-      explicitStyle = 'Masterpiece hand-drawn ink and brush cartoon illustration, organic strokes, artistic warmth';
-    } else if (sLower.includes('pixel')) {
-      explicitStyle = 'Masterpiece high-bit pixel art scene, crisp pixel craftsmanship, vibrant sprites';
-    } else if (sLower.includes('photorealistic') || sLower.includes('realistic')) {
-      explicitStyle = 'Cinematic photorealistic portrait photography, lifelike textures, 85mm prime lens';
-    } else if (sLower.includes('watercolor')) {
-      explicitStyle = 'Luxury fine-art watercolor illustration, luminous translucent washes, cold-press paper';
-    } else {
-      explicitStyle = `${artStyle} masterpiece illustration, high-fidelity artwork`;
-    }
-  }
-
-  const consistencyKeywords = (styleConsistency && styleConsistency !== 'auto') ? `, ${styleConsistency}` : '';
-  const styleBlock = styleLine ? styleLine : (explicitStyle ? `Style: ${explicitStyle}${consistencyKeywords}.` : '');
-
-  const framing = square ? '' : ' Centered composition.';
-  const maxRestChars = Math.max(0, 350 - sceneLine.length - styleBlock.length);
-  const rest = restLines.join(' ').slice(0, maxRestChars).trim();
-
-  // تجميع البرومبت مع تصدر الأسلوب الفني أولاً لضمان عدم ضياع هوية الرسم عند تقليص الحجم
-  const base = [styleBlock, sceneLine, rest, framing.trim()].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
-  const hasDirective = base.toLowerCase().includes('expressive eyes, cohesive palette');
-  return (hasDirective ? base : `${base} ${POSITIVE_ILLUSTRATION_DIRECTIVE}`).replace(/\s+/g, ' ').trim();
+  const find = (re: RegExp) => lines.find((l) => re.test(l)) ?? '';
+  const scene = find(/^(?:Scene|Character reference sheet|Composition):/i) || lines[0] || '';
+  const chars = find(/^Characters:/i);
+  const style = find(/^Style:/i) || (artStyle ? `Style: ${artDirectionLine(artStyle)}.` : '');
+  const used = new Set([scene, chars, style]);
+  const rest = lines.filter((l) => !used.has(l)).join(' ');
+  const fixed = [style, scene, square ? '' : 'Centered composition.', POSITIVE_ILLUSTRATION_DIRECTIVE].filter(Boolean).join(' ');
+  const room = Math.max(0, FLUX_BUDGET - fixed.length - 1);
+  const extra = [chars, rest].filter(Boolean).join(' ').slice(0, room).trim();
+  return [style, scene, extra, square ? '' : 'Centered composition.', POSITIVE_ILLUSTRATION_DIRECTIVE]
+    .filter(Boolean)
+    .join(' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 };
 
 const runFlux = async (creds: FreeCreds, prompt: string, steps = 6): Promise<string> => {
@@ -955,7 +928,7 @@ const runAiFallback = async (
   styleConsistency?: string
 ): Promise<{ base64: string; mimeType: string; model: string; engine: 'pollinations'; promptSnippet: string }> => {
   const dims = AI_IMAGE_SIZES[aspectRatio] || [1024, 768];
-  const cleanPrompt = fluxPrompt(prompt, aspectRatio === '1:1', artStyle, styleConsistency);
+  const cleanPrompt = fluxPrompt(prompt, aspectRatio === '1:1', artStyle);
   const encodedPrompt = encodeURIComponent(cleanPrompt);
   const seed = Math.floor(Math.random() * 2 ** 31);
 
@@ -1009,24 +982,10 @@ app.post('/api/generate-image', async (req: Request, res: Response) => {
     const rawPrompt = clip(req.body?.prompt, 4000);
     if (!rawPrompt) return res.status(400).json({ error: 'Image prompt is required.', code: 'FAILED' });
     const aspectRatio = ASPECTS.has(req.body?.aspectRatio) ? req.body.aspectRatio : '4:3';
-    const styleConsistency = clip(req.body?.styleConsistency, 240);
-    const audienceLevel = clip(req.body?.audienceLevel, 20);
     const refs = sanitizeRefs(req.body?.references);
     const session = getSession(req);
 
-    const hasConsistencyInPrompt =
-      styleConsistency && rawPrompt.toLowerCase().includes(styleConsistency.slice(0, 18).toLowerCase());
-    const consistencyTail =
-      styleConsistency && styleConsistency.toLowerCase() !== 'auto' && !hasConsistencyInPrompt
-        ? `\nStyle consistency: ${styleConsistency}, cinematic lighting, high-fidelity, concept art style, detailed textures.`
-        : !/cinematic lighting/i.test(rawPrompt)
-          ? '\nQuality: cinematic lighting, high-fidelity, concept art style, detailed textures.'
-          : '';
-    const audienceTail =
-      audienceLevel === 'adults' && !/\b(adult|mature)\b/i.test(rawPrompt)
-        ? ' Depict characters with mature adult proportions.'
-        : '';
-    const prompt = `${rawPrompt}${consistencyTail}${audienceTail}`;
+    const prompt = rawPrompt;
 
     // المشهد يبقى في البداية؛ ملاحظة المرجع تأتي في النهاية مع إلزام النموذج برسم المشهد الجديد بالكامل
     const refTail = refs.length
@@ -1095,7 +1054,7 @@ app.post('/api/generate-image', async (req: Request, res: Response) => {
     const freeCreds = getFreeCreds(req);
     if (freeCreds) {
       try {
-        const cfPrompt = fluxPrompt(prompt, aspectRatio === '1:1', req.body?.artStyle, styleConsistency);
+        const cfPrompt = fluxPrompt(prompt, aspectRatio === '1:1', req.body?.artStyle);
         const base64 = await runFree(freeCreds, cfPrompt, 6);
         return res.json({
           base64,
